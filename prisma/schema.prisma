@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -13,9 +7,55 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Member {
+  discordUserId        String        @id
+  status               MemberStatus  @default(LAOBAN)
+  balance              Decimal       @default(0) @db.Decimal(19, 4)
+  totalSpent           Decimal       @default(0) @db.Decimal(19, 4)
+  commissionRate       Decimal       @default(0.75) @db.Decimal(7, 6)
+  commissionFrom       Commission[]  @relation("CommissionFrom")
+  commissionTo         Commission[]  @relation("CommissionTo")
+  sentTransactions     Transaction[] @relation("FromMember")
+  receivedTransactions Transaction[] @relation("ToMember")
+}
 
+model Transaction {
+  Transid    String      @id @default(cuid())
+  fromId     String
+  toId       String
+  amount     Decimal     @db.Decimal(19, 4)
+  feeAmount  Decimal     @db.Decimal(19, 4)
+  netAmount  Decimal     @db.Decimal(19, 4)
+  createdAt  DateTime    @default(now())
+  commission Commission?
+  from       Member      @relation("FromMember", fields: [fromId], references: [discordUserId])
+  to         Member      @relation("ToMember", fields: [toId], references: [discordUserId])
+}
 
-// prisma/schema.prisma
+model Commission {
+  transactionId String      @id
+  fromId        String
+  toId          String
+  feeAmount     Decimal     @db.Decimal(19, 4)
+  createdAt     DateTime    @default(now())
+  from          Member      @relation("CommissionFrom", fields: [fromId], references: [discordUserId])
+  to            Member      @relation("CommissionTo", fields: [toId], references: [discordUserId])
+  transaction   Transaction @relation(fields: [transactionId], references: [Transid], onDelete: Cascade)
+}
+
+model InteractionLog {
+  Interid   String   @id @default(cuid())
+  memberId  String?
+  command   String?
+  payload   Json?
+  createdAt DateTime @default(now())
+}
+
+model Gift {
+  GiftName String  @id
+  price    Decimal @default(0) @db.Decimal(19, 4)
+  url_link String?
+}
 
 enum MemberStatus {
   LAOBAN
@@ -27,66 +67,4 @@ enum EntryKind {
   DASHANG
   TIXIAN
   RECHARGE
-}
-
-
-model Member {
-  discordUserId String   @id
-  status        MemberStatus @default(LAOBAN)
-
-  balance       Decimal     @default(0) @db.Decimal(19,4) 
-  totalSpent    Decimal     @default(0) @db.Decimal(19,4)
-  commissionRate Decimal  @default(0.75) @db.Decimal(7,6)
-
- sentTransactions     Transaction[] @relation("FromMember")
-  receivedTransactions Transaction[] @relation("ToMember")
-  commissionFrom       Commission[]  @relation("CommissionFrom")
-  commissionTo         Commission[]  @relation("CommissionTo")
-}
-
-model Transaction {
-  Transid           String   @id @default(cuid())
-  from       Member   @relation("FromMember", fields: [fromId], references: [discordUserId], onDelete: Restrict)
-  fromId       String           // sender discord id
-  to         Member   @relation("ToMember", fields: [toId], references: [discordUserId], onDelete: Restrict)
-  toId         String           // receiver discord id
-
-  amount       Decimal  @db.Decimal(19,4) // gross
-  feeAmount    Decimal  @db.Decimal(19,4)
-  netAmount    Decimal  @db.Decimal(19,4)
-
-  createdAt    DateTime @default(now())
-
-  commission Commission?
-
-}
-
-model Commission {
-  transactionId String      @id
-  transaction   Transaction @relation(fields: [transactionId], references: [Transid], onDelete: Cascade)
-
-  from       Member   @relation("CommissionFrom", fields: [fromId], references: [discordUserId], onDelete: Restrict)
-  fromId       String           // sender discord id
-  to         Member   @relation("CommissionTo",fields: [toId], references: [discordUserId], onDelete: Restrict)
-  toId         String           // receiver discord id
-  feeAmount    Decimal  @db.Decimal(19,4)
-  createdAt    DateTime @default(now())
-
-}
-
-
-
-model InteractionLog {
-  Interid            String   @id @default(cuid())
-  memberId      String?  // nullable if it came from someone not cached yet
-  command       String?
-  payload       Json?
-  createdAt     DateTime @default(now())
-
-}
-
-model Gift {
-  Giftid String  @id @default(cuid())
-  GiftName String
-  price Decimal     @default(0) @db.Decimal(19,4) 
 }

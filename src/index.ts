@@ -10,6 +10,7 @@ import { handlePlayButton } from './interactions/buttons/play.js';
 import * as messageCreate from './events/messageCreate.js';
 import { registerGiftingCommand } from './commands/gifting.js';
 import prisma from './db/prisma.js';
+import { registerCashCommand } from "./commands/cash.js";
 
 const client = new Client({
   intents: [
@@ -32,6 +33,8 @@ client.once(Events.ClientReady, (c) => {
 });
 
 registerGiftingCommand(client, prisma);
+registerCashCommand(client, prisma);
+
 
 console.log('DB:', process.env.DATABASE_URL);
 // once at startup to sanity-check

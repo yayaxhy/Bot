@@ -1,5 +1,6 @@
-import { Client, GatewayIntentBits, Message } from 'discord.js';
+import { Client, Message } from 'discord.js';   // removed GatewayIntentBits
 import { Prisma, PrismaClient } from '@prisma/client';
+import { postGiftFeed } from '../features/giftFeedHelper.js';
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
@@ -8,39 +9,32 @@ function parseGiftingCommand(msg: Message): { quantity: number; giftName: string
   const content = msg.content.trim();
   if (!content.startsWith('!打赏')) return null;
 
-  const mention = msg.mentions.users.first();
-  if (!mention) return null;
+  const mentioned = msg.mentions.users.first();
+  if (!mentioned) return null;
 
   // slice out everything after "!打赏"
-  const rest = content.slice('!打赏'.length).trim();
+  let rest = content.slice('!打赏'.length).trim();
 
-  // Remove the mention to isolate "<qty>/<giftName>"
-  const mentionToken = `<@${mention.id}>`;
-  const idx = rest.lastIndexOf(mentionToken);
-  const head = idx >= 0 ? rest.slice(0, idx).trim() : rest;
+  // Remove the mention (works for <@id> and <@!id>)
+  const mentionRegex = new RegExp(`<@!?${mentioned.id}>`, 'g');
+  rest = rest.replace(mentionRegex, '').trim();
 
-  const parts = head.split('/').map(s => s.trim()).filter(Boolean);
+  const parts = rest.split('/').map(s => s.trim()).filter(Boolean);
   if (parts.length < 2) return null;
 
   const quantity = Number(parts[0]);
   if (!Number.isInteger(quantity) || quantity <= 0) return null;
 
   const giftName = parts.slice(1).join('/'); // allow slash in gift name after first slash
-  return { quantity, giftName, toUserId: mention.id };
+  return { quantity, giftName, toUserId: mentioned.id };
 }
 
 async function ensureMember(prisma: PrismaClient, discordUserId: string, username?: string) {
-  // Uses your defaults: balance 0, commissionRate 0.75 (schema default)
+  // Add any required defaults if your schema needs them
   return prisma.member.upsert({
     where: { discordUserId },
-    update: { /* keep username or store if you add a field later */ },
-    create: {
-      discordUserId,
-      // status defaults to LAOBAN
-      // balance defaults to 0 (Decimal(19,4))
-      // totalSpent defaults to 0 (Decimal(19,4))
-      // commissionRate defaults to 0.75 (Decimal(7,6))
-    },
+    update: {},                    // e.g., { username } if you have that field
+    create: { discordUserId },     // plus required fields if no defaults
   });
 }
 
@@ -50,12 +44,11 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       if (msg.author.bot) return;
       if (!msg.content.startsWith('!打赏')) return;
 
-      // Log the raw interaction
       await prisma.interactionLog.create({
         data: {
           memberId: msg.author.id,
           command: '!打赏',
-          payload: { content: msg.content },
+          payload: { content: msg.content } as any, // ensure your Prisma field is Json
         },
       });
 
@@ -65,99 +58,83 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         return;
       }
 
-      const fromId = msg.author.id;
-      const { toUserId: toId, quantity, giftName } = parsed;
-      if (fromId === toId) {
+      const giverId = msg.author.id;
+      const { toUserId: receiverId, quantity, giftName } = parsed;
+
+      if (giverId === receiverId) {
         await msg.reply('不能给自己打赏哦。');
         return;
       }
 
-      // Make sure both members exist (uses your schema defaults)
       await Promise.all([
-        ensureMember(prisma, fromId, msg.author.username),
-        ensureMember(prisma, toId, msg.mentions.users.first()?.username),
+        ensureMember(prisma, giverId, msg.author.username),
+        ensureMember(prisma, receiverId, msg.mentions.users.first()?.username),
       ]);
 
-      // Look up gift by GiftName (not unique in your schema, so use findFirst)
       const normalized = giftName.normalize('NFKC').trim();
-
       const gift = await prisma.gift.findFirst({
         where: { GiftName: giftName },
+        select: { GiftName: true, price: true, url_link: true },   // explicit select
       });
+
       if (!gift) {
         const suggestions = await prisma.gift.findMany({
-    where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-    take: 5,
-    orderBy: { GiftName: 'asc' },
-  });
-  const hint = suggestions.length
-    ? `可选：${suggestions.map(s => s.GiftName).join(', ')}`
-    : '（没有相近名称）';
-  await msg.reply(`礼物不存在：${giftName}。${hint}`);
-  return;
+          where: { GiftName: { contains: normalized, mode: 'insensitive' } },
+          take: 5,
+          orderBy: { GiftName: 'asc' },
+          select: { GiftName: true },
+        });
+        const hint = suggestions.length
+          ? `可选：${suggestions.map(s => s.GiftName).join(', ')}`
+          : '（没有相近名称）';
+        await msg.reply(`礼物不存在：${giftName}。${hint}`);
+        return;
       }
 
-      // Compute gross / fee / net using receiver’s commissionRate (payout ratio)
       const qty = DEC(quantity);
       const unitPrice = DEC(gift.price);
-      const gross = unitPrice.mul(qty); // Decimal
+      const gross = unitPrice.mul(qty);
       if (gross.lte(0)) {
         await msg.reply('金额必须大于 0。');
         return;
       }
 
-      // Transaction: deduct sender, credit receiver, record Transaction + Commission
       const result = await prisma.$transaction(async (tx) => {
-        // Load receiver commissionRate snapshot
-        const receiver = await tx.member.findUnique({ where: { discordUserId: toId } });
+        const receiver = await tx.member.findUnique({ where: { discordUserId: receiverId } });
         if (!receiver) throw new Error('收款方不存在。');
 
-        const receiverRate = DEC(receiver.commissionRate ?? 0); // payout ratio
+        const receiverRate = DEC(receiver.commissionRate ?? 0);
         const feeRate = DEC(1).sub(receiverRate);
         const feeAmount = gross.mul(feeRate);
         const netAmount = gross.sub(feeAmount);
 
-        // 1) Deduct sender atomically (guard balance >= gross)
         const deduct = await tx.member.updateMany({
-          where: {
-            discordUserId: fromId,
-            balance: { gte: gross },
-          },
-          data: {
-            balance: { decrement: gross },
-            totalSpent: { increment: gross },
-          },
+          where: { discordUserId: giverId, balance: { gte: gross } },
+          data: { balance: { decrement: gross }, totalSpent: { increment: gross } },
         });
-        if (deduct.count === 0) {
-          throw new Error('余额不足，无法打赏。');
-        }
+        if (deduct.count === 0) throw new Error('余额不足，无法打赏。');
 
-        // 2) Credit receiver
         await tx.member.update({
-          where: { discordUserId: toId },
-          data: {
-            balance: { increment: netAmount },
-          },
+          where: { discordUserId: receiverId },
+          data: { balance: { increment: netAmount } },
         });
 
-        // 3) Create Transaction (ties to Member via from/to relations)
         const txRow = await tx.transaction.create({
           data: {
-            fromId: fromId,
-            toId: toId,
+            fromId: giverId,
+            toId: receiverId,
             amount: gross,
             feeAmount: feeAmount,
             netAmount: netAmount,
-            // createdAt default now()
           },
+          select: { Transid: true }, // adjust to your schema (id/Transid)
         });
 
-        // 4) Create Commission snapshot row linked to the Transaction
         await tx.commission.create({
           data: {
-            transactionId: txRow.Transid,
-            fromId: fromId,
-            toId: toId,
+            transactionId: txRow.Transid, // adjust if your key is 'id'
+            fromId: giverId,
+            toId: receiverId,
             feeAmount: feeAmount,
           },
         });
@@ -171,6 +148,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           feeAmount,
           netAmount,
           giftName: gift.GiftName,
+          imageUrl: gift.url_link ?? undefined,     // <- may be undefined
         };
       });
 
@@ -185,11 +163,20 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           `到账（NET）：${result.netAmount.toString()}`,
         ].join('\n')
       );
+
+      await postGiftFeed(msg.client, {
+        giverId,
+        receiverId,
+        giftName: result.giftName,
+        quantity,
+        totalAmount: Number(result.gross.toString()),
+        imageUrl: result.imageUrl,                     // optional
+      });
+
+      await msg.react('✅');
     } catch (err: any) {
       console.error('[gifting] error:', err);
-      try {
-        await msg.reply(`打赏失败：${err?.message ?? '未知错误'}`);
-      } catch {}
+      try { await msg.reply(`打赏失败：${err?.message ?? '未知错误'}`); } catch {}
     }
   });
 }
