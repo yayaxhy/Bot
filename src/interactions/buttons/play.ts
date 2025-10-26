@@ -10,7 +10,7 @@ import { clickStore } from '../../services/clickStore.js';
 
 export function makePlayRow(count: number, mirroredMessageId: string) {
   const btn = new ButtonBuilder()
-    .setCustomId(`抢单:${mirroredMessageId}`)
+    .setCustomId(`play:${mirroredMessageId}`)
     .setStyle(ButtonStyle.Success)
     .setLabel(`抢单(${count})`);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(btn);
