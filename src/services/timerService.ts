@@ -28,7 +28,7 @@ export async function scheduleForOrder(orderId: string) {
         console.error('[timerService] recalc failed:', err);
       }
       scheduleRecalc();
-    }, 5 * MIN));
+    }, MIN));
   };
   scheduleRecalc();
 
