@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",                          // Set target to ES2022
+    "module": "NodeNext",                        // Use NodeNext module for ES Modules support
+    "moduleResolution": "NodeNext",              // Resolve modules using NodeNext (for ES Modules)
+    "outDir": "dist",                            // Output directory for compiled files
+    "rootDir": "src",                            // Root directory for source files
+    "strict": true,                              // Enable all strict type-checking options
+    "esModuleInterop": true,                     // Enable interop for default imports
+    "skipLibCheck": true,                        // Skip library checks to speed up compilation
+    "allowSyntheticDefaultImports": true,        // Allow default imports from modules with export =
+    "declaration": true,                         // Generate .d.ts declaration files for types
+    "sourceMap": true                            // Enable source maps for better debugging
+  },
+  "include": ["src"],                            // Include all files in the src directory
+  "exclude": ["node_modules"]                    // Exclude node_modules directory from compilation
+}
