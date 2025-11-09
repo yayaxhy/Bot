@@ -81,11 +81,8 @@ export interface GiftTransactionResult {
 function buildPublicGiftSuccessMessage(result: GiftTransactionResult): MessageCreateOptions {
   const qtyText = result.quantity.toString();
   const grossText = result.gross.toString();
-  const lines = [`打赏成功！${qtyText} x ${result.giftName}, 总价值：${grossText}`];
-  if (result.imageUrl) {
-    lines.push(result.imageUrl);
-  }
-  return { content: lines.join('\n') };
+  const content = `打赏成功！${qtyText} x ${result.giftName}, 总价值：${grossText}`;
+  return { content };
 }
 
 export async function performGift(
@@ -458,8 +455,14 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         successPayload.content = `${mentionPrefix}${baseContent}`.trim();
         if (channel && typeof channel.send === 'function') {
           await channel.send(successPayload);
+          if (result.imageUrl) {
+            await channel.send(result.imageUrl);
+          }
         } else {
           await msg.reply(successPayload);
+          if (result.imageUrl) {
+            await msg.reply(result.imageUrl);
+          }
         }
       }
     } catch (err: any) {
