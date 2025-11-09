@@ -43,9 +43,16 @@ export async function scheduleForOrder(orderId: string) {
         const elapsed = o.stopwatchStartAt ? Math.ceil((now.getTime() - o.stopwatchStartAt.getTime())/60000) : 0;
         const est = o.unitPrice ? Number(o.unitPrice.toString()) * (elapsed / 60) : 0;
 
+        const reminder = `总点单时长 **${elapsed}** 分钟，预计金额 **¥${est.toFixed(2)}**。\n余额不足时会自动结单。`;
+
         try {
-          const user = await (globalThis as any).__CLIENT__.users.fetch(o.hostId);
-          await user.send(`总点单时长 **${elapsed}** 分钟，预计金额 **¥${est.toFixed(2)}**。\n余额不足时会自动结单。`);
+          const hostUser = await (globalThis as any).__CLIENT__.users.fetch(o.hostId);
+          await hostUser.send(reminder);
+        } catch {}
+
+        try {
+          const workerUser = await (globalThis as any).__CLIENT__.users.fetch(o.workerId);
+          await workerUser.send(reminder);
         } catch {}
       } catch {}
       scheduleHourly();
