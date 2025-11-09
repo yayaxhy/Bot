@@ -309,6 +309,13 @@ export function invitation_embed(
     '请接单',
     `订单号：${orderLabel}`,
     `游戏内容：${limitedContent}`,
+    '',
+    '若按钮交互失败，可复制以下口令发送给机器人：',
+    '接受：',
+    `!yes.${displayNo != null ? displayNo : orderId}`,
+    '',
+    '拒绝：',
+    `!no.${displayNo != null ? displayNo : orderId}`,
   ];
   const embed = base('游玩邀请', lines.join('\n'));
 

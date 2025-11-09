@@ -1,6 +1,6 @@
 import prisma from '../db/prisma.js';
 import { Prisma, OrderStatus, PeiwanStatus, MemberStatus } from '@prisma/client';
-import { D, round2, minutesBetweenCeil } from '../lib/money.js';
+import { round2, minutesBetweenCeil } from '../lib/money.js';
 import { addMinutes, minutesBetweenFloor } from '../lib/time.js';
 import { addHeart } from './heartService.js';
 import { notifyOrderEnded } from './orderNotificationService.js';
@@ -101,7 +101,7 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
     const order = await tx.order.findUnique({
       where: { id: orderId },
       include: {
-        host: { select: { income: true, recharge: true, totalBalance: true } },
+        host: { select: { totalBalance: true } },
       },
     });
     if (!order || order.status !== OrderStatus.RUNNING) return { charged: false, insufficient: false };
@@ -124,7 +124,16 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
     if (perMinute.lte(0)) return { charged: false, insufficient: false };
 
     const hostBalance = new Prisma.Decimal(order.host.totalBalance ?? 0);
-    const maxMinutesByBalance = Math.floor(hostBalance.div(perMinute).toNumber());
+    const runningReserved = await tx.order.aggregate({
+      _sum: { chargedGross: true },
+      where: { hostId: order.hostId, status: OrderStatus.RUNNING },
+    });
+    const reserved = new Prisma.Decimal(runningReserved._sum?.chargedGross ?? 0);
+    let hostAvailable = hostBalance.sub(reserved);
+    if (hostAvailable.lt(0)) hostAvailable = new Prisma.Decimal(0);
+    const maxMinutesByBalance = hostAvailable.lte(0)
+      ? 0
+      : Math.floor(hostAvailable.div(perMinute).toNumber());
     const minutesToCharge = Math.min(pendingMinutes, maxMinutesByBalance);
     if (minutesToCharge <= 0) {
       return { charged: false, insufficient: true };
@@ -132,21 +141,6 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
 
     const gross = round2(perMinute.mul(minutesToCharge));
     if (gross.lte(0)) return { charged: false, insufficient: false };
-
-    const split = splitIncomeRecharge(
-      new Prisma.Decimal(order.host.income ?? 0),
-      new Prisma.Decimal(order.host.recharge ?? 0),
-      gross
-    );
-
-    await tx.member.update({
-      where: { discordUserId: order.hostId },
-      data: {
-        income: { decrement: split.fromIncome },
-        recharge: { decrement: split.fromRecharge },
-        totalBalance: { decrement: gross },
-      },
-    });
 
     await tx.order.update({
       where: { id: orderId },
@@ -176,12 +170,16 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
     const now = new Date();
     const elapsedTotalMinutes = minutesBetweenCeil(order.stopwatchStartAt!, now);
 
-    const hostBalance = new Prisma.Decimal(order.host.totalBalance ?? 0);
-
     const runningForHost = await tx.order.findMany({
       where: { hostId: order.hostId, status: OrderStatus.RUNNING },
-      select: { id: true, unitPrice: true },
+      select: { id: true, unitPrice: true, chargedGross: true },
     });
+    const reserved = runningForHost.reduce(
+      (sum, r) => (r.chargedGross ? sum.add(new Prisma.Decimal(r.chargedGross)) : sum),
+      new Prisma.Decimal(0)
+    );
+    let hostBalance = new Prisma.Decimal(order.host.totalBalance ?? 0).sub(reserved);
+    if (hostBalance.lt(0)) hostBalance = new Prisma.Decimal(0);
     let totalHourlyCost = new Prisma.Decimal(0);
     for (const r of runningForHost) {
       if (r.unitPrice) {
@@ -301,10 +299,6 @@ async function settle(
     },
   });
 
-  const chargedSoFarRaw = new Prisma.Decimal(order.chargedGross ?? 0);
-  const chargedGross = chargedSoFarRaw.gt(gross) ? gross : chargedSoFarRaw;
-  const remainingGross = gross.sub(chargedGross);
-
   const hostAccount = await tx.member.findUnique({
     where: { discordUserId: order.hostId },
     select: { income: true, recharge: true, totalBalance: true },
@@ -313,36 +307,28 @@ async function settle(
 
   const hostIncome = new Prisma.Decimal(hostAccount.income ?? 0);
   const hostRecharge = new Prisma.Decimal(hostAccount.recharge ?? 0);
-  const hostAvailable = hostIncome.add(hostRecharge);
 
-  let hostBalanceBefore = hostAvailable.add(chargedGross);
-  let hostBalanceAfter = hostAvailable;
-
-  const hostUpdateData: Prisma.MemberUpdateInput = {
-    totalSpent: { increment: gross },
-  };
-
-  if (remainingGross.gt(0)) {
-    let hostSplit;
-    try {
-      hostSplit = splitIncomeRecharge(hostIncome, hostRecharge, remainingGross);
-    } catch (err: any) {
-      if (err?.message === 'INSUFFICIENT_FUNDS') {
-        throw new Error('余额不足，无法完成结算。');
-      }
-      throw err;
+  let hostSplit;
+  try {
+    hostSplit = splitIncomeRecharge(hostIncome, hostRecharge, gross);
+  } catch (err: any) {
+    if (err?.message === 'INSUFFICIENT_FUNDS') {
+      throw new Error('余额不足，无法完成结算。');
     }
-
-    hostUpdateData.income = { decrement: hostSplit.fromIncome };
-    hostUpdateData.recharge = { decrement: hostSplit.fromRecharge };
-    hostUpdateData.totalBalance = { decrement: remainingGross };
-    hostBalanceBefore = hostSplit.totalBefore.add(chargedGross);
-    hostBalanceAfter = hostSplit.totalAfter;
+    throw err;
   }
+
+  const hostBalanceBefore = new Prisma.Decimal(hostAccount.totalBalance ?? 0);
+  const hostBalanceAfter = hostBalanceBefore.sub(gross);
 
   await tx.member.update({
     where: { discordUserId: order.hostId },
-    data: hostUpdateData,
+    data: {
+      income: { decrement: hostSplit.fromIncome },
+      recharge: { decrement: hostSplit.fromRecharge },
+      totalBalance: { decrement: gross },
+      totalSpent: { increment: gross },
+    },
   });
 
   await recordIndividualTransaction(tx, {

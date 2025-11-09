@@ -81,20 +81,39 @@ export async function scheduleForOrder(orderId: string) {
   };
   scheduleBilling();
 
-  if (order.cutoffAt) {
-    const ms = Math.max(0, order.cutoffAt.getTime() - Date.now());
-    cutoffTimers.set(orderId, setTimeout(async () => {
+  const scheduleCutoff = () => {
+    const tick = async () => {
       try {
-        const result = await endOrder(orderId, order.workerId);
-        cancelOrderTimers(orderId);
-        if (result?.status === OrderStatus.ENDED) {
-          await notifyOrderEnded(orderId);
+        const latest = await prisma.order.findUnique({
+          where: { id: orderId },
+          select: { status: true, cutoffAt: true, workerId: true },
+        });
+        if (!latest || latest.status !== OrderStatus.RUNNING) {
+          const timer = cutoffTimers.get(orderId);
+          if (timer) clearTimeout(timer);
+          cutoffTimers.delete(orderId);
+          return;
+        }
+        if (latest.cutoffAt && latest.cutoffAt.getTime() <= Date.now()) {
+          try {
+            const result = await endOrder(orderId, latest.workerId);
+            cancelOrderTimers(orderId);
+            if (result?.status === OrderStatus.ENDED) {
+              await notifyOrderEnded(orderId);
+            }
+          } catch (err) {
+            console.error('[timerService] cutoff end failed:', err);
+          }
+          return;
         }
       } catch (err) {
-        console.error('[timerService] cutoff end failed:', err);
+        console.error('[timerService] cutoff poll failed:', err);
       }
-    }, ms));
-  }
+      cutoffTimers.set(orderId, setTimeout(tick, MIN));
+    };
+    cutoffTimers.set(orderId, setTimeout(tick, MIN));
+  };
+  scheduleCutoff();
 }
 
 export function cancelOrderTimers(orderId: string) {
