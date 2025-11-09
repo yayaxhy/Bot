@@ -6,7 +6,7 @@ import { splitIncomeRecharge } from "../lib/balanceMath.js";
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
 // Check if the user is an admin (able to use !cash and allow negative balance)
-function isCashAdmin(msg: Message) {
+export function isCashAdmin(msg: Message) {
   const allowedUsers = (process.env.CASH_ALLOWED_USER_IDS ?? "")
     .split(",")
     .map(s => s.trim())

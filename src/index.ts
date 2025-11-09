@@ -12,6 +12,7 @@ import { handleAcceptOrder } from './interactions/buttons/acceptOrder.js';
 import { handleDeclineOrder } from './interactions/buttons/declineOrder.js';
 import { handleEndOrderButton } from './interactions/buttons/endOrder.js';
 import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
+import { registerTotalEarnCommand } from './commands/totalEarn.js';
 
 
 dotenv.config();
@@ -84,6 +85,7 @@ client.once(Events.ClientReady, async () => {
   await recoverAllTimers();
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
+  registerTotalEarnCommand(client, prisma);
 });
 
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));

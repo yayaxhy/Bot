@@ -1,4 +1,4 @@
-import { Client, Message, MessageCreateOptions, EmbedBuilder } from 'discord.js';
+import { Client, Message, MessageCreateOptions } from 'discord.js';
 import { Prisma, PrismaClient, MemberStatus } from '@prisma/client';
 import { postGiftFeed } from '../features/giftFeedHelper.js';
 import { recalcAllOrdersForHost } from '../services/orderService.js';
@@ -81,17 +81,11 @@ export interface GiftTransactionResult {
 function buildPublicGiftSuccessMessage(result: GiftTransactionResult): MessageCreateOptions {
   const qtyText = result.quantity.toString();
   const grossText = result.gross.toString();
-  const content = `打赏成功！${qtyText} x ${result.giftName}, 总价值：${grossText}`;
-  const payload: MessageCreateOptions = { content };
-
+  const lines = [`打赏成功！${qtyText} x ${result.giftName}, 总价值：${grossText}`];
   if (result.imageUrl) {
-    const embed = new EmbedBuilder()
-      .setImage(result.imageUrl)
-      .setColor(0xf5a623);
-    payload.embeds = [embed.toJSON()];
+    lines.push(result.imageUrl);
   }
-
-  return payload;
+  return { content: lines.join('\n') };
 }
 
 export async function performGift(
