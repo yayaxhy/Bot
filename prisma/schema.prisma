@@ -1,0 +1,270 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * ---------------- Enums ----------------
+ */
+
+enum MemberStatus {
+  LAOBAN
+  PEIWAN
+}
+
+enum EntryKind {
+  DIANDAN
+  DASHANG
+  TIXIAN
+  RECHARGE
+}
+
+enum PeiwanStatus {
+  busy
+  free
+}
+
+enum OrderMode {
+  REALNAME
+  ANONYMOUS
+}
+
+enum OrderStatus {
+  PENDING
+  RUNNING
+  ENDED
+  DECLINED
+  CANCELED
+  EXPIRED
+}
+
+enum QuotationCode {
+  Q1
+  Q2
+  Q3
+  Q4
+  Q5
+  Q6
+  Q7
+}
+
+/**
+ * ---------------- Models ----------------
+ */
+
+model Member {
+  // Primary key is the Discord user id
+  discordUserId String       @id
+  status        MemberStatus @default(LAOBAN)
+
+  // Money
+  totalBalance Decimal @default(0) @db.Decimal(19, 4)
+  income       Decimal @default(0) @db.Decimal(19, 4)
+  recharge     Decimal @default(0) @db.Decimal(19, 4)
+  totalSpent   Decimal @default(0) @db.Decimal(19, 4)
+
+  // Payout rate (user receives this share of gross), default 75%
+  commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
+
+  // Relations
+  commissionFrom Commission[] @relation("CommissionFrom")
+  commissionTo   Commission[] @relation("CommissionTo")
+
+  sentTransactions     Transaction[] @relation("FromMember")
+  receivedTransactions Transaction[] @relation("ToMember")
+
+  // One-to-one: every 陪玩 is a member; not every member is a 陪玩
+  peiwan PEIWAN? @relation("MemberToPeiwan")
+
+  // Orders (reverse edges)
+  ordersAsHost   Order[] @relation("HostOrders")
+  ordersAsWorker Order[] @relation("WorkerOrders")
+
+  // Heart counters (from → to)
+  heartFrom HeartCounter[] @relation("HeartFrom")
+  heartTo   HeartCounter[] @relation("HeartTo")
+
+  // Back-relation for WorkerLock (one active lock at most)
+  workerLock WorkerLock? @relation("MemberWorkerLock")
+}
+
+model Transaction {
+  Transid   String   @id @default(cuid())
+  orderID   Int      @unique @default(autoincrement())
+  fromId    String
+  toId      String
+  amount    Decimal  @db.Decimal(19, 4)
+  feeAmount Decimal  @db.Decimal(19, 4)
+  netAmount Decimal  @db.Decimal(19, 4)
+  createdAt DateTime @default(now())
+
+  commissionById    Commission? @relation("commissionById")
+  commissionByOrder Commission? @relation("commissionByOrder")
+
+  from Member @relation("FromMember", fields: [fromId], references: [discordUserId])
+  to   Member @relation("ToMember", fields: [toId], references: [discordUserId])
+}
+
+model IndividualTransaction {
+  transactionId      String   @id @default(dbgenerated("concat('IT', nextval('\"IndividualTransaction_transactionId_seq\"'::regclass))"))
+  timeCreatedAt      DateTime @default(now())
+  discordId          String
+  thirdPartydiscordId String
+  balanceBefore      Decimal  @db.Decimal(19, 4)
+  amountChange       Decimal  @db.Decimal(19, 4)
+  balanceAfter       Decimal  @db.Decimal(19, 4)
+  typeOfTransaction  String
+
+  @@index([discordId])
+}
+
+model Commission {
+  transactionId String   @id
+  orderID       Int      @unique @default(autoincrement())
+  fromId        String
+  toId          String
+  feeAmount     Decimal  @db.Decimal(19, 4)
+  createdAt     DateTime @default(now())
+
+  transactionByID    Transaction @relation("commissionById", fields: [transactionId], references: [Transid], onDelete: Cascade)
+  transactionByOrder Transaction @relation("commissionByOrder", fields: [orderID], references: [orderID], onDelete: Cascade)
+
+  from Member @relation("CommissionFrom", fields: [fromId], references: [discordUserId])
+  to   Member @relation("CommissionTo", fields: [toId], references: [discordUserId])
+}
+
+model InteractionLog {
+  Interid   String   @id @default(cuid())
+  memberId  String?
+  command   String?
+  payload   Json?
+  createdAt DateTime @default(now())
+}
+
+model Gift {
+  GiftName String   @id
+  price    Decimal? @db.Decimal(19, 4)
+  url_link String?
+  rate     Decimal  @default(1) @db.Decimal(10, 2)
+
+}
+
+model Recharge {
+  RechargeID String  @id
+  amount     Decimal @db.Decimal(19, 4)
+  toWhom     String
+  fromWhom   String  @default("1421651539247894549")
+  createdAt  DateTime @default(now())
+}
+
+model PEIWAN {
+  PEIWANID      Int    @id
+  discordUserId String @unique
+
+  // Required: every 陪玩 must have a default quotation *code*
+  defaultQuotationCode QuotationCode
+
+  // Price slots (include DEFAULT)
+  quotation_Q1 Decimal? @db.Decimal(10, 2)
+  quotation_Q2      Decimal? @db.Decimal(10, 2)
+  quotation_Q3      Decimal? @db.Decimal(10, 2)
+  quotation_Q4      Decimal? @db.Decimal(10, 2)
+  quotation_Q5      Decimal? @db.Decimal(10, 2)
+  quotation_Q6      Decimal? @db.Decimal(10, 2)
+  quotation_Q7      Decimal? @db.Decimal(10, 2)
+
+  // Payout rate copy on PEIWAN (synced → Member via DB trigger)
+  commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
+
+  totalEarn Decimal      @default(0) @db.Decimal(19, 4)
+  balance   Decimal      @default(0) @db.Decimal(19, 4)
+  MP_url    String?
+  status    PeiwanStatus @default(free)
+  techTag   Boolean      @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  member Member @relation("MemberToPeiwan", fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+
+  // Back-relation to Order for the peiwan relation
+  orders Order[] @relation("PeiwanOrders")
+
+  @@index([status])
+}
+
+model Order {
+  id       String @id @default(cuid()) // orderId
+  hostId   String
+  workerId String
+  peiwanId Int
+  displayNo Int @default(autoincrement()) @unique
+
+  host   Member @relation("HostOrders", fields: [hostId], references: [discordUserId], onDelete: Restrict)
+  worker Member @relation("WorkerOrders", fields: [workerId], references: [discordUserId], onDelete: Restrict)
+  peiwan PEIWAN @relation("PeiwanOrders", fields: [peiwanId], references: [PEIWANID], onDelete: Restrict)
+
+  mode   OrderMode
+  status OrderStatus @default(PENDING)
+
+  // Price snapshot
+  quotationCode QuotationCode
+  unitPrice     Decimal       @db.Decimal(10, 2)
+
+  // Timing (5-min delayed stopwatch billing)
+  createdAt        DateTime  @default(now())
+  acceptedAt       DateTime?
+  billableStartAt  DateTime? // = acceptedAt + 5min
+  stopwatchStartAt DateTime? // = acceptedAt
+  cutoffAt         DateTime? // = acceptedAt + maxMinutes
+
+  // Recalc snapshot & telemetry
+  maxMinutesAtAccept Int?
+  lastRecalcAt       DateTime?
+
+  endedAt      DateTime?
+  totalMinutes Int? // ceil((endedAt - stopwatchStartAt)/60)
+
+  // Money (gross two-decimal; payout snapshot is worker share)
+  grossAmount    Decimal? @db.Decimal(18, 2)
+  commissionRate Decimal? @db.Decimal(7, 6) // snapshot of worker payout share at accept
+  netAmount      Decimal? @db.Decimal(18, 2)
+
+  interId String?
+
+  // Back-relation for WorkerLock (one active lock per order at most)
+  workerLock WorkerLock? @relation("OrderWorkerLock")
+
+  @@index([status, cutoffAt])
+  @@index([workerId, status])
+  @@index([hostId, status])
+}
+
+model WorkerLock {
+  workerId  String   @unique
+  orderId   String   @unique
+  createdAt DateTime @default(now())
+
+  // Name relations to avoid ambiguity
+  worker Member @relation("MemberWorkerLock", fields: [workerId], references: [discordUserId], onDelete: Cascade)
+  order  Order  @relation("OrderWorkerLock", fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+model HeartCounter {
+  id           Int    @id @default(autoincrement())
+  fromMemberId String
+  toMemberId   String
+  total        Int    @default(0)
+
+  fromMember Member @relation("HeartFrom", fields: [fromMemberId], references: [discordUserId], onDelete: Cascade)
+  toMember   Member @relation("HeartTo", fields: [toMemberId], references: [discordUserId], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([fromMemberId, toMemberId])
+}
