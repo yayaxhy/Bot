@@ -15,10 +15,13 @@ export function isCashAdmin(msg: Message) {
   if (allowedUsers.length && allowedUsers.includes(msg.author.id)) return true;
 
   // role check (guild only)
-  const roleId = process.env.CASH_ALLOWED_ROLE_ID;
-  if (roleId && msg.inGuild()) {
+  const roleIds = (process.env.CASH_ALLOWED_ROLE_ID ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (roleIds.length && msg.inGuild()) {
     const m = msg.member as GuildMember | null;
-    if (m?.roles.cache.has(roleId)) return true;
+    if (m && roleIds.some((rid) => m.roles.cache.has(rid))) return true;
   }
   return false;
 }
