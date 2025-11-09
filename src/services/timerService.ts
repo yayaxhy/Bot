@@ -1,12 +1,13 @@
 import prisma from '../db/prisma.js';
 import { OrderStatus } from '@prisma/client';
 import { MIN } from '../lib/time.js';
-import { recalcOrAutoEnd, endOrder } from './orderService.js';
+import { recalcOrAutoEnd, endOrder, chargePendingMinutes } from './orderService.js';
 import { notifyOrderEnded } from './orderNotificationService.js';
 
 const cutoffTimers = new Map<string, NodeJS.Timeout>();
 const recalcTimers = new Map<string, NodeJS.Timeout>();
 const hourlyTimers = new Map<string, NodeJS.Timeout>();
+const billingTimers = new Map<string, NodeJS.Timeout>();
 
 export async function scheduleForOrder(orderId: string) {
   const order = await prisma.order.findUnique({ where: { id: orderId } });
@@ -60,6 +61,26 @@ export async function scheduleForOrder(orderId: string) {
   };
   scheduleHourly();
 
+  const scheduleBilling = () => {
+    billingTimers.set(orderId, setTimeout(async () => {
+      try {
+        const chargeResult = await chargePendingMinutes(orderId);
+        if (chargeResult.insufficient) {
+          const { ended } = await recalcOrAutoEnd(orderId);
+          if (ended) {
+            cancelOrderTimers(orderId);
+            await notifyOrderEnded(orderId);
+            return;
+          }
+        }
+      } catch (err) {
+        console.error('[timerService] billing charge failed:', err);
+      }
+      scheduleBilling();
+    }, MIN));
+  };
+  scheduleBilling();
+
   if (order.cutoffAt) {
     const ms = Math.max(0, order.cutoffAt.getTime() - Date.now());
     cutoffTimers.set(orderId, setTimeout(async () => {
@@ -77,7 +98,7 @@ export async function scheduleForOrder(orderId: string) {
 }
 
 export function cancelOrderTimers(orderId: string) {
-  [cutoffTimers, recalcTimers, hourlyTimers].forEach(map => {
+  [cutoffTimers, recalcTimers, hourlyTimers, billingTimers].forEach(map => {
     const t = map.get(orderId); if (t) clearTimeout(t); map.delete(orderId);
   });
 }

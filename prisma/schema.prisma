@@ -225,6 +225,8 @@ model Order {
   // Recalc snapshot & telemetry
   maxMinutesAtAccept Int?
   lastRecalcAt       DateTime?
+  chargedMinutes     Int      @default(0)
+  chargedGross       Decimal  @default(0) @db.Decimal(19, 4)
 
   endedAt      DateTime?
   totalMinutes Int? // ceil((endedAt - stopwatchStartAt)/60)

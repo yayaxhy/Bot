@@ -243,24 +243,8 @@ export async function handlePlayButton(i: ButtonInteraction) {
       return; // 静默：未注册陪玩则不做后续动作
     }
 
-    // 忙碌：通知老板“该陪玩无法接单”，并静默结束
+    // 忙碌：静默忽略此次抢单
     if (peiwan.status !== PeiwanStatus.free) {
-      try {
-        await sendMpToBossWithFallback(
-          i,
-          ownerId,
-          {
-            embeds: [
-              refuse_order_request_embed(peiwan.PEIWANID, orderId, `<@${workerId}>`),
-            ],
-            components: [],
-          },
-          orderId,
-          `<@${workerId}>`
-        );
-      } catch (e) {
-        console.error('[handlePlayButton] notify boss busy failed:', e);
-      }
       return;
     }
 

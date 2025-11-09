@@ -1,7 +1,7 @@
 import prisma from '../db/prisma.js';
 import { Prisma, OrderStatus, PeiwanStatus, MemberStatus } from '@prisma/client';
 import { D, round2, minutesBetweenCeil } from '../lib/money.js';
-import { addMinutes } from '../lib/time.js';
+import { addMinutes, minutesBetweenFloor } from '../lib/time.js';
 import { addHeart } from './heartService.js';
 import { notifyOrderEnded } from './orderNotificationService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
@@ -74,6 +74,8 @@ export async function acceptOrder(orderId: string) {
         commissionRate: worker.commissionRate,
         maxMinutesAtAccept,
         cutoffAt,
+        chargedMinutes: 0,
+        chargedGross: 0,
       },
     });
 
@@ -89,6 +91,72 @@ export async function acceptOrder(orderId: string) {
     });
 
     return updated;
+  });
+}
+
+type ChargeResult = { charged: boolean; insufficient: boolean };
+
+export async function chargePendingMinutes(orderId: string): Promise<ChargeResult> {
+  return prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: {
+        host: { select: { income: true, recharge: true, totalBalance: true } },
+      },
+    });
+    if (!order || order.status !== OrderStatus.RUNNING) return { charged: false, insufficient: false };
+
+    const billableAnchor =
+      order.billableStartAt ?? order.stopwatchStartAt ?? order.acceptedAt ?? order.createdAt ?? null;
+    if (!billableAnchor) return { charged: false, insufficient: false };
+
+    const now = new Date();
+    if (billableAnchor >= now) return { charged: false, insufficient: false };
+
+    const elapsedBillable = minutesBetweenFloor(billableAnchor, now);
+    const alreadyCharged = order.chargedMinutes ?? 0;
+    const pendingMinutes = elapsedBillable - alreadyCharged;
+    if (pendingMinutes <= 0) return { charged: false, insufficient: false };
+
+    const unitPrice = new Prisma.Decimal(order.unitPrice ?? 0);
+    if (unitPrice.lte(0)) return { charged: false, insufficient: false };
+    const perMinute = round2(unitPrice.div(60));
+    if (perMinute.lte(0)) return { charged: false, insufficient: false };
+
+    const hostBalance = new Prisma.Decimal(order.host.totalBalance ?? 0);
+    const maxMinutesByBalance = Math.floor(hostBalance.div(perMinute).toNumber());
+    const minutesToCharge = Math.min(pendingMinutes, maxMinutesByBalance);
+    if (minutesToCharge <= 0) {
+      return { charged: false, insufficient: true };
+    }
+
+    const gross = round2(perMinute.mul(minutesToCharge));
+    if (gross.lte(0)) return { charged: false, insufficient: false };
+
+    const split = splitIncomeRecharge(
+      new Prisma.Decimal(order.host.income ?? 0),
+      new Prisma.Decimal(order.host.recharge ?? 0),
+      gross
+    );
+
+    await tx.member.update({
+      where: { discordUserId: order.hostId },
+      data: {
+        income: { decrement: split.fromIncome },
+        recharge: { decrement: split.fromRecharge },
+        totalBalance: { decrement: gross },
+      },
+    });
+
+    await tx.order.update({
+      where: { id: orderId },
+      data: {
+        chargedMinutes: { increment: minutesToCharge },
+        chargedGross: { increment: gross },
+      },
+    });
+
+    return { charged: true, insufficient: minutesToCharge < pendingMinutes };
   });
 }
 
@@ -198,9 +266,9 @@ async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTim
     const cappedGross = hostBalance;
     const cappedNet   = round2(cappedGross.mul(payoutShare));
     const cappedFee   = round2(cappedGross.sub(cappedNet));
-    await settle(tx, order, endTime, totalMinutes, cappedGross, cappedNet, cappedFee);
+    await settle(tx, order, endTime, totalMinutes, billableMinutes, cappedGross, cappedNet, cappedFee);
   } else {
-    await settle(tx, order, endTime, totalMinutes, gross, netToWorker, feeToPlatform);
+    await settle(tx, order, endTime, totalMinutes, billableMinutes, gross, netToWorker, feeToPlatform);
   }
 
   await tx.pEIWAN.update({ where: { PEIWANID: order.peiwanId }, data: { status: PeiwanStatus.free } });
@@ -216,14 +284,26 @@ async function settle(
   order: any,
   endedAt: Date,
   totalMinutes: number,
+  billableMinutes: number,
   gross: Prisma.Decimal,
   netToWorker: Prisma.Decimal,
   feeToPlatform: Prisma.Decimal
 ) {
   await tx.order.update({
     where: { id: order.id },
-    data: { endedAt, totalMinutes, grossAmount: gross, netAmount: netToWorker },
+    data: {
+      endedAt,
+      totalMinutes,
+      grossAmount: gross,
+      netAmount: netToWorker,
+      chargedMinutes: billableMinutes,
+      chargedGross: gross,
+    },
   });
+
+  const chargedSoFarRaw = new Prisma.Decimal(order.chargedGross ?? 0);
+  const chargedGross = chargedSoFarRaw.gt(gross) ? gross : chargedSoFarRaw;
+  const remainingGross = gross.sub(chargedGross);
 
   const hostAccount = await tx.member.findUnique({
     where: { discordUserId: order.hostId },
@@ -231,36 +311,46 @@ async function settle(
   });
   if (!hostAccount) throw new Error('Host missing');
 
-  let hostSplit;
-  try {
-    hostSplit = splitIncomeRecharge(
-      new Prisma.Decimal(hostAccount.income ?? 0),
-      new Prisma.Decimal(hostAccount.recharge ?? 0),
-      gross
-    );
-  } catch (err: any) {
-    if (err?.message === 'INSUFFICIENT_FUNDS') {
-      throw new Error('余额不足，无法完成结算。');
+  const hostIncome = new Prisma.Decimal(hostAccount.income ?? 0);
+  const hostRecharge = new Prisma.Decimal(hostAccount.recharge ?? 0);
+  const hostAvailable = hostIncome.add(hostRecharge);
+
+  let hostBalanceBefore = hostAvailable.add(chargedGross);
+  let hostBalanceAfter = hostAvailable;
+
+  const hostUpdateData: Prisma.MemberUpdateInput = {
+    totalSpent: { increment: gross },
+  };
+
+  if (remainingGross.gt(0)) {
+    let hostSplit;
+    try {
+      hostSplit = splitIncomeRecharge(hostIncome, hostRecharge, remainingGross);
+    } catch (err: any) {
+      if (err?.message === 'INSUFFICIENT_FUNDS') {
+        throw new Error('余额不足，无法完成结算。');
+      }
+      throw err;
     }
-    throw err;
+
+    hostUpdateData.income = { decrement: hostSplit.fromIncome };
+    hostUpdateData.recharge = { decrement: hostSplit.fromRecharge };
+    hostUpdateData.totalBalance = { decrement: remainingGross };
+    hostBalanceBefore = hostSplit.totalBefore.add(chargedGross);
+    hostBalanceAfter = hostSplit.totalAfter;
   }
 
   await tx.member.update({
     where: { discordUserId: order.hostId },
-    data: {
-      income: { decrement: hostSplit.fromIncome },
-      recharge: { decrement: hostSplit.fromRecharge },
-      totalBalance: { decrement: gross },
-      totalSpent: { increment: gross },
-    },
+    data: hostUpdateData,
   });
 
   await recordIndividualTransaction(tx, {
     discordId: order.hostId,
     thirdPartydiscordId: order.workerId,
-    balanceBefore: hostSplit.totalBefore,
+    balanceBefore: hostBalanceBefore,
     amountChange: gross,
-    balanceAfter: hostSplit.totalAfter,
+    balanceAfter: hostBalanceAfter,
     typeOfTransaction: '点单',
   });
 
