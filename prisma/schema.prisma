@@ -143,14 +143,22 @@ enum CouponType {
   DISCOUNT_90
 }
 
+enum CouponStatus {
+  ACTIVE
+  USED
+  EXPIRED
+}
+
 model Coupon {
   id        String      @id @default(dbgenerated("concat('C', nextval('\"Coupon_id_seq\"'::regclass))"))
   discordId String
   type      CouponType
+  status    CouponStatus @default(ACTIVE)
   issuedAt  DateTime    @default(now())
   expiresAt DateTime
   consumedAt DateTime?
   orderId   String?
+  discountAmount Decimal? @db.Decimal(19, 4)
 }
 
 model Commission {

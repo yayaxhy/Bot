@@ -31,12 +31,12 @@ export async function notifyOrderEnded(orderId: string) {
       where: {
         discordId: order.hostId,
         type: 'DISCOUNT_90',
-        consumedAt: null,
+        status: 'ACTIVE',
         expiresAt: { gt: now },
       },
     }),
     prisma.coupon.findFirst({
-      where: { orderId },
+      where: { orderId, status: 'USED' },
       select: { id: true },
     }),
   ]);

@@ -48,11 +48,20 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   }
 
   const now = new Date();
+  await prisma.coupon.updateMany({
+    where: {
+      discordId: i.user.id,
+      status: 'ACTIVE',
+      expiresAt: { lte: now },
+    },
+    data: { status: 'EXPIRED' },
+  });
+
   const availableCoupon = await prisma.coupon.findFirst({
     where: {
       discordId: i.user.id,
       type: CouponType.DISCOUNT_90,
-      consumedAt: null,
+      status: 'ACTIVE',
       expiresAt: { gt: now },
     },
     orderBy: { issuedAt: 'asc' },
@@ -63,7 +72,7 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   }
 
   const existing = await prisma.coupon.findFirst({
-    where: { orderId, consumedAt: { not: null } },
+    where: { orderId, status: 'USED' },
     select: { id: true },
   });
   if (existing) {
@@ -102,6 +111,8 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
       data: {
         consumedAt: new Date(),
         orderId: order.id,
+        discountAmount,
+        status: 'USED',
       },
     });
 

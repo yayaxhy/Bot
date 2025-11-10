@@ -13,7 +13,7 @@ import {
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
-import { OrderStatus, OrderMode, QuotationCode, CouponType } from '@prisma/client';
+import { OrderStatus, OrderMode, QuotationCode, CouponType, CouponStatus } from '@prisma/client';
 import { endOrder } from '../services/orderService.js';
 import { cancelOrderTimers } from '../services/timerService.js';
 import {
@@ -274,6 +274,7 @@ async function tryHandleGrantCouponCommand(message: Message): Promise<boolean> {
       data.push({
         discordId: user.id,
         type: CouponType.DISCOUNT_90,
+        status: CouponStatus.ACTIVE,
         expiresAt,
       });
     }
