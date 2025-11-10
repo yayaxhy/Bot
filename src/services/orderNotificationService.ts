@@ -24,7 +24,10 @@ export async function notifyOrderEnded(orderId: string) {
   if (!client) return;
 
   const order = await fetchOrderSummary(orderId);
-  if (!order || !order.hostId || !order.workerId) return;
+  if (!order || !order.hostId || !order.workerId) {
+    console.log('[notifyOrderEnded] skip', { orderId, reason: 'missing order or participants' });
+    return;
+  }
   const now = new Date();
   const [availableCoupons, existingUsage] = await Promise.all([
     prisma.coupon.count({
