@@ -1,6 +1,6 @@
 // src/ui/orderEmbeds.ts
 import {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
+  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   APIEmbed, EmbedBuilder, MessageCreateOptions
 } from 'discord.js';
 import { QuotationCode, Gift } from '@prisma/client';
@@ -10,6 +10,22 @@ const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const THANK_BOSS_GIF_PATH = 'src/img/thankBoss.gif';
 const ORDER_PIC_PATH = 'src/img/orderPic.gif';
 const DEFAULT_EMBED_COLOR = 0xf5a623;
+
+export const DEFAULT_GIFTS: Array<{ GiftName: string; price: number }> = [
+  { GiftName: '冰淇淋', price: 1 },
+  { GiftName: '棒棒糖', price: 5 },
+  { GiftName: '小蛋糕', price: 10 },
+  { GiftName: '香水', price: 30 },
+  { GiftName: '旋转木马', price: 50 },
+  { GiftName: '南瓜车', price: 100 },
+  { GiftName: '留声机', price: 300 },
+  { GiftName: '一日冠', price: 888 },
+  { GiftName: '三日冠', price: 2388 },
+  { GiftName: '一周冠', price: 4688 },
+  { GiftName: '月冠名', price: 15888 },
+  { GiftName: '季冠名', price: 42888 },
+  { GiftName: '年冠名', price: 168888 },
+];
 
 const ROLE_KEYWORDS_TO_IDS: Record<string, string> = {
   '@女陪陪': '1430923008045744211',
@@ -329,6 +345,37 @@ export function invitation_embed(
     .setStyle(ButtonStyle.Secondary);
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(accept, decline);
 
+  return { embed, components: [row] };
+}
+
+export function discount_prompt_embed(
+  orderLabel: string,
+  orderId: string,
+  jiuzheCount: number
+): { embed: APIEmbed; components: any[] } | null {
+  const description = [
+    '检测到您有可以使用的优惠，如若使用可以点击下面列表进行选择（每个单子只能使用一次优惠券）',
+    `订单号：${orderLabel}`,
+  ].join('\n');
+  const embed = base('discount_shown', description);
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`discount_box:${orderId}`)
+    .setPlaceholder('选择优惠券');
+  let hasOption = false;
+
+  if (jiuzheCount > 0) {
+    menu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`9折券（剩余 ${jiuzheCount} 张）`)
+        .setValue('jiuzhe')
+        .setDescription('最高抵扣 ¥20，最多 2 小时的费用')
+    );
+    hasOption = true;
+  }
+
+  if (!hasOption) return null;
+  const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
   return { embed, components: [row] };
 }
 

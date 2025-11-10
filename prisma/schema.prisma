@@ -52,6 +52,23 @@ enum QuotationCode {
   Q7
 }
 
+enum PeiwanSex {
+  小姐姐
+  小哥哥
+}
+
+enum PeiwanType {
+  大神陪玩
+  技术陪玩
+  娱乐陪玩
+}
+
+enum PeiwanLevel {
+  优选陪玩
+  明星陪玩
+  殿堂陪玩
+}
+
 /**
  * ---------------- Models ----------------
  */
@@ -122,6 +139,20 @@ model IndividualTransaction {
   @@index([discordId])
 }
 
+enum CouponType {
+  DISCOUNT_90
+}
+
+model Coupon {
+  id        String      @id @default(dbgenerated("concat('C', nextval('\"Coupon_id_seq\"'::regclass))"))
+  discordId String
+  type      CouponType
+  issuedAt  DateTime    @default(now())
+  expiresAt DateTime
+  consumedAt DateTime?
+  orderId   String?
+}
+
 model Commission {
   transactionId String   @id
   orderID       Int      @unique @default(autoincrement())
@@ -185,6 +216,27 @@ model PEIWAN {
   MP_url    String?
   status    PeiwanStatus @default(free)
   techTag   Boolean      @default(false)
+  sex       PeiwanSex    @default(小姐姐)
+  exclusive Boolean      @default(false)
+  type      PeiwanType   @default(娱乐陪玩)
+  level     PeiwanLevel  @default(优选陪玩)
+  LOL       Boolean      @default(false)
+  CSGO      Boolean      @default(false)
+  Valorant  Boolean      @default(false)
+  Naraka    Boolean      @default(false)
+  OW2       Boolean      @default(false)
+  APEX      Boolean      @default(false)
+  deltaForce Boolean     @default(false)
+  marvel    Boolean      @default(false)
+  singer    Boolean      @default(false)
+  PUBG      Boolean      @default(false)
+  TFT       Boolean      @default(false)
+  R6        Boolean      @default(false)
+  tarkov    Boolean      @default(false)
+  chat      Boolean      @default(false)
+  steam     Boolean      @default(false)
+  DOTA      Boolean      @default(false)
+  COD       Boolean      @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

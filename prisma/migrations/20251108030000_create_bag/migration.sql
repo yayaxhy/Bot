@@ -1,0 +1,4 @@
+CREATE TABLE "Bag" (
+  "discordId" TEXT PRIMARY KEY,
+  "jiuzhe" INTEGER NOT NULL DEFAULT 0
+);

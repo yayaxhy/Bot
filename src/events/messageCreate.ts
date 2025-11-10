@@ -13,7 +13,7 @@ import {
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
-import { OrderStatus, OrderMode, QuotationCode } from '@prisma/client';
+import { OrderStatus, OrderMode, QuotationCode, CouponType } from '@prisma/client';
 import { endOrder } from '../services/orderService.js';
 import { cancelOrderTimers } from '../services/timerService.js';
 import {
@@ -24,6 +24,7 @@ import {
 } from '../services/orderInteractionManager.js';
 import { runOrderAcceptanceFlow } from '../interactions/buttons/acceptOrder.js';
 import { runOrderDeclineFlow } from '../interactions/buttons/declineOrder.js';
+import { isCashAdmin } from '../commands/cash.js';
 
 dotenv.config();
 
@@ -231,6 +232,57 @@ async function inferOrderIdentifierFromContext(message: Message): Promise<OrderI
   }
 
   return null;
+}
+
+async function tryHandleGrantCouponCommand(message: Message): Promise<boolean> {
+  const content = message.content?.trim();
+  if (!content || !content.startsWith('/送券')) return false;
+
+  if (!isCashAdmin(message)) {
+    await message.reply('❌ 你没有权限使用该命令。');
+    return true;
+  }
+
+  const tokens = content.split(/\s+/).filter(Boolean);
+  if (tokens.length < 4) {
+    await message.reply('用法：`/送券 9折券 数量 @用户`');
+    return true;
+  }
+
+  const couponType = tokens[1];
+  const quantity = Number(tokens[2]);
+  if (!Number.isInteger(quantity) || quantity <= 0) {
+    await message.reply('数量必须为正整数。');
+    return true;
+  }
+
+  if (couponType !== '9折券') {
+    await message.reply('目前仅支持 9折券。');
+    return true;
+  }
+
+  const targets = message.mentions.users;
+  if (!targets.size) {
+    await message.reply('请 @ 至少一位用户。');
+    return true;
+  }
+
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const data = [];
+  for (const user of targets.values()) {
+    for (let idx = 0; idx < quantity; idx++) {
+      data.push({
+        discordId: user.id,
+        type: CouponType.DISCOUNT_90,
+        expiresAt,
+      });
+    }
+  }
+  await prisma.coupon.createMany({ data });
+
+  const mentions = targets.map((u) => `<@${u.id}>`).join(' ');
+  await message.reply(`已为 ${mentions} 增加 ${quantity} 张 9折券（有效期 30 天）。`);
+  return true;
 }
 
 async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
@@ -594,6 +646,7 @@ export async function execute(message: Message) {
   const userA = message.author;     // 老板（发单人）
   if (!content || !userA) return;
 
+  if (await tryHandleGrantCouponCommand(message)) return;
   if (await tryHandleEndOrderCommand(message)) return;
   if (await tryHandleInviteResponseCommand(message)) return;
   if (await tryHandleQuickOrderCommand(message)) return;

@@ -1,4 +1,4 @@
-import { order_end_boss_embed, order_end_pw_embed } from '../ui/orderEmbeds.js';
+import { order_end_boss_embed, order_end_pw_embed, discount_prompt_embed } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
 import type { Client } from 'discord.js';
 
@@ -25,6 +25,21 @@ export async function notifyOrderEnded(orderId: string) {
 
   const order = await fetchOrderSummary(orderId);
   if (!order || !order.hostId || !order.workerId) return;
+  const now = new Date();
+  const [availableCoupons, existingUsage] = await Promise.all([
+    prisma.coupon.count({
+      where: {
+        discordId: order.hostId,
+        type: 'DISCOUNT_90',
+        consumedAt: null,
+        expiresAt: { gt: now },
+      },
+    }),
+    prisma.coupon.findFirst({
+      where: { orderId },
+      select: { id: true },
+    }),
+  ]);
 
   const totalMinutes = order.totalMinutes ?? 0;
   const gross = order.grossAmount ? Number(order.grossAmount.toString()) : 0;
@@ -59,6 +74,15 @@ export async function notifyOrderEnded(orderId: string) {
         ),
       ],
     });
+    if (availableCoupons > 0 && !existingUsage) {
+      const prompt = discount_prompt_embed(orderDisplay.toString(), order.id, availableCoupons);
+      if (prompt) {
+        await boss.send({
+          embeds: [prompt.embed],
+          components: prompt.components,
+        });
+      }
+    }
   } catch (err) {
     console.error('[notifyOrderEnded] notify boss failed:', err);
   }

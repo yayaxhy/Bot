@@ -12,6 +12,7 @@ import { handleAcceptOrder } from './interactions/buttons/acceptOrder.js';
 import { handleDeclineOrder } from './interactions/buttons/declineOrder.js';
 import { handleEndOrderButton } from './interactions/buttons/endOrder.js';
 import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
+import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
 
 
@@ -45,6 +46,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
         await handleGiftingSelect(i);
         return;
       }
+      if (i.customId.startsWith('discount_box')) {
+        await handleDiscountSelect(i);
+        return;
+      }
     }
 
     // Buttons
@@ -65,10 +70,9 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
         return;
       }
       if (i.customId.startsWith('order:end:')) {
-      await handleEndOrderButton(i);
-      return;
-    }
-      
+        await handleEndOrderButton(i);
+        return;
+      }
     }
   } catch (err) {
     console.error('[InteractionCreate] error:', err);

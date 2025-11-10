@@ -16,13 +16,8 @@ import {
   buildGiftingSelect,
   sent_MP_embed,
   refuse_order_request_embed,
+  DEFAULT_GIFTS,
 } from '../../ui/orderEmbeds.js';
-
-const FIXED_GIFTS: Array<{ GiftName: string; price: number }> = [
-  { GiftName: '甜甜圈', price: 1 },
-  { GiftName: '一日冠', price: 888 },
-  { GiftName: '三日冠', price: 2388 },
-];
 
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
@@ -250,7 +245,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
 
     // 价格 + 礼物下拉（通过 pricesFromPeiwan 生成，类型正确）
     const prices = pricesFromPeiwan(peiwan);
-    const giftsForSelect = FIXED_GIFTS as unknown as Array<{ GiftName: string; price: number }>;
+    const giftsForSelect = DEFAULT_GIFTS as Array<{ GiftName: string; price: number }>;
 
     const realnameBox = buildQuotationSelect('REALNAME', prices);
     const anonymousBox = buildQuotationSelect('ANON', prices);
