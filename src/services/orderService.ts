@@ -309,38 +309,48 @@ async function settle(
 
   const hostIncome = new Prisma.Decimal(hostAccount.income ?? 0);
   const hostRecharge = new Prisma.Decimal(hostAccount.recharge ?? 0);
-
-  let hostSplit;
-  try {
-    hostSplit = splitIncomeRecharge(hostIncome, hostRecharge, gross);
-  } catch (err: any) {
-    if (err?.message === 'INSUFFICIENT_FUNDS') {
-      throw new Error('余额不足，无法完成结算。');
-    }
-    throw err;
-  }
-
   const hostBalanceBefore = new Prisma.Decimal(hostAccount.totalBalance ?? 0);
-  const hostBalanceAfter = hostBalanceBefore.sub(gross);
+  let hostBalanceAfter = hostBalanceBefore;
 
-  await tx.member.update({
-    where: { discordUserId: order.hostId },
-    data: {
-      income: { decrement: hostSplit.fromIncome },
-      recharge: { decrement: hostSplit.fromRecharge },
-      totalBalance: { decrement: gross },
-      totalSpent: { increment: gross },
-    },
-  });
+  if (gross.gt(0)) {
+    let hostSplit;
+    try {
+      hostSplit = splitIncomeRecharge(hostIncome, hostRecharge, gross);
+    } catch (err: any) {
+      if (err?.message === 'INSUFFICIENT_FUNDS') {
+        throw new Error('余额不足，无法完成结算。');
+      }
+      throw err;
+    }
 
-  await recordIndividualTransaction(tx, {
-    discordId: order.hostId,
-    thirdPartydiscordId: order.workerId,
-    balanceBefore: hostBalanceBefore,
-    amountChange: gross,
-    balanceAfter: hostBalanceAfter,
-    typeOfTransaction: '点单',
-  });
+    hostBalanceAfter = hostBalanceBefore.sub(gross);
+
+    await tx.member.update({
+      where: { discordUserId: order.hostId },
+      data: {
+        income: { decrement: hostSplit.fromIncome },
+        recharge: { decrement: hostSplit.fromRecharge },
+        totalBalance: { decrement: gross },
+        totalSpent: { increment: gross },
+      },
+    });
+
+    await recordIndividualTransaction(tx, {
+      discordId: order.hostId,
+      thirdPartydiscordId: order.workerId,
+      balanceBefore: hostBalanceBefore,
+      amountChange: gross,
+      balanceAfter: hostBalanceAfter,
+      typeOfTransaction: '点单',
+    });
+  } else {
+    await tx.member.update({
+      where: { discordUserId: order.hostId },
+      data: {
+        totalSpent: { increment: gross },
+      },
+    });
+  }
 
   const workerAccount = await tx.member.findUnique({
     where: { discordUserId: order.workerId },
