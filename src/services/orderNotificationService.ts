@@ -77,11 +77,29 @@ export async function notifyOrderEnded(orderId: string) {
     if (availableCoupons > 0 && !existingUsage) {
       const prompt = discount_prompt_embed(orderDisplay.toString(), order.id, availableCoupons);
       if (prompt) {
+        console.log('[discount] sending prompt', {
+          orderId: order.id,
+          hostId: order.hostId,
+          availableCoupons,
+        });
         await boss.send({
           embeds: [prompt.embed],
           components: prompt.components,
         });
+      } else {
+        console.log('[discount] prompt missing', {
+          orderId: order.id,
+          hostId: order.hostId,
+          availableCoupons,
+        });
       }
+    } else {
+      console.log('[discount] no coupon prompt', {
+        orderId: order.id,
+        hostId: order.hostId,
+        availableCoupons,
+        existingUsage,
+      });
     }
   } catch (err) {
     console.error('[notifyOrderEnded] notify boss failed:', err);
