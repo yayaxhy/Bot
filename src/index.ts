@@ -14,6 +14,7 @@ import { handleEndOrderButton } from './interactions/buttons/endOrder.js';
 import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
 import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
+import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
 
 
 dotenv.config();
@@ -48,6 +49,13 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
       }
       if (i.customId.startsWith('discount_box')) {
         await handleDiscountSelect(i);
+        return;
+      }
+    }
+
+    if (i.isChatInputCommand()) {
+      if (i.commandName === '送券') {
+        await handleGrantCouponSlash(i);
         return;
       }
     }
@@ -90,6 +98,13 @@ client.once(Events.ClientReady, async () => {
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerTotalEarnCommand(client, prisma);
+  try {
+    if (client.application) {
+      await client.application.commands.create(grantCouponCommand);
+    }
+  } catch (err) {
+    console.error('[slash] register error:', err);
+  }
 });
 
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));

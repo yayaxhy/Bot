@@ -160,7 +160,8 @@ export async function handleOrderPriceSelect(i: Interaction) {
   try {
     const workerUser = await i.client.users.fetch(workerId);
     const gameContent = orderContentFromEmbed || '请与老板取得联系并开始服务';
-    const { embed, components } = invitation_embed(order.id, order.displayNo, hostId, gameContent);
+    const priceLabel = `¥${unitPrice.toFixed(2)}/小时（${quotationCode}）`;
+    const { embed, components } = invitation_embed(order.id, order.displayNo, hostId, gameContent, priceLabel);
     const inviteMessage = await workerUser.send({ embeds: [embed], components });
     registerInvitationMessage(order.id, inviteMessage);
   } catch {

@@ -515,11 +515,13 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
       const orderContentForInviteRaw = content.replace(/^!点单\s+\S+\s*/, '').trim();
       const orderContentForInvite = stripRoleMentions(orderContentForInviteRaw);
       const invitationContent = orderContentForInvite || '请与老板取得联系并开始服务';
+      const priceLabel = `¥${unitPrice.toFixed(2)}/小时（${defaultCode}）`;
       const { embed, components } = invitation_embed(
         order.id,
         order.displayNo,
         message.author.id,
-        invitationContent
+        invitationContent,
+        priceLabel
       );
       const inviteMessage = await workerUser.send({ embeds: [embed], components });
       registerInvitationMessage(order.id, inviteMessage);

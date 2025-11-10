@@ -1,18 +1,21 @@
-import { Client, GuildMember, Message } from "discord.js";
+import { Client, GuildMember, Message, ChatInputCommandInteraction } from "discord.js";
 import { Prisma, PrismaClient, MemberStatus } from "@prisma/client";
 import { recordIndividualTransaction } from "../services/individualTransactionService.js";
 import { splitIncomeRecharge } from "../lib/balanceMath.js";
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
+type CommandActor = Message | ChatInputCommandInteraction;
+
 // Check if the user is an admin (able to use !cash and allow negative balance)
-export function isCashAdmin(msg: Message) {
+export function isCashAdmin(msg: CommandActor) {
+  const userId = msg instanceof Message ? msg.author.id : msg.user.id;
   const allowedUsers = (process.env.CASH_ALLOWED_USER_IDS ?? "")
     .split(",")
     .map(s => s.trim())
     .filter(Boolean);
 
-  if (allowedUsers.length && allowedUsers.includes(msg.author.id)) return true;
+  if (allowedUsers.length && allowedUsers.includes(userId)) return true;
 
   // role check (guild only)
   const roleIds = (process.env.CASH_ALLOWED_ROLE_ID ?? '')

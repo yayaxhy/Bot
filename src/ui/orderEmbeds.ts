@@ -310,7 +310,8 @@ export function invitation_embed(
   orderId: string,
   displayNo: number | null | undefined,
   hostDiscordId: string | null,
-  gameContent: string
+  gameContent: string,
+  priceLabel?: string
 ): {
   embed: APIEmbed, components: any[]
 } {
@@ -325,14 +326,19 @@ export function invitation_embed(
     '请接单',
     `订单号：${orderLabel}`,
     `游戏内容：${limitedContent}`,
+  ];
+  if (priceLabel) {
+    lines.push(`老板选择的价格为：${priceLabel}`);
+  }
+  lines.push(
     '',
     '若按钮交互失败，可复制以下口令发送给机器人：',
     '接受：',
     `!yes.${displayNo != null ? displayNo : orderId}`,
     '',
     '拒绝：',
-    `!no.${displayNo != null ? displayNo : orderId}`,
-  ];
+    `!no.${displayNo != null ? displayNo : orderId}`
+  );
   const embed = base('游玩邀请', lines.join('\n'));
 
   const accept = new ButtonBuilder()

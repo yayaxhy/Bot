@@ -58,9 +58,9 @@ enum PeiwanSex {
 }
 
 enum PeiwanType {
-  大神陪玩
-  技术陪玩
   娱乐陪玩
+  技术陪玩
+  大神陪玩
 }
 
 enum PeiwanLevel {
