@@ -3,7 +3,7 @@ import prisma from '../../db/prisma.js';
 import { OrderStatus } from '@prisma/client';
 import { endOrder } from '../../services/orderService.js';
 import { cancelOrderTimers } from '../../services/timerService.js';
-import { order_end_boss_embed, order_end_pw_embed } from '../../ui/orderEmbeds.js';
+import { notifyOrderEnded } from '../../services/orderNotificationService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const END_BUTTON_PREFIX = 'order:end:';
@@ -29,7 +29,7 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
   try {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      select: { status: true, hostId: true, workerId: true },
+      select: { status: true, hostId: true, workerId: true, displayNo: true },
     });
     if (!order) {
       await i.editReply('订单不存在，请确认后再试。');
@@ -50,43 +50,13 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
     await endOrder(orderId, i.user.id);
     cancelOrderTimers(orderId);
 
-    const ended = await prisma.order.findUnique({
-      where: { id: orderId },
-      select: {
-        id: true,
-        displayNo: true,
-        peiwanId: true,
-        totalMinutes: true,
-        grossAmount: true,
-        netAmount: true,
-        hostId: true,
-        workerId: true,
-        host: { select: { totalBalance: true } },
-        worker: { select: { totalBalance: true } },
-      },
-    });
-    if (!ended) {
-      await i.editReply('订单已结单，但未能获取订单详情。');
-      try { await i.message.edit({ components: [] }); } catch {}
-      return;
+    try {
+      await notifyOrderEnded(orderId);
+    } catch (err) {
+      console.error('[handleEndOrderButton] notify failed:', err);
     }
 
-    const totalMinutes = ended.totalMinutes ?? 0;
-    const gross = ended.grossAmount ? Number(ended.grossAmount.toString()) : 0;
-    const net = ended.netAmount ? Number(ended.netAmount.toString()) : 0;
-    const hostBalance = ended.host?.totalBalance ? Number(ended.host.totalBalance.toString()) : 0;
-    const heartInc = Math.max(0, Math.round(gross));
-    const heartCounter = await prisma.heartCounter.findUnique({
-      where: {
-        fromMemberId_toMemberId: {
-          fromMemberId: ended.hostId,
-          toMemberId: ended.workerId,
-        },
-      },
-      select: { total: true },
-    });
-    const currentHeart = heartCounter?.total ?? 0;
-    const orderDisplay = ended.displayNo ?? ended.id;
+    const orderDisplay = order.displayNo ?? orderId;
     const orderLabel = typeof orderDisplay === 'number'
       ? `${ORDER_ID_PREFIX}${orderDisplay}`
       : `${ORDER_ID_PREFIX}${orderDisplay}`;
@@ -98,46 +68,6 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
       embeds: [],
     });
 
-    try {
-      if (ended.hostId) {
-        const boss = await i.client.users.fetch(ended.hostId);
-        await boss.send({
-          embeds: [
-            order_end_boss_embed(
-              orderDisplay,
-              ended.workerId,
-              ended.peiwanId ?? '—',
-              totalMinutes,
-              gross,
-              hostBalance,
-              heartInc,
-              currentHeart
-            ),
-          ],
-        });
-      }
-    } catch (notifyErr) {
-      console.error('[handleEndOrderButton] notify boss failed:', notifyErr);
-    }
-
-    try {
-      const worker = await i.client.users.fetch(ended.workerId);
-      await worker.send({
-        embeds: [
-          order_end_pw_embed(
-            orderDisplay,
-            ended.hostId,
-            totalMinutes,
-            gross,
-            net,
-            heartInc,
-            currentHeart
-          ),
-        ],
-      });
-    } catch (notifyErr) {
-      console.error('[handleEndOrderButton] notify worker failed:', notifyErr);
-    }
   } catch (err) {
     console.error('[handleEndOrderButton] error:', err);
     try { await i.editReply('结单失败，请稍后重试或联系工作人员。'); } catch {}

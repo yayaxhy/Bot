@@ -21,7 +21,10 @@ async function fetchOrderSummary(orderId: string) {
 
 export async function notifyOrderEnded(orderId: string) {
   const client = (globalThis as any).__CLIENT__ as Client | undefined;
-  if (!client) return;
+  if (!client) {
+    console.warn('[notifyOrderEnded] no client instance', { orderId });
+    return;
+  }
 
   const order = await fetchOrderSummary(orderId);
   if (!order || !order.hostId || !order.workerId) {
@@ -63,31 +66,30 @@ export async function notifyOrderEnded(orderId: string) {
 
   try {
     const boss = await client.users.fetch(order.hostId);
-    await boss.send({
-      embeds: [
-        order_end_boss_embed(
-          orderDisplay,
-          order.workerId,
-          order.peiwanId ?? '—',
-          totalMinutes,
-          gross,
-          hostBalance,
-          heartInc,
-          currentHeart
-        ),
-      ],
-    });
+    const embeds = [
+      order_end_boss_embed(
+        orderDisplay,
+        order.workerId,
+        order.peiwanId ?? '—',
+        totalMinutes,
+        gross,
+        hostBalance,
+        heartInc,
+        currentHeart
+      ),
+    ];
+    let components: any[] = [];
+
     if (availableCoupons > 0 && !existingUsage) {
       const prompt = discount_prompt_embed(orderDisplay.toString(), order.id, availableCoupons);
       if (prompt) {
+        embeds.push(prompt.embed);
+        components = prompt.components;
         console.log('[discount] sending prompt', {
           orderId: order.id,
           hostId: order.hostId,
           availableCoupons,
-        });
-        await boss.send({
-          embeds: [prompt.embed],
-          components: prompt.components,
+          destination: 'boss_dm',
         });
       } else {
         console.log('[discount] prompt missing', {
@@ -104,6 +106,8 @@ export async function notifyOrderEnded(orderId: string) {
         existingUsage,
       });
     }
+
+    await boss.send({ embeds, components });
   } catch (err) {
     console.error('[notifyOrderEnded] notify boss failed:', err);
   }
