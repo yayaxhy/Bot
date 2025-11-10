@@ -250,8 +250,10 @@ export async function endOrder(orderId: string, byDiscordId: string) {
 async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTime: Date) {
   const unitPrice = new Prisma.Decimal(order.unitPrice ?? 0);
 
-  const totalMinutes = minutesBetweenCeil(order.stopwatchStartAt!, endTime);
-  const billableStart = order.billableStartAt ?? order.stopwatchStartAt!;
+  const stopwatchStart =
+    order.stopwatchStartAt ?? order.acceptedAt ?? order.createdAt ?? endTime;
+  const totalMinutes = minutesBetweenCeil(stopwatchStart, endTime);
+  const billableStart = order.billableStartAt ?? stopwatchStart;
   const billableMinutes = Math.max(0, minutesBetweenCeil(billableStart, endTime));
 
   const gross = round2(unitPrice.mul(billableMinutes).div(60));
