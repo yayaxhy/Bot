@@ -452,7 +452,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         const successPayload = buildPublicGiftSuccessMessage(result);
         const mentionPrefix = `<@${receiverId}> `;
         const baseContent = successPayload.content ?? '';
-        successPayload.content = `${mentionPrefix}${baseContent}`.trim();
+        successPayload.content = `${baseContent}`.trim();
         if (channel && typeof channel.send === 'function') {
           await channel.send(successPayload);
           if (result.imageUrl) {
