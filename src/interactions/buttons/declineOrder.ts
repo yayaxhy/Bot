@@ -83,7 +83,7 @@ export async function runOrderDeclineFlow(client: Client, orderId: string, worke
     const workerMention = updated.workerId ? `<@${updated.workerId}>` : '';
     const bEmbed = refuse_order_request_embed(
       updated.peiwanId,
-      updated.displayNo ?? orderId,
+      updated.displayNo,
       workerMention,
     );
     await boss.send({ embeds: [bEmbed] });

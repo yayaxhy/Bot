@@ -169,7 +169,9 @@ export async function handleOrderPriceSelect(i: Interaction) {
   }
 
   // 6) 回复老板（交互完成）
-  const orderLabel = `${ORDER_ID_PREFIX}${order.displayNo ?? order.id}`;
+  const orderLabel = order.displayNo != null
+    ? `${ORDER_ID_PREFIX}${order.displayNo}`
+    : `${ORDER_ID_PREFIX}—`;
   await i.reply({
     content: `已向陪玩 ${userMention(workerId)} 发送邀请，请等待对方接单。\n订单号：${orderLabel}\n选择价格： ¥${unitPrice.toFixed(2)}`,
     ephemeral: false,

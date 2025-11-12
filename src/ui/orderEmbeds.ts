@@ -316,9 +316,8 @@ export function invitation_embed(
   embed: APIEmbed, components: any[]
 } {
   const bossMention = hostDiscordId ? `<@${hostDiscordId}>` : '@老板';
-  const orderLabel = displayNo != null
-    ? `${ORDER_ID_PREFIX}${displayNo}`
-    : `${ORDER_ID_PREFIX}${orderId}`;
+  const hasDisplayId = displayNo != null;
+  const orderLabel = hasDisplayId ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
   const sanitizedContent = stripRoleMentions(String(gameContent ?? '')) || '请与老板取得联系并开始服务';
   const limitedContent = sanitizedContent.slice(0, 1024);
   const lines = [
@@ -330,15 +329,17 @@ export function invitation_embed(
   if (priceLabel) {
     lines.push(`老板选择的价格为：${priceLabel}`);
   }
-  lines.push(
-    '',
-    '若按钮交互失败，可复制以下口令发送给机器人：',
-    '接受：',
-    `!yes.${displayNo != null ? displayNo : orderId}`,
-    '',
-    '拒绝：',
-    `!no.${displayNo != null ? displayNo : orderId}`
-  );
+  if (hasDisplayId) {
+    lines.push(
+      '',
+      '若按钮交互失败，可复制以下口令发送给机器人：',
+      '接受：',
+      `!yes.${displayNo}`,
+      '',
+      '拒绝：',
+      `!no.${displayNo}`
+    );
+  }
   const embed = base('游玩邀请', lines.join('\n'));
 
   const accept = new ButtonBuilder()
@@ -418,7 +419,7 @@ export const PW_accept_embed = (
 ) => {
   const orderLabel = displayNo != null
     ? `${ORDER_ID_PREFIX}${displayNo}`
-    : `${ORDER_ID_PREFIX}${orderId}`;
+    : `${ORDER_ID_PREFIX}—`;
   const bossMention = hostDiscordId ? `<@${hostDiscordId}>` : '@老板';
 
   const embed = base('接单成功', [
@@ -468,7 +469,7 @@ export function invite_success_boss_embed(orderId: string, displayNo: number, pe
 }
 
 export function order_end_boss_embed(
-  orderIdentifier: number | string,
+  displayNo: number | null | undefined,
   workerDiscordId: string | null,
   peiwanId: number | string,
   totalMin: number,
@@ -477,9 +478,7 @@ export function order_end_boss_embed(
   heartInc: number,
   heartTotal: number
 ) {
-  const orderLabel = typeof orderIdentifier === 'number'
-    ? `${ORDER_ID_PREFIX}${orderIdentifier}`
-    : `${ORDER_ID_PREFIX}${orderIdentifier}`;
+  const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
   const workerMention = workerDiscordId ? `<@${workerDiscordId}>` : '该陪玩';
   return base('订单已结束', [
     `【您与陪玩${workerMention}的订单已结束】`,
@@ -496,7 +495,7 @@ export function order_end_boss_embed(
 }
 
 export function order_end_pw_embed(
-  orderIdentifier: number | string,
+  displayNo: number | null | undefined,
   hostDiscordId: string | null,
   totalMin: number,
   gross: number,
@@ -504,9 +503,7 @@ export function order_end_pw_embed(
   heartInc: number,
   currentHeart: number
 ) {
-  const orderLabel = typeof orderIdentifier === 'number'
-    ? `${ORDER_ID_PREFIX}${orderIdentifier}`
-    : `${ORDER_ID_PREFIX}${orderIdentifier}`;
+  const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
   const hostMention = hostDiscordId ? `<@${hostDiscordId}>` : '老板';
   return base('订单已结束', [
     '【订单已结束】',
@@ -522,12 +519,10 @@ export function order_end_pw_embed(
 
 export function refuse_order_request_embed(
   peiwanId: number,
-  orderIdentifier: number | string,
+  displayNo: number | null | undefined,
   workerMention: string
 ) {
-  const orderLabel = typeof orderIdentifier === 'number'
-    ? `${ORDER_ID_PREFIX}${orderIdentifier}`
-    : `${ORDER_ID_PREFIX}${orderIdentifier}`;
+  const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
   const staffMention = `客服 ${getAdminMentions()}`;
   const workerPart = workerMention ? ` ${workerMention}` : '';
 

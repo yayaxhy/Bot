@@ -172,9 +172,9 @@ async function resolveOrderForCommand(
   return { order };
 }
 
-function formatOrderLabel(displayNo: number | null, id: string): string {
+function formatOrderLabel(displayNo: number | null | undefined): string {
   if (displayNo != null) return `${ORDER_ID_PREFIX}${displayNo}`;
-  return `${ORDER_ID_PREFIX}${id}`;
+  return `${ORDER_ID_PREFIX}—`;
 }
 
 function extractIdentifierFromText(text?: string | null): OrderIdentifier | null {
@@ -315,7 +315,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
         await message.reply('您当前没有正在进行中的订单。');
         return true;
       case 'multiple': {
-        const labels = resolved.candidateOrders?.map((o) => formatOrderLabel(o.displayNo, o.id)) ?? [];
+        const labels = resolved.candidateOrders?.map((o) => formatOrderLabel(o.displayNo)) ?? [];
         await message.reply(`检测到多个进行中的订单，请使用“!陪玩结单 <订单号>”或“!老板结单 <订单号>”指定要结单的订单。当前订单：${labels.join(', ')}`);
         return true;
       }
@@ -325,7 +325,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
   }
 
   const { order } = resolved;
-  const orderLabel = formatOrderLabel(order.displayNo, order.id);
+  const orderLabel = formatOrderLabel(order.displayNo);
 
   try {
     await endOrder(order.id, userId);
@@ -457,7 +457,7 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
       return true;
     }
 
-    const orderLabel = `${ORDER_ID_PREFIX}${order.displayNo ?? order.id}`;
+    const orderLabel = formatOrderLabel(order.displayNo);
     await message.reply(`已向陪玩发送邀请，订单号：${orderLabel}。`);
 
     return true;
@@ -527,7 +527,7 @@ async function tryHandleInviteResponseCommand(message: Message): Promise<boolean
     return true;
   }
 
-  const orderLabel = formatOrderLabel(order.displayNo, order.id);
+  const orderLabel = formatOrderLabel(order.displayNo);
 
   if (yesMatch) {
     try {

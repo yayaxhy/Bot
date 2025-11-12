@@ -56,10 +56,9 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
       console.error('[handleEndOrderButton] notify failed:', err);
     }
 
-    const orderDisplay = order.displayNo ?? orderId;
-    const orderLabel = typeof orderDisplay === 'number'
-      ? `${ORDER_ID_PREFIX}${orderDisplay}`
-      : `${ORDER_ID_PREFIX}${orderDisplay}`;
+    const orderLabel = order.displayNo != null
+      ? `${ORDER_ID_PREFIX}${order.displayNo}`
+      : `${ORDER_ID_PREFIX}—`;
 
     try { await i.message.edit({ components: [] }); } catch {}
 

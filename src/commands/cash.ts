@@ -125,6 +125,7 @@ export function registerCashCommand(client: Client, prisma: PrismaClient) {
           const updated = await tx.member.update({
             where: { discordUserId: targetId },
             data: {
+ 
               recharge: { increment: amount },
               totalBalance: { increment: amount },
               ...(peiwanRecord ? { status: MemberStatus.PEIWAN } : {}),

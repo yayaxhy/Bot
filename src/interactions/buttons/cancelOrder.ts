@@ -15,15 +15,16 @@ export const cancelOrder = async (interaction: ButtonInteraction) => {
     return interaction.reply('Unable to send the message. No valid text channel found.');
   }
 
-  // Update order status to canceled
-  await prisma.order.update({
-    where: { id: orderId },  // Correct reference to the 'id' field
-    data: { status: 'CANCELED' }
+  // Update order status to canceled and grab display number for notifications
+  const updated = await prisma.order.update({
+    where: { id: orderId },
+    data: { status: 'CANCELED' },
+    select: { displayNo: true },
   });
 
   // Send cancel confirmation to user
   await interaction.channel.send({
-    embeds: [order_end_boss_embed(orderId, null, '—', 0, 0, 0, 0, 0)] // Provide default values for the embed (or fetch relevant data)
+    embeds: [order_end_boss_embed(updated.displayNo, null, '—', 0, 0, 0, 0, 0)] // Provide default values for the embed (or fetch relevant data)
   });
 
   interaction.reply('You have canceled the order.');
