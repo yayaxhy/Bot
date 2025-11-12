@@ -10,6 +10,7 @@ import { MIN } from '../lib/time.js';
 
 const ORDER_REQUEST_CLOSE_MS = 20 * MIN;
 const INVITATION_EXPIRE_MS = 10 * MIN;
+const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 
 const requestTimers = new Map<string, NodeJS.Timeout>();
 const invitationTimers = new Map<string, NodeJS.Timeout>();
@@ -75,7 +76,7 @@ async function expireInvitation(orderId: string) {
   try {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      select: { status: true, hostId: true },
+      select: { status: true, hostId: true, displayNo: true },
     });
 
     if (!order || order.status !== OrderStatus.PENDING) return;
@@ -90,7 +91,8 @@ async function expireInvitation(orderId: string) {
         const client = msg?.client ?? (globalThis as any).__CLIENT__;
         if (client) {
           const user = await client.users.fetch(order.hostId);
-          await user.send(`订单 ${orderId} 的邀请已过期，陪玩未在 10 分钟内回应。`);
+          const displayId = order.displayNo != null ? `${ORDER_ID_PREFIX}${order.displayNo}` : orderId;
+          await user.send(`订单 ${displayId} 的邀请已过期，陪玩未在 10 分钟内回应。`);
         }
       } catch (err) {
         console.error('[orderInteractionManager] notify host about expired invitation failed:', err);
