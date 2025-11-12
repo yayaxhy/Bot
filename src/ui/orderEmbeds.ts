@@ -363,7 +363,7 @@ export function discount_prompt_embed(
     '检测到您有可以使用的优惠，如若使用可以点击下面列表进行选择（每个单子只能使用一次优惠券）',
     `订单号：${orderLabel}`,
   ].join('\n');
-  const embed = base('discount_shown', description);
+  const embed = base('使用优惠券', description);
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`discount_box:${orderId}`)
