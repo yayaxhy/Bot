@@ -91,7 +91,7 @@ async function expireInvitation(orderId: string) {
         const client = msg?.client ?? (globalThis as any).__CLIENT__;
         if (client) {
           const user = await client.users.fetch(order.hostId);
-          const displayId = order.displayNo != null ? `${ORDER_ID_PREFIX}${order.displayNo}` : `${ORDER_ID_PREFIX}—`;
+          const displayId = order.displayNo != null ? `${ORDER_ID_PREFIX}${order.displayNo}` : orderId;
           await user.send(`订单 ${displayId} 的邀请已过期，陪玩未在 10 分钟内回应。`);
         }
       } catch (err) {
