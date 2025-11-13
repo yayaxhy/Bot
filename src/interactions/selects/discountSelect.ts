@@ -80,14 +80,31 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
     return;
   }
 
-  const minutes = Math.min(order.totalMinutes ?? 0, 120);
-  if (minutes <= 0 || !order.unitPrice) {
+  const totalMinutes = order.totalMinutes ?? 0;
+  if (!order.unitPrice) {
     await i.reply({ content: '订单信息不足，无法使用优惠。' });
     return;
   }
 
+  if (totalMinutes <= 5) {
+    await i.reply({ content: '该订单未产生费用，无法使用优惠券。' });
+    return;
+  }
+
+  const cappedMinutes = Math.min(totalMinutes, 120);
+  const billableMinutes = totalMinutes <= 120 ? Math.max(cappedMinutes - 5, 0) : 120;
+  if (billableMinutes <= 0) {
+    await i.reply({ content: '该订单未产生费用，无法使用优惠券。' });
+    return;
+  }
+
   const perMinute = new Prisma.Decimal(order.unitPrice).div(60);
-  let discountAmount = round2(perMinute.mul(minutes).mul(0.1));
+  if (perMinute.lte(0)) {
+    await i.reply({ content: '订单信息不足，无法使用优惠。' });
+    return;
+  }
+
+  let discountAmount = round2(perMinute.mul(billableMinutes).mul(0.1));
   const maxDiscount = new Prisma.Decimal(20);
   if (discountAmount.gt(maxDiscount)) discountAmount = maxDiscount;
 

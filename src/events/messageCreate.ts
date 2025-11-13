@@ -7,13 +7,14 @@ import {
   ongoing_order_request_embed,
   anonymous_ongoing_order_request_embed,
   order_request_sent_successfully_embed,
+  order_end_boss_embed,
+  order_end_pw_embed,
   invitation_embed,
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
-import { OrderStatus, OrderMode, QuotationCode, CouponType, CouponStatus } from '@prisma/client';
+import { OrderStatus, OrderMode, QuotationCode } from '@prisma/client';
 import { endOrder } from '../services/orderService.js';
-import { notifyOrderEnded } from '../services/orderNotificationService.js';
 import { cancelOrderTimers } from '../services/timerService.js';
 import {
   registerInvitationMessage,
@@ -23,7 +24,6 @@ import {
 } from '../services/orderInteractionManager.js';
 import { runOrderAcceptanceFlow } from '../interactions/buttons/acceptOrder.js';
 import { runOrderDeclineFlow } from '../interactions/buttons/declineOrder.js';
-import { isCashAdmin } from '../commands/cash.js';
 
 dotenv.config();
 
@@ -172,9 +172,9 @@ async function resolveOrderForCommand(
   return { order };
 }
 
-function formatOrderLabel(displayNo: number | null | undefined): string {
+function formatOrderLabel(displayNo: number | null, id: string): string {
   if (displayNo != null) return `${ORDER_ID_PREFIX}${displayNo}`;
-  return `${ORDER_ID_PREFIX}—`;
+  return `${ORDER_ID_PREFIX}${id}`;
 }
 
 function extractIdentifierFromText(text?: string | null): OrderIdentifier | null {
@@ -233,58 +233,6 @@ async function inferOrderIdentifierFromContext(message: Message): Promise<OrderI
   return null;
 }
 
-async function tryHandleGrantCouponCommand(message: Message): Promise<boolean> {
-  const content = message.content?.trim();
-  if (!content || !content.startsWith('/送券')) return false;
-
-  if (!isCashAdmin(message)) {
-    await message.reply('❌ 你没有权限使用该命令。');
-    return true;
-  }
-
-  const tokens = content.split(/\s+/).filter(Boolean);
-  if (tokens.length < 4) {
-    await message.reply('用法：`/送券 9折券 数量 @用户`');
-    return true;
-  }
-
-  const couponType = tokens[1];
-  const quantity = Number(tokens[2]);
-  if (!Number.isInteger(quantity) || quantity <= 0) {
-    await message.reply('数量必须为正整数。');
-    return true;
-  }
-
-  if (couponType !== '9折券') {
-    await message.reply('目前仅支持 9折券。');
-    return true;
-  }
-
-  const targets = message.mentions.users;
-  if (!targets.size) {
-    await message.reply('请 @ 至少一位用户。');
-    return true;
-  }
-
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const data = [];
-  for (const user of targets.values()) {
-    for (let idx = 0; idx < quantity; idx++) {
-      data.push({
-        discordId: user.id,
-        type: CouponType.DISCOUNT_90,
-        status: CouponStatus.ACTIVE,
-        expiresAt,
-      });
-    }
-  }
-  await prisma.coupon.createMany({ data });
-
-  const mentions = targets.map((u) => `<@${u.id}>`).join(' ');
-  await message.reply(`已为 ${mentions} 增加 ${quantity} 张 9折券（有效期 30 天）。`);
-  return true;
-}
-
 async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
   const content = message.content?.trim();
   if (!content) return false;
@@ -315,7 +263,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
         await message.reply('您当前没有正在进行中的订单。');
         return true;
       case 'multiple': {
-        const labels = resolved.candidateOrders?.map((o) => formatOrderLabel(o.displayNo)) ?? [];
+        const labels = resolved.candidateOrders?.map((o) => formatOrderLabel(o.displayNo, o.id)) ?? [];
         await message.reply(`检测到多个进行中的订单，请使用“!陪玩结单 <订单号>”或“!老板结单 <订单号>”指定要结单的订单。当前订单：${labels.join(', ')}`);
         return true;
       }
@@ -325,7 +273,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
   }
 
   const { order } = resolved;
-  const orderLabel = formatOrderLabel(order.displayNo);
+  const orderLabel = formatOrderLabel(order.displayNo, order.id);
 
   try {
     await endOrder(order.id, userId);
@@ -336,13 +284,86 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
     return true;
   }
 
-  try {
-    await notifyOrderEnded(order.id);
-  } catch (err) {
-    console.error('[messageCreate:endOrder] notify failed:', err);
+  const ended = await prisma.order.findUnique({
+    where: { id: order.id },
+    select: {
+      id: true,
+      displayNo: true,
+      peiwanId: true,
+      totalMinutes: true,
+      grossAmount: true,
+      netAmount: true,
+      hostId: true,
+      workerId: true,
+      host: { select: { totalBalance: true, discordUserId: true } },
+      worker: { select: { totalBalance: true, discordUserId: true } },
+    },
+  });
+
+  if (!ended) {
+    await message.reply('订单已结单，但未能读取订单详情。');
+    return true;
   }
 
-  await message.reply(`订单 ${orderLabel} 已结单。`);
+  const totalMinutes = ended.totalMinutes ?? 0;
+  const gross = ended.grossAmount ? Number(ended.grossAmount.toString()) : 0;
+  const net = ended.netAmount ? Number(ended.netAmount.toString()) : 0;
+  const hostBalance = ended.host?.totalBalance ? Number(ended.host.totalBalance.toString()) : 0;
+  const heartInc = Math.max(0, Math.round(gross));
+
+  const heartCounter = await prisma.heartCounter.findUnique({
+    where: {
+      fromMemberId_toMemberId: {
+        fromMemberId: ended.hostId,
+        toMemberId: ended.workerId,
+      },
+    },
+    select: { total: true },
+  });
+  const currentHeart = heartCounter?.total ?? 0;
+
+  const endedLabel = formatOrderLabel(ended.displayNo, ended.id);
+
+  await message.reply(`订单 ${endedLabel} 已结单。`);
+
+  try {
+    const boss = await message.client.users.fetch(ended.hostId);
+    await boss.send({
+      embeds: [
+        order_end_boss_embed(
+          ended.displayNo ?? ended.id,
+          ended.workerId,
+          ended.peiwanId ?? '—',
+          totalMinutes,
+          gross,
+          hostBalance,
+          heartInc,
+          currentHeart
+        ),
+      ],
+    });
+  } catch (err) {
+    console.error('[messageCreate:endOrder] notify host failed:', err);
+  }
+
+  try {
+    const worker = await message.client.users.fetch(ended.workerId);
+    await worker.send({
+      embeds: [
+        order_end_pw_embed(
+          ended.displayNo ?? ended.id,
+          ended.hostId,
+          totalMinutes,
+          gross,
+          net,
+          heartInc,
+          currentHeart
+        ),
+      ],
+    });
+  } catch (err) {
+    console.error('[messageCreate:endOrder] notify worker failed:', err);
+  }
 
   return true;
 }
@@ -441,13 +462,11 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
       const orderContentForInviteRaw = content.replace(/^!点单\s+\S+\s*/, '').trim();
       const orderContentForInvite = stripRoleMentions(orderContentForInviteRaw);
       const invitationContent = orderContentForInvite || '请与老板取得联系并开始服务';
-      const priceLabel = `¥${unitPrice.toFixed(2)}/小时（${defaultCode}）`;
       const { embed, components } = invitation_embed(
         order.id,
         order.displayNo,
         message.author.id,
-        invitationContent,
-        priceLabel
+        invitationContent
       );
       const inviteMessage = await workerUser.send({ embeds: [embed], components });
       registerInvitationMessage(order.id, inviteMessage);
@@ -457,7 +476,7 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
       return true;
     }
 
-    const orderLabel = formatOrderLabel(order.displayNo);
+    const orderLabel = `${ORDER_ID_PREFIX}${order.displayNo ?? order.id}`;
     await message.reply(`已向陪玩发送邀请，订单号：${orderLabel}。`);
 
     return true;
@@ -527,7 +546,7 @@ async function tryHandleInviteResponseCommand(message: Message): Promise<boolean
     return true;
   }
 
-  const orderLabel = formatOrderLabel(order.displayNo);
+  const orderLabel = formatOrderLabel(order.displayNo, order.id);
 
   if (yesMatch) {
     try {
@@ -575,7 +594,6 @@ export async function execute(message: Message) {
   const userA = message.author;     // 老板（发单人）
   if (!content || !userA) return;
 
-  if (await tryHandleGrantCouponCommand(message)) return;
   if (await tryHandleEndOrderCommand(message)) return;
   if (await tryHandleInviteResponseCommand(message)) return;
   if (await tryHandleQuickOrderCommand(message)) return;

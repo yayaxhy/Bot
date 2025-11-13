@@ -1,7 +1,7 @@
 // src/ui/orderEmbeds.ts
 import {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
-  APIEmbed, EmbedBuilder, MessageCreateOptions
+  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder, APIEmbed, EmbedBuilder, MessageCreateOptions
 } from 'discord.js';
 import { QuotationCode, Gift } from '@prisma/client';
 
@@ -316,8 +316,9 @@ export function invitation_embed(
   embed: APIEmbed, components: any[]
 } {
   const bossMention = hostDiscordId ? `<@${hostDiscordId}>` : '@老板';
-  const hasDisplayId = displayNo != null;
-  const orderLabel = hasDisplayId ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
+  const orderLabel = displayNo != null
+    ? `${ORDER_ID_PREFIX}${displayNo}`
+    : `${ORDER_ID_PREFIX}${orderId}`;
   const sanitizedContent = stripRoleMentions(String(gameContent ?? '')) || '请与老板取得联系并开始服务';
   const limitedContent = sanitizedContent.slice(0, 1024);
   const lines = [
@@ -329,17 +330,15 @@ export function invitation_embed(
   if (priceLabel) {
     lines.push(`老板选择的价格为：${priceLabel}`);
   }
-  if (hasDisplayId) {
-    lines.push(
-      '',
-      '若按钮交互失败，可复制以下口令发送给机器人：',
-      '接受：',
-      `!yes.${displayNo}`,
-      '',
-      '拒绝：',
-      `!no.${displayNo}`
-    );
-  }
+  lines.push(
+    '',
+    '若按钮交互失败，可复制以下口令发送给机器人：',
+    '接受：',
+    `!yes.${displayNo != null ? displayNo : orderId}`,
+    '',
+    '拒绝：',
+    `!no.${displayNo != null ? displayNo : orderId}`,
+  );
   const embed = base('游玩邀请', lines.join('\n'));
 
   const accept = new ButtonBuilder()
@@ -369,6 +368,7 @@ export function discount_prompt_embed(
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`discount_box:${orderId}`)
     .setPlaceholder('选择优惠券');
+
   let hasOption = false;
 
   if (jiuzheCount > 0) {
@@ -376,7 +376,7 @@ export function discount_prompt_embed(
       new StringSelectMenuOptionBuilder()
         .setLabel(`9折券（剩余 ${jiuzheCount} 张）`)
         .setValue('jiuzhe')
-        .setDescription('最高抵扣 ¥20，最多 2 小时的费用')
+        .setDescription('最高抵扣 2 小时')
     );
     hasOption = true;
   }
@@ -419,7 +419,7 @@ export const PW_accept_embed = (
 ) => {
   const orderLabel = displayNo != null
     ? `${ORDER_ID_PREFIX}${displayNo}`
-    : `${ORDER_ID_PREFIX}—`;
+    : `${ORDER_ID_PREFIX}${orderId}`;
   const bossMention = hostDiscordId ? `<@${hostDiscordId}>` : '@老板';
 
   const embed = base('接单成功', [
@@ -469,7 +469,7 @@ export function invite_success_boss_embed(orderId: string, displayNo: number, pe
 }
 
 export function order_end_boss_embed(
-  displayNo: number | null | undefined,
+  orderIdentifier: number | string,
   workerDiscordId: string | null,
   peiwanId: number | string,
   totalMin: number,
@@ -478,7 +478,9 @@ export function order_end_boss_embed(
   heartInc: number,
   heartTotal: number
 ) {
-  const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
+  const orderLabel = typeof orderIdentifier === 'number'
+    ? `${ORDER_ID_PREFIX}${orderIdentifier}`
+    : `${ORDER_ID_PREFIX}${orderIdentifier}`;
   const workerMention = workerDiscordId ? `<@${workerDiscordId}>` : '该陪玩';
   return base('订单已结束', [
     `【您与陪玩${workerMention}的订单已结束】`,
@@ -495,7 +497,7 @@ export function order_end_boss_embed(
 }
 
 export function order_end_pw_embed(
-  displayNo: number | null | undefined,
+  orderIdentifier: number | string,
   hostDiscordId: string | null,
   totalMin: number,
   gross: number,
@@ -503,7 +505,9 @@ export function order_end_pw_embed(
   heartInc: number,
   currentHeart: number
 ) {
-  const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
+  const orderLabel = typeof orderIdentifier === 'number'
+    ? `${ORDER_ID_PREFIX}${orderIdentifier}`
+    : `${ORDER_ID_PREFIX}${orderIdentifier}`;
   const hostMention = hostDiscordId ? `<@${hostDiscordId}>` : '老板';
   return base('订单已结束', [
     '【订单已结束】',
@@ -519,10 +523,12 @@ export function order_end_pw_embed(
 
 export function refuse_order_request_embed(
   peiwanId: number,
-  displayNo: number | null | undefined,
+  orderIdentifier: number | string,
   workerMention: string
 ) {
-  const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
+  const orderLabel = typeof orderIdentifier === 'number'
+    ? `${ORDER_ID_PREFIX}${orderIdentifier}`
+    : `${ORDER_ID_PREFIX}${orderIdentifier}`;
   const staffMention = `客服 ${getAdminMentions()}`;
   const workerPart = workerMention ? ` ${workerMention}` : '';
 
