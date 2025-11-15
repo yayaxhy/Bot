@@ -140,8 +140,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
         const announceEmbed = new EmbedBuilder()
           .setTitle('提现公告')
           .setDescription(lines.join('\n'))
-          .setColor(0xf4a460)
-          .setTimestamp(requestedAt);
+          .setColor(0xf4a460);
         await (channel as any).send({ embeds: [announceEmbed] });
       } else {
         console.warn('[withdraw.notify] announce channel not text based', { announceChannelId });
