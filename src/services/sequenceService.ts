@@ -1,6 +1,5 @@
-import { Prisma, PrismaClient } from '@prisma/client';
-
-export type PrismaClientOrTransaction = PrismaClient | Prisma.TransactionClient;
+import { Prisma } from '@prisma/client';
+import prisma from '../db/prisma.js';
 
 type SequenceRepairConfig = {
   sequenceName: string;
@@ -11,10 +10,7 @@ type SequenceRepairConfig = {
   minValue?: number;
 };
 
-async function realignPrefixedSequence(
-  client: PrismaClientOrTransaction,
-  config: SequenceRepairConfig
-) {
+async function realignPrefixedSequence(config: SequenceRepairConfig) {
   const { sequenceName, tableName, columnName, substringFrom, pattern, minValue = 1 } = config;
   const sql = `
 DO $$
@@ -34,13 +30,11 @@ BEGIN
 END $$;
 `;
 
-  await client.$executeRawUnsafe(sql);
+  await prisma.$executeRawUnsafe(sql);
 }
 
-export async function realignIndividualTransactionSequence(
-  client: PrismaClientOrTransaction
-) {
-  await realignPrefixedSequence(client, {
+export async function realignIndividualTransactionSequence() {
+  await realignPrefixedSequence({
     sequenceName: 'IndividualTransaction_transactionId_seq',
     tableName: 'IndividualTransaction',
     columnName: 'transactionId',
@@ -49,8 +43,8 @@ export async function realignIndividualTransactionSequence(
   });
 }
 
-export async function realignRechargeSequence(client: PrismaClientOrTransaction) {
-  await realignPrefixedSequence(client, {
+export async function realignRechargeSequence() {
+  await realignPrefixedSequence({
     sequenceName: 'Recharge_RechargeID_seq',
     tableName: 'Recharge',
     columnName: 'RechargeID',
@@ -59,8 +53,8 @@ export async function realignRechargeSequence(client: PrismaClientOrTransaction)
   });
 }
 
-export async function realignCouponSequence(client: PrismaClientOrTransaction) {
-  await realignPrefixedSequence(client, {
+export async function realignCouponSequence() {
+  await realignPrefixedSequence({
     sequenceName: 'Coupon_id_seq',
     tableName: 'Coupon',
     columnName: 'id',
@@ -69,8 +63,8 @@ export async function realignCouponSequence(client: PrismaClientOrTransaction) {
   });
 }
 
-export async function realignWithdrawSequence(client: PrismaClientOrTransaction) {
-  await realignPrefixedSequence(client, {
+export async function realignWithdrawSequence() {
+  await realignPrefixedSequence({
     sequenceName: 'Withdraw_id_seq',
     tableName: 'Withdraw',
     columnName: 'id',

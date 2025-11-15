@@ -1,11 +1,9 @@
-import { Prisma } from '@prisma/client';
-import {
-  PrismaClientOrTransaction,
-  isUniqueConstraintError,
-  realignIndividualTransactionSequence,
-} from './sequenceService.js';
+import { Prisma, PrismaClient } from '@prisma/client';
+import { isUniqueConstraintError, realignIndividualTransactionSequence } from './sequenceService.js';
 
 export const CUSTOMER_SERVICE_DISCORD_ID = '1421651539247894549';
+
+type PrismaClientOrTransaction = Prisma.TransactionClient | PrismaClient;
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -52,7 +50,7 @@ export async function recordIndividualTransaction(
       });
     } catch (err) {
       if (isUniqueConstraintError(err, 'transactionId')) {
-        await realignIndividualTransactionSequence(client);
+        await realignIndividualTransactionSequence();
         continue;
       }
       throw err;

@@ -109,6 +109,9 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
   const lines = [
     `你在 ${formatDate(requestedAt)} 发起了提现 ${formatCurrency(amountNumber, currency)}。`,
   ];
+  if (payload.withdrawalId) {
+    lines.push(`订单号：${payload.withdrawalId}`);
+  }
 
   if (payload.note) {
     lines.push(`提现方式：${payload.note}`);
@@ -140,8 +143,11 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
         const lines = [
           `${mention} 在 ${formatDate(requestedAt)} 发起了提现`,
           `金额：${formatCurrency(amountNumber, currency)}。`,
-          `提现方式：${payload.note ?? '—'}`,
         ];
+        if (payload.withdrawalId) {
+          lines.push(`订单号：${payload.withdrawalId}`);
+        }
+        lines.push(`提现方式：${payload.note ?? '—'}`);
          if (workIdLine) {
           lines.splice(1, 0, workIdLine);
         }

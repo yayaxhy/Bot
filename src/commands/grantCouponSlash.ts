@@ -64,7 +64,7 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
       break;
     } catch (err) {
       if (isUniqueConstraintError(err, 'id')) {
-        await realignCouponSequence(prisma);
+        await realignCouponSequence();
         continue;
       }
       throw err;

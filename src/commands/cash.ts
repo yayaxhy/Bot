@@ -76,7 +76,7 @@ async function recordRecharge(
       return;
     } catch (err) {
       if (isUniqueConstraintError(err, 'RechargeID')) {
-        await realignRechargeSequence(prisma);
+        await realignRechargeSequence();
         continue;
       }
       throw err;
