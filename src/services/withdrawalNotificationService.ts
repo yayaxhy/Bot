@@ -125,4 +125,26 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
   } catch (err) {
     console.error('[withdraw.notify] failed to send DM', { userDiscordId, err });
   }
+
+  const announceChannelId = process.env.WITHDRAW_ANNOUNCE_CHANNEL_ID;
+  if (announceChannelId) {
+    try {
+      const channel = await client.channels.fetch(announceChannelId);
+      if (channel && 'send' in channel && typeof (channel as any).send === 'function') {
+        const mention = `<@${userDiscordId}>`;
+        const lines = [
+          `${mention} 在 ${formatDate(requestedAt)} 发起了提现`,
+          `金额：${formatCurrency(amountNumber, currency)}。`,
+        ];
+        if (payload.note) {
+          lines.push(`提现方式：${payload.note}`);
+        }
+        await (channel as any).send(lines.join('\n'));
+      } else {
+        console.warn('[withdraw.notify] announce channel not text based', { announceChannelId });
+      }
+    } catch (err) {
+      console.error('[withdraw.notify] failed to send announce message', { announceChannelId, err });
+    }
+  }
 }
