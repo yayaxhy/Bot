@@ -110,7 +110,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
     `你在 ${formatDate(requestedAt)} 发起了提现 ${formatCurrency(amountNumber, currency)}。`,
   ];
   if (payload.withdrawalId) {
-    lines.push(`订单号：${payload.withdrawalId}`);
+    lines.push(`提现单号：${payload.withdrawalId}`);
   }
 
   if (payload.note) {
