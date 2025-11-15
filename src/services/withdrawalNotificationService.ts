@@ -106,12 +106,6 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
     `你在 ${formatDate(requestedAt)} 发起了提现 ${formatCurrency(amountNumber, currency)}。`,
   ];
 
-  if (payload.withdrawalId) {
-    lines.push(`提现编号：${payload.withdrawalId}`);
-  }
-  if (remainingIncome != null) {
-    lines.push(`提现后余额：${formatCurrency(remainingIncome, currency)}`);
-  }
   if (payload.note) {
     lines.push(`提现方式：${payload.note}`);
   }

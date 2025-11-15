@@ -128,11 +128,13 @@ model Transaction {
 
 model Withdraw {
   id         String   @id @default(dbgenerated("concat('W', nextval('\"Withdraw_id_seq\"'::regclass))"))
-  discordId  String   @unique
+  discordId  String
   createdAt  DateTime @default(now())
   amount     Int
   method     String
   notifiedAt DateTime?
+
+  @@index([discordId])
 }
 
 model IndividualTransaction {

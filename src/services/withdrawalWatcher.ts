@@ -86,7 +86,12 @@ async function processPayload(raw: string | null) {
 }
 
 async function connectListener() {
-  if (!process.env.DATABASE_URL) {
+  const connectionString =
+    process.env.WITHDRAW_DATABASE_URL?.trim().length
+      ? process.env.WITHDRAW_DATABASE_URL
+      : process.env.DATABASE_URL;
+
+  if (!connectionString) {
     console.warn('[withdraw.watch] DATABASE_URL missing, skip listener');
     return;
   }
@@ -99,7 +104,6 @@ async function connectListener() {
     console.error('[withdraw.watch] ensure trigger failed', err);
   });
 
-  const connectionString = process.env.DATABASE_URL;
   const client = new PgClient({
     connectionString,
     keepAlive: true,
