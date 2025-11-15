@@ -9,6 +9,7 @@ export interface WithdrawalNotificationPayload {
   note?: string;
   currency?: string;
   remainingIncome?: number | string;
+  workId?: number;
 }
 
 const CURRENCY_SYMBOLS: Record<string, string> = {
@@ -90,10 +91,13 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
   try {
     const member = await prisma.member.findUnique({
       where: { discordUserId: userDiscordId },
-      select: { income: true },
+      select: { income: true, peiwan: { select: { PEIWANID: true } } },
     });
     if (member?.income) {
       latestIncome = Number(member.income.toString());
+    }
+    if (member?.peiwan?.PEIWANID != null) {
+      payload.workId = member.peiwan.PEIWANID;
     }
   } catch (err) {
     console.error('[withdraw.notify] failed to load member income', { userDiscordId, err });
@@ -132,15 +136,20 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
       const channel = await client.channels.fetch(announceChannelId);
       if (channel && 'send' in channel && typeof (channel as any).send === 'function') {
         const mention = `<@${userDiscordId}>`;
+        const workIdLine = payload.workId != null ? `陪玩ID：${payload.workId}` : null;
         const lines = [
           `${mention} 在 ${formatDate(requestedAt)} 发起了提现`,
           `金额：${formatCurrency(amountNumber, currency)}。`,
           `提现方式：${payload.note ?? '—'}`,
         ];
+        if (workIdLine) {
+          lines.splice(1, 0, workIdLine);
+        }
         const announceEmbed = new EmbedBuilder()
           .setTitle('提现公告')
           .setDescription(lines.join('\n'))
-          .setColor(0xf4a460);
+          .setColor(0xf4a460)
+          
         await (channel as any).send({ embeds: [announceEmbed] });
       } else {
         console.warn('[withdraw.notify] announce channel not text based', { announceChannelId });
