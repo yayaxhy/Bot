@@ -51,7 +51,7 @@ async function sendPeiwanNotification(discordId: string, peiwanId?: number) {
   try {
     const user = await client.users.fetch(discordId);
     const prefix = peiwanId != null ? `陪玩 ID ${peiwanId}` : '您的陪玩信息';
-    await user.send(`${prefix} 已更新，您的信息已经注册完毕，可以开始抢单接单啦！`);
+    await user.send(`${prefix} 已更新，您的信息已经注册完毕`);
     console.log('[peiwan.watch] sent profile DM', { discordId, peiwanId });
   } catch (err) {
     console.error('[peiwan.watch] failed to DM peiwan', { discordId, err });

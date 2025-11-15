@@ -91,7 +91,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
   try {
     const member = await prisma.member.findUnique({
       where: { discordUserId: userDiscordId },
-      select: { income: true, peiwan: { select: { PEIWANID: true } } },
+       select: { income: true, peiwan: { select: { PEIWANID: true } } },
     });
     if (member?.income) {
       latestIncome = Number(member.income.toString());
@@ -142,13 +142,13 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
           `金额：${formatCurrency(amountNumber, currency)}。`,
           `提现方式：${payload.note ?? '—'}`,
         ];
-        if (workIdLine) {
+         if (workIdLine) {
           lines.splice(1, 0, workIdLine);
         }
         const announceEmbed = new EmbedBuilder()
           .setTitle('提现公告')
           .setDescription(lines.join('\n'))
-          .setColor(0xf4a460)
+          .setColor(0xf4a460);
           
         await (channel as any).send({ embeds: [announceEmbed] });
       } else {

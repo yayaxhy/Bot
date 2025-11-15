@@ -1,6 +1,7 @@
 import { order_end_boss_embed, order_end_pw_embed, discount_prompt_embed } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
 import type { Client } from 'discord.js';
+import { syncSpentRolesForMember } from './spentRoleService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 
@@ -33,6 +34,7 @@ export async function notifyOrderEnded(orderId: string) {
     console.log('[notifyOrderEnded] skip', { orderId, reason: 'missing order or participants' });
     return;
   }
+  syncSpentRolesForMember(order.hostId).catch((err) => console.error('[spent-role] schedule failed', err));
   const now = new Date();
   const [availableCoupons, existingUsage] = await Promise.all([
     prisma.coupon.count({

@@ -6,6 +6,7 @@ import { addHeart } from '../services/heartService.js';
 import { recordIndividualTransaction } from '../services/individualTransactionService.js';
 import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
+import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 
@@ -282,6 +283,10 @@ export async function performGift(
   } catch (notifyErr) {
     console.error('[performGift] notify receiver failed:', notifyErr);
   }
+
+  syncSpentRolesForMember(giverId).catch((err) =>
+    console.error('[spent-role] gift sync failed', err)
+  );
 
   return result;
 }

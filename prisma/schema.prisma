@@ -83,6 +83,7 @@ model Member {
   income       Decimal @default(0) @db.Decimal(19, 4)
   recharge     Decimal @default(0) @db.Decimal(19, 4)
   totalSpent   Decimal @default(0) @db.Decimal(19, 4)
+  VIPRoleOptOut Boolean @default(false)
 
   // Payout rate (user receives this share of gross), default 75%
   commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
