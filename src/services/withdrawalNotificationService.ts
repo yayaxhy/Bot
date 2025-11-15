@@ -135,11 +135,14 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
         const lines = [
           `${mention} 在 ${formatDate(requestedAt)} 发起了提现`,
           `金额：${formatCurrency(amountNumber, currency)}。`,
+          `提现方式：${payload.note ?? '—'}`,
         ];
-        if (payload.note) {
-          lines.push(`提现方式：${payload.note}`);
-        }
-        await (channel as any).send(lines.join('\n'));
+        const announceEmbed = new EmbedBuilder()
+          .setTitle('提现公告')
+          .setDescription(lines.join('\n'))
+          .setColor(0xf4a460)
+          .setTimestamp(requestedAt);
+        await (channel as any).send({ embeds: [announceEmbed] });
       } else {
         console.warn('[withdraw.notify] announce channel not text based', { announceChannelId });
       }
