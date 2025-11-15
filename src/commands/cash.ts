@@ -1,6 +1,7 @@
 import { Client, GuildMember, Message, ChatInputCommandInteraction } from "discord.js";
 import { Prisma, PrismaClient, MemberStatus } from "@prisma/client";
 import { recordIndividualTransaction } from "../services/individualTransactionService.js";
+import { isUniqueConstraintError, realignRechargeSequence } from "../services/sequenceService.js";
 import { splitIncomeRecharge } from "../lib/balanceMath.js";
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
@@ -63,28 +64,24 @@ async function recordRecharge(
   toWhom: string,
   fromWhom: string
 ) {
-  await prisma.$transaction(async (tx) => {
-    const latest = await tx.recharge.findFirst({
-      orderBy: { createdAt: 'desc' },
-      select: { RechargeID: true },
-    });
-    let nextNumber = 1;
-    if (latest?.RechargeID) {
-      const match = latest.RechargeID.match(/^C(\d+)$/i);
-      if (match) {
-        nextNumber = Number(match[1]) + 1;
+  while (true) {
+    try {
+      await prisma.recharge.create({
+        data: {
+          amount,
+          toWhom,
+          fromWhom,
+        },
+      });
+      return;
+    } catch (err) {
+      if (isUniqueConstraintError(err, 'RechargeID')) {
+        await realignRechargeSequence(prisma);
+        continue;
       }
+      throw err;
     }
-    const RechargeID = `C${nextNumber}`;
-    await tx.recharge.create({
-      data: {
-        RechargeID,
-        amount,
-        toWhom,
-        fromWhom,
-      },
-    });
-  });
+  }
 }
 
 export function registerCashCommand(client: Client, prisma: PrismaClient) {

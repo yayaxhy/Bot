@@ -205,7 +205,7 @@ model Gift {
 }
 
 model Recharge {
-  RechargeID String  @id
+  RechargeID String  @id @default(dbgenerated("concat('C', nextval('\"Recharge_RechargeID_seq\"'::regclass))"))
   amount     Decimal @db.Decimal(19, 4)
   toWhom     String
   fromWhom   String  @default("1421651539247894549")

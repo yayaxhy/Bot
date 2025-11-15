@@ -1,8 +1,11 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import {
+  PrismaClientOrTransaction,
+  isUniqueConstraintError,
+  realignIndividualTransactionSequence,
+} from './sequenceService.js';
 
 export const CUSTOMER_SERVICE_DISCORD_ID = '1421651539247894549';
-
-type PrismaClientOrTransaction = PrismaClient | Prisma.TransactionClient;
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -34,15 +37,25 @@ export async function recordIndividualTransaction(
     }
   }
 
-  return client.individualTransaction.create({
-    data: {
-      discordId: params.discordId,
-      thirdPartydiscordId: thirdParty,
-      balanceBefore,
-      amountChange,
-      balanceAfter,
-      typeOfTransaction: params.typeOfTransaction,
-      timeCreatedAt: params.timeCreatedAt ?? new Date(),
-    },
-  });
+  while (true) {
+    try {
+      return await client.individualTransaction.create({
+        data: {
+          discordId: params.discordId,
+          thirdPartydiscordId: thirdParty,
+          balanceBefore,
+          amountChange,
+          balanceAfter,
+          typeOfTransaction: params.typeOfTransaction,
+          timeCreatedAt: params.timeCreatedAt ?? new Date(),
+        },
+      });
+    } catch (err) {
+      if (isUniqueConstraintError(err, 'transactionId')) {
+        await realignIndividualTransactionSequence(client);
+        continue;
+      }
+      throw err;
+    }
+  }
 }

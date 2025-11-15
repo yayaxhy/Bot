@@ -1,6 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import prisma from '../db/prisma.js';
 import { CouponStatus, CouponType } from '@prisma/client';
+import { isUniqueConstraintError, realignCouponSequence } from '../services/sequenceService.js';
 import { isCashAdmin } from './cash.js';
 
 export const grantCouponCommand = new SlashCommandBuilder()
@@ -57,7 +58,18 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
     expiresAt,
   }));
 
-  await prisma.coupon.createMany({ data });
+  while (true) {
+    try {
+      await prisma.coupon.createMany({ data });
+      break;
+    } catch (err) {
+      if (isUniqueConstraintError(err, 'id')) {
+        await realignCouponSequence(prisma);
+        continue;
+      }
+      throw err;
+    }
+  }
 
   await i.reply({
     content: `已为 <@${target.id}> 增加 ${quantity} 张 9折券（有效期 30 天）。`,
