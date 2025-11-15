@@ -5,6 +5,45 @@ const CHANNEL = process.env.PEIWAN_NOTIFY_CHANNEL ?? 'peiwan_profile_channel';
 const FUNCTION_NAME = process.env.PEIWAN_TRIGGER_FUNCTION ?? 'notify_peiwan_profile_change';
 const TRIGGER_NAME = process.env.PEIWAN_TRIGGER_NAME ?? 'trigger_peiwan_profile_upsert';
 
+const WATCHED_COLUMNS = [
+  'PEIWANID',
+  'discordUserId',
+  'defaultQuotationCode',
+  'quotation_Q1',
+  'quotation_Q2',
+  'quotation_Q3',
+  'quotation_Q4',
+  'quotation_Q5',
+  'quotation_Q6',
+  'quotation_Q7',
+  'commissionRate',
+  'MP_url',
+  'techTag',
+  'exclusive',
+  'type',
+  'level',
+  'LOL',
+  'CSGO',
+  'Valorant',
+  'Naraka',
+  'OW2',
+  'APEX',
+  'deltaForce',
+  'marvel',
+  'singer',
+  'PUBG',
+  'TFT',
+  'R6',
+  'tarkov',
+  'chat',
+  'steam',
+  'DOTA',
+  'COD',
+];
+const WATCHED_CHANGE_CONDITION = WATCHED_COLUMNS.map(
+  (column) => `OLD."${column}" IS DISTINCT FROM NEW."${column}"`
+).join(' OR ');
+
 type PayloadShape = {
   discordId?: string;
   peiwanId?: number;
@@ -17,10 +56,19 @@ async function ensureTrigger() {
   const functionSql = `
     CREATE OR REPLACE FUNCTION ${FUNCTION_NAME}() RETURNS trigger AS $$
     BEGIN
-      PERFORM pg_notify('${CHANNEL}', json_build_object(
-        'discordId', NEW."discordUserId",
-        'peiwanId', NEW."PEIWANID"
-      )::text);
+      IF TG_OP = 'INSERT' THEN
+        PERFORM pg_notify('${CHANNEL}', json_build_object(
+          'discordId', NEW."discordUserId",
+          'peiwanId', NEW."PEIWANID"
+        )::text);
+      ELSIF TG_OP = 'UPDATE' THEN
+        IF ${WATCHED_CHANGE_CONDITION} THEN
+          PERFORM pg_notify('${CHANNEL}', json_build_object(
+            'discordId', NEW."discordUserId",
+            'peiwanId', NEW."PEIWANID"
+          )::text);
+        END IF;
+      END IF;
       RETURN NEW;
     END;
     $$ LANGUAGE plpgsql;

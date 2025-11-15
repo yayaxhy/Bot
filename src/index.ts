@@ -18,6 +18,7 @@ import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCoup
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
+import { registerTechTagSync } from './services/techTagService.js';
 
 
 dotenv.config();
@@ -28,6 +29,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.GuildMembers,
   ],
   partials: [Partials.Channel, Partials.Message],
 });
@@ -94,6 +96,8 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
 });
 
 
+
+registerTechTagSync(client);
 
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);

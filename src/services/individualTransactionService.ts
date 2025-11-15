@@ -35,25 +35,36 @@ export async function recordIndividualTransaction(
     }
   }
 
-  while (true) {
-    try {
-      return await client.individualTransaction.create({
-        data: {
-          discordId: params.discordId,
-          thirdPartydiscordId: thirdParty,
-          balanceBefore,
-          amountChange,
-          balanceAfter,
-          typeOfTransaction: params.typeOfTransaction,
-          timeCreatedAt: params.timeCreatedAt ?? new Date(),
-        },
-      });
-    } catch (err) {
-      if (isUniqueConstraintError(err, 'transactionId')) {
-        await realignIndividualTransactionSequence();
-        continue;
-      }
+  const isPrismaClient = client instanceof PrismaClient;
+
+  const createPayload = () =>
+    client.individualTransaction.create({
+      data: {
+        discordId: params.discordId,
+        thirdPartydiscordId: thirdParty,
+        balanceBefore,
+        amountChange,
+        balanceAfter,
+        typeOfTransaction: params.typeOfTransaction,
+        timeCreatedAt: params.timeCreatedAt ?? new Date(),
+      },
+    });
+
+  await realignIndividualTransactionSequence();
+
+  try {
+    return await createPayload();
+  } catch (err) {
+    if (!isUniqueConstraintError(err, 'transactionId')) {
       throw err;
     }
+
+    await realignIndividualTransactionSequence();
+
+    if (isPrismaClient) {
+      return createPayload();
+    }
+
+    throw err;
   }
 }
