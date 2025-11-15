@@ -17,6 +17,7 @@ import { registerTotalEarnCommand } from './commands/totalEarn.js';
 import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
+import { startPeiwanWatcher } from './services/peiwanWatcher.js';
 
 
 dotenv.config();
@@ -109,6 +110,7 @@ client.once(Events.ClientReady, async () => {
   }
   startInternalWebhookServer();
   startWithdrawWatcher().catch((err) => console.error('[withdraw.watch] init failed', err));
+  startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));
 });
 
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));
