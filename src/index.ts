@@ -15,6 +15,8 @@ import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
 import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
 import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
+import { startInternalWebhookServer } from './server/internalWebhookServer.js';
+import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 
 
 dotenv.config();
@@ -105,6 +107,8 @@ client.once(Events.ClientReady, async () => {
   } catch (err) {
     console.error('[slash] register error:', err);
   }
+  startInternalWebhookServer();
+  startWithdrawWatcher().catch((err) => console.error('[withdraw.watch] init failed', err));
 });
 
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));

@@ -34,7 +34,7 @@ export async function recordIndividualTransaction(
     }
   }
 
-  await client.individualTransaction.create({
+  return client.individualTransaction.create({
     data: {
       discordId: params.discordId,
       thirdPartydiscordId: thirdParty,

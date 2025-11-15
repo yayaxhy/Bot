@@ -126,6 +126,15 @@ model Transaction {
   to   Member @relation("ToMember", fields: [toId], references: [discordUserId])
 }
 
+model Withdraw {
+  id         String   @id @default(dbgenerated("concat('W', nextval('\"Withdraw_id_seq\"'::regclass))"))
+  discordId  String   @unique
+  createdAt  DateTime @default(now())
+  amount     Int
+  method     String
+  notifiedAt DateTime?
+}
+
 model IndividualTransaction {
   transactionId      String   @id @default(dbgenerated("concat('IT', nextval('\"IndividualTransaction_transactionId_seq\"'::regclass))"))
   timeCreatedAt      DateTime @default(now())
