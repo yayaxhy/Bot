@@ -99,19 +99,33 @@ async function connectListener() {
     console.error('[withdraw.watch] ensure trigger failed', err);
   });
 
-  const client = new PgClient({ connectionString: process.env.DATABASE_URL });
+  const connectionString = process.env.DATABASE_URL;
+  const client = new PgClient({
+    connectionString,
+    keepAlive: true,
+    ssl: connectionString?.includes('sslmode=disable')
+      ? undefined
+      : { rejectUnauthorized: false },
+  });
   listener = client;
+
+  const handleDisconnect = (cause: unknown) => {
+    console.error('[withdraw.watch] listener disconnected', cause);
+    cleanupListener();
+    scheduleReconnect();
+  };
 
   client.on('error', (err: Error) => {
     console.error('[withdraw.watch] listener error', err);
-    cleanupListener();
-    scheduleReconnect();
+    handleDisconnect(err);
   });
 
   client.on('notification', (msg: Notification) => {
     if (msg.channel !== CHANNEL) return;
     processPayload(msg.payload ?? null);
   });
+
+  client.on('end', () => handleDisconnect('connection ended'));
 
   try {
     await client.connect();
