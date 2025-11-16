@@ -473,10 +473,13 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
     } catch (err: any) {
       console.error('[gifting] error:', err);
       const plainMessage = err?.message ?? '未知错误';
+      const insufficient =
+        typeof plainMessage === 'string' && plainMessage.includes('余额不足，无法完成打赏。');
       try {
-        await msg.reply(`打赏失败：${plainMessage}`);
+        const replyText = insufficient ? '打赏失败：请查看私信噢' : `打赏失败：${plainMessage}`;
+        await msg.reply(replyText);
       } catch {}
-      if (typeof plainMessage === 'string' && plainMessage.includes('余额不足')) {
+      if (insufficient) {
         const staffPing = makeStaffPing();
         try {
           await msg.author.send(`打赏失败：余额不足，请联系 ${staffPing} 进行充值后再试。`);
