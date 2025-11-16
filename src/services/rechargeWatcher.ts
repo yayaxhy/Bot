@@ -93,7 +93,7 @@ async function sendRechargeNotification(payload: RechargePayload) {
     const user = await client.users.fetch(payload.discordId);
     const balanceText = balanceAfter ? balanceAfter.toString() : '未知';
     await user.send(
-      `充值成功！已为您增加余额 **${amount.toString()}**。当前余额：**${balanceText}**。`
+      `网站自动充值成功！已为您增加余额 **${amount.toString()}**。当前余额：**${balanceText}**`
     );
     console.log('[recharge.watch] sent notification', {
       discordId: payload.discordId,
