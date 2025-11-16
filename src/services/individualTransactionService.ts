@@ -50,21 +50,20 @@ export async function recordIndividualTransaction(
       },
     });
 
-  await realignIndividualTransactionSequence();
+  const shouldRealign = client instanceof PrismaClient;
+  if (shouldRealign) {
+    await realignIndividualTransactionSequence();
+  }
 
   try {
     return await createPayload();
   } catch (err) {
-    if (!isUniqueConstraintError(err, 'transactionId')) {
+    if (!shouldRealign || !isUniqueConstraintError(err, 'transactionId')) {
       throw err;
     }
 
     await realignIndividualTransactionSequence();
 
-    if (isPrismaClient) {
-      return createPayload();
-    }
-
-    throw err;
+    return createPayload();
   }
 }
