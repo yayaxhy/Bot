@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import prisma from '../db/prisma.js';
 
 type SequenceRepairConfig = {
@@ -10,7 +10,12 @@ type SequenceRepairConfig = {
   minValue?: number;
 };
 
-async function realignPrefixedSequence(config: SequenceRepairConfig) {
+type PrismaClientOrTransaction = PrismaClient | Prisma.TransactionClient;
+
+async function realignPrefixedSequence(
+  config: SequenceRepairConfig,
+  client: PrismaClientOrTransaction = prisma
+) {
   const { sequenceName, tableName, columnName, substringFrom, pattern, minValue = 1 } = config;
   const sql = `
 DO $$
@@ -30,47 +35,59 @@ BEGIN
 END $$;
 `;
 
-  await prisma.$executeRawUnsafe(sql);
+  await client.$executeRawUnsafe(sql);
 }
 
-export async function realignIndividualTransactionSequence() {
-  await realignPrefixedSequence({
-    sequenceName: 'IndividualTransaction_transactionId_seq',
-    tableName: 'IndividualTransaction',
-    columnName: 'transactionId',
-    substringFrom: 3,
-    pattern: '^IT[0-9]+$',
-  });
+export async function realignIndividualTransactionSequence(client?: PrismaClientOrTransaction) {
+  await realignPrefixedSequence(
+    {
+      sequenceName: 'IndividualTransaction_transactionId_seq',
+      tableName: 'IndividualTransaction',
+      columnName: 'transactionId',
+      substringFrom: 3,
+      pattern: '^IT[0-9]+$',
+    },
+    client
+  );
 }
 
-export async function realignRechargeSequence() {
-  await realignPrefixedSequence({
-    sequenceName: 'Recharge_RechargeID_seq',
-    tableName: 'Recharge',
-    columnName: 'RechargeID',
-    substringFrom: 2,
-    pattern: '^C[0-9]+$',
-  });
+export async function realignRechargeSequence(client?: PrismaClientOrTransaction) {
+  await realignPrefixedSequence(
+    {
+      sequenceName: 'Recharge_RechargeID_seq',
+      tableName: 'Recharge',
+      columnName: 'RechargeID',
+      substringFrom: 2,
+      pattern: '^C[0-9]+$',
+    },
+    client
+  );
 }
 
-export async function realignCouponSequence() {
-  await realignPrefixedSequence({
-    sequenceName: 'Coupon_id_seq',
-    tableName: 'Coupon',
-    columnName: 'id',
-    substringFrom: 2,
-    pattern: '^C[0-9]+$',
-  });
+export async function realignCouponSequence(client?: PrismaClientOrTransaction) {
+  await realignPrefixedSequence(
+    {
+      sequenceName: 'Coupon_id_seq',
+      tableName: 'Coupon',
+      columnName: 'id',
+      substringFrom: 2,
+      pattern: '^C[0-9]+$',
+    },
+    client
+  );
 }
 
-export async function realignWithdrawSequence() {
-  await realignPrefixedSequence({
-    sequenceName: 'Withdraw_id_seq',
-    tableName: 'Withdraw',
-    columnName: 'id',
-    substringFrom: 2,
-    pattern: '^W[0-9]+$',
-  });
+export async function realignWithdrawSequence(client?: PrismaClientOrTransaction) {
+  await realignPrefixedSequence(
+    {
+      sequenceName: 'Withdraw_id_seq',
+      tableName: 'Withdraw',
+      columnName: 'id',
+      substringFrom: 2,
+      pattern: '^W[0-9]+$',
+    },
+    client
+  );
 }
 
 export function isUniqueConstraintError(err: unknown, columnName: string) {

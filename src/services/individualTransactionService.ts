@@ -35,8 +35,6 @@ export async function recordIndividualTransaction(
     }
   }
 
-  const isPrismaClient = client instanceof PrismaClient;
-
   const createPayload = () =>
     client.individualTransaction.create({
       data: {
@@ -50,19 +48,16 @@ export async function recordIndividualTransaction(
       },
     });
 
-  const shouldRealign = client instanceof PrismaClient;
-  if (shouldRealign) {
-    await realignIndividualTransactionSequence();
-  }
+  await realignIndividualTransactionSequence(client);
 
   try {
     return await createPayload();
   } catch (err) {
-    if (!shouldRealign || !isUniqueConstraintError(err, 'transactionId')) {
+    if (!isUniqueConstraintError(err, 'transactionId')) {
       throw err;
     }
 
-    await realignIndividualTransactionSequence();
+    await realignIndividualTransactionSequence(client);
 
     return createPayload();
   }
