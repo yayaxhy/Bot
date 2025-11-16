@@ -3,6 +3,7 @@ import { Prisma, PrismaClient, MemberStatus } from "@prisma/client";
 import { recordIndividualTransaction } from "../services/individualTransactionService.js";
 import { isUniqueConstraintError, realignRechargeSequence } from "../services/sequenceService.js";
 import { splitIncomeRecharge } from "../lib/balanceMath.js";
+import { suppressRechargeNotifications } from "../services/rechargeNotifyConfig.js";
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
@@ -119,10 +120,11 @@ export function registerCashCommand(client: Client, prisma: PrismaClient) {
 
       if (sign === "+") {
         const txResult = await prisma.$transaction(async (tx) => {
+          await suppressRechargeNotifications(tx);
           const updated = await tx.member.update({
             where: { discordUserId: targetId },
             data: {
- 
+
               recharge: { increment: amount },
               totalBalance: { increment: amount },
               ...(peiwanRecord ? { status: MemberStatus.PEIWAN } : {}),

@@ -19,6 +19,7 @@ import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
 import { registerTechTagSync } from './services/techTagService.js';
+import { startRechargeWatcher } from './services/rechargeWatcher.js';
 
 
 dotenv.config();
@@ -115,6 +116,7 @@ client.once(Events.ClientReady, async () => {
   startInternalWebhookServer();
   startWithdrawWatcher().catch((err) => console.error('[withdraw.watch] init failed', err));
   startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));
+  startRechargeWatcher().catch((err) => console.error('[recharge.watch] init failed', err));
 });
 
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));

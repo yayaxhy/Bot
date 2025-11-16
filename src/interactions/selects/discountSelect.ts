@@ -3,6 +3,7 @@ import { StringSelectMenuInteraction } from 'discord.js';
 import prisma from '../../db/prisma.js';
 import { round2 } from '../../lib/money.js';
 import { recordIndividualTransaction } from '../../services/individualTransactionService.js';
+import { suppressRechargeNotifications } from '../../services/rechargeNotifyConfig.js';
 
 export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   if (!i.customId.startsWith('discount_box')) return;
@@ -116,6 +117,7 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   await i.deferUpdate();
 
   await prisma.$transaction(async (tx) => {
+    await suppressRechargeNotifications(tx);
     const bossAccount = await tx.member.findUnique({
       where: { discordUserId: i.user.id },
       select: { totalBalance: true },
