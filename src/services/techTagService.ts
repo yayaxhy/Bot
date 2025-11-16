@@ -1,4 +1,4 @@
-import { Client, Events, GuildMember } from 'discord.js';
+import { Client, Events, GuildMember, PartialGuildMember } from 'discord.js';
 import prisma from '../db/prisma.js';
 
 const TECH_ROLE_ID = process.env.TECH_ROLE_ID ?? '1430923746830581841';
@@ -18,9 +18,11 @@ async function updateTechTag(discordId: string, hasRole: boolean) {
   }
 }
 
-function memberHasTechRole(member?: GuildMember | null) {
+function memberHasTechRole(member?: GuildMember | PartialGuildMember | null) {
   if (!member) return undefined;
-  return member.roles.cache.has(TECH_ROLE_ID);
+  const roles = 'roles' in member ? member.roles : undefined;
+  if (!roles) return undefined;
+  return roles.cache.has(TECH_ROLE_ID);
 }
 
 async function runInitialSync(client: Client) {
