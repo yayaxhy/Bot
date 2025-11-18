@@ -107,7 +107,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
     ensureNumber(payload.remainingIncome) ?? (latestIncome != null ? Number(latestIncome) : undefined);
 
   const lines = [
-    `你在 ${formatDate(requestedAt)} 发起了提现 ${formatCurrency(amountNumber, currency)}。`,
+    `提现成功 ${formatCurrency(amountNumber, currency)}。`,
   ];
   if (payload.withdrawalId) {
     lines.push(`提现单号：${payload.withdrawalId}`);
@@ -141,7 +141,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
         const mention = `<@${userDiscordId}>`;
         const workIdLine = payload.workId != null ? `陪玩ID：${payload.workId}` : null;
         const lines = [
-          `${mention} 在 ${formatDate(requestedAt)} 发起了提现`,
+          `${mention} 发起了提现`,
           `金额：${formatCurrency(amountNumber, currency)}。`,
         ];
         if (payload.withdrawalId) {
