@@ -4,6 +4,10 @@ import { CouponStatus, CouponType } from '@prisma/client';
 import { isUniqueConstraintError, realignCouponSequence } from '../services/sequenceService.js';
 import { isCashAdmin } from './cash.js';
 
+const COUPON_LABEL: Record<CouponType, string> = {
+  [CouponType.DISCOUNT_90]: '9折券',
+};
+
 export const grantCouponCommand = new SlashCommandBuilder()
   .setName('送券')
   .setDescription('给指定用户发放优惠券')
@@ -69,6 +73,19 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
       }
       throw err;
     }
+  }
+
+  const couponLabel = COUPON_LABEL[couponType as CouponType] ?? couponType;
+  const quantityText = quantity === 1 ? '一张' : `${quantity} 张`;
+  const dmContent = `收到${quantityText}${couponLabel}！感谢老板对锦鲤的大力支持🩷`;
+
+  try {
+    await target.send({ content: dmContent });
+  } catch (err) {
+    console.error('[grantCoupon] failed to DM user about coupon', {
+      targetId: target.id,
+      err,
+    });
   }
 
   await i.reply({
