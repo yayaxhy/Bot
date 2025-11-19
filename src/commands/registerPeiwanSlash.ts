@@ -14,7 +14,7 @@ export async function handleRegisterPeiwanSlash(i: ChatInputCommandInteraction) 
   if (i.commandName !== '录入陪玩') return;
 
   if (!isCashAdmin(i)) {
-    await i.reply({ content: '❌ 你没有权限使用该命令。', ephemeral: true });
+    await i.reply({ content: '❌ 你没有权限使用该命令。', ephemeral: false });
     return;
   }
 
@@ -62,6 +62,6 @@ export async function handleRegisterPeiwanSlash(i: ChatInputCommandInteraction) 
         ? err.message
         : '录入失败，请检查编号或数据库约束。';
     console.error('[registerPeiwan] error', err);
-    await i.reply({ content: `❌ ${message}`, ephemeral: true });
+    await i.reply({ content: `❌ ${message}`, ephemeral: false });
   }
 }
