@@ -59,11 +59,6 @@ export async function acceptOrder(orderId: string) {
     const worker = await tx.member.findUnique({ where: { discordUserId: order.workerId }, select: { commissionRate: true } });
     if (!worker) throw new Error('Worker missing');
 
-    await tx.member.update({
-      where: { discordUserId: order.workerId },
-      data: { status: MemberStatus.PEIWAN },
-    });
-
     const updated = await tx.order.update({
       where: { id: orderId },
       data: {
