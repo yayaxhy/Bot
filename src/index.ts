@@ -15,6 +15,7 @@ import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
 import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
 import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
+import { handleRegisterPeiwanSlash, registerPeiwanCommand } from './commands/registerPeiwanSlash.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
@@ -59,12 +60,16 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
       }
     }
 
-    if (i.isChatInputCommand()) {
-      if (i.commandName === '送券') {
-        await handleGrantCouponSlash(i);
-        return;
-      }
-    }
+        if (i.isChatInputCommand()) {
+            if (i.commandName === '送券') {
+                await handleGrantCouponSlash(i);
+                return;
+            }
+            if (i.commandName === '录入陪玩') {
+                await handleRegisterPeiwanSlash(i);
+                return;
+            }
+        }
 
     // Buttons
     if (i.isButton()) {
@@ -107,9 +112,10 @@ client.once(Events.ClientReady, async () => {
   registerCashCommand(client, prisma);
   registerTotalEarnCommand(client, prisma);
   try {
-    if (client.application) {
-      await client.application.commands.create(grantCouponCommand);
-    }
+        if (client.application) {
+            await client.application.commands.create(grantCouponCommand);
+            await client.application.commands.create(registerPeiwanCommand);
+        }
   } catch (err) {
     console.error('[slash] register error:', err);
   }
