@@ -47,14 +47,26 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
       return;
     }
 
-    await endOrder(orderId, i.user.id);
-    cancelOrderTimers(orderId);
-
+    let endedBySelf = false;
+    let alreadyEnded = false;
     try {
-      await notifyOrderEnded(orderId);
-    } catch (err) {
-      console.error('[handleEndOrderButton] notify failed:', err);
+      await endOrder(orderId, i.user.id);
+      endedBySelf = true;
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn('[handleEndOrderButton] endOrder failed, will check status', { orderId, msg });
+      if (msg?.includes('Order not running')) {
+        const latest = await prisma.order.findUnique({ where: { id: orderId }, select: { status: true } });
+        if (latest?.status === OrderStatus.ENDED) {
+          alreadyEnded = true;
+        }
+      }
+      if (!alreadyEnded) {
+        throw err;
+      }
     }
+
+    cancelOrderTimers(orderId);
 
     const orderLabel = order.displayNo != null
       ? `${ORDER_ID_PREFIX}${order.displayNo}`
@@ -62,13 +74,26 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
 
     try { await i.message.edit({ components: [] }); } catch {}
 
+    if (!alreadyEnded) {
+      try {
+        await notifyOrderEnded(orderId);
+      } catch (err) {
+        console.error('[handleEndOrderButton] notify failed:', err);
+      }
+    }
+
+    if (alreadyEnded) {
+      await i.editReply({ content: `订单 ${orderLabel} 已结单。`, embeds: [] });
+      return;
+    }
+
     await i.editReply({
       content: `订单 ${orderLabel} 已结单，结算详情稍后将通过私信发送给老板与陪玩。`,
       embeds: [],
     });
 
   } catch (err) {
-    console.error('[handleEndOrderButton] error:', err);
+    console.error('[handleEndOrderButton] error:', { orderId, userId: i.user.id, err });
     try { await i.editReply('结单失败，请稍后重试或联系工作人员。'); } catch {}
   }
 }
