@@ -1,6 +1,6 @@
 // src/events/messageCreate.ts
 import {
-  Client, GatewayIntentBits, Partials, Message, TextChannel, DMChannel, Guild, User, ThreadChannel, userMention,
+  Client, GatewayIntentBits, Partials, Message, TextChannel, DMChannel, Guild, User, ThreadChannel, userMention, type TextBasedChannel,
 } from 'discord.js';
 import dotenv from 'dotenv';
 import {
@@ -86,9 +86,9 @@ async function getMemberBalance(discordUserId: string): Promise<number | null> {
 async function sendAnonLogMessage(client: Client, content: string) {
   if (!anonNotifyChannelId) return;
   try {
-    const channel = await client.channels.fetch(anonNotifyChannelId);
-    if (channel && channel.isTextBased()) {
-      await channel.send({ content, allowedMentions: { parse: ['users'] } });
+    const channel = await client.channels.fetch(anonNotifyChannelId).catch(() => null);
+    if (channel && channel.isTextBased() && typeof (channel as TextBasedChannel).send === 'function') {
+      await (channel as TextBasedChannel).send({ content, allowedMentions: { parse: ['users'] } });
     }
   } catch (err) {
     console.error('[anon-log] send failed:', err);

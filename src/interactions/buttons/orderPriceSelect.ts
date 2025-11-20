@@ -3,6 +3,7 @@ import {
   Interaction,
   StringSelectMenuInteraction,
   userMention,
+  type TextBasedChannel,
 } from 'discord.js';
 import prisma from '../../db/prisma.js';
 import { OrderMode, OrderStatus, QuotationCode } from '@prisma/client';
@@ -70,9 +71,9 @@ function getUnitPrice(peiwan: any, code: QuotationCode): number | null {
 async function sendAnonLogMessage(i: StringSelectMenuInteraction, content: string) {
   if (!ANON_NOTIFY_CHANNEL_ID) return;
   try {
-    const channel = await i.client.channels.fetch(ANON_NOTIFY_CHANNEL_ID);
-    if (channel && channel.isTextBased()) {
-      await channel.send({ content, allowedMentions: { parse: ['users'] } });
+    const channel = await i.client.channels.fetch(ANON_NOTIFY_CHANNEL_ID).catch(() => null);
+    if (channel && channel.isTextBased() && typeof (channel as TextBasedChannel).send === 'function') {
+      await (channel as TextBasedChannel).send({ content, allowedMentions: { parse: ['users'] } });
     }
   } catch (err) {
     console.error('[orderPriceSelect] anon log send failed:', err);
