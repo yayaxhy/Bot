@@ -73,6 +73,10 @@ function escapeRegExp(str: string): string {
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
 
+function hasSend(channel: unknown): channel is TextBasedChannel & { send: Function } {
+  return !!channel && typeof (channel as any).send === 'function';
+}
+
 async function getMemberBalance(discordUserId: string): Promise<number | null> {
   const member = await prisma.member.findUnique({
     where: { discordUserId },
@@ -87,8 +91,8 @@ async function sendAnonLogMessage(client: Client, content: string) {
   if (!anonNotifyChannelId) return;
   try {
     const channel = await client.channels.fetch(anonNotifyChannelId).catch(() => null);
-    if (channel && channel.isTextBased() && typeof (channel as TextBasedChannel).send === 'function') {
-      await (channel as TextBasedChannel).send({ content, allowedMentions: { parse: ['users'] } });
+    if (channel && channel.isTextBased() && hasSend(channel)) {
+      await channel.send({ content, allowedMentions: { parse: ['users'] } });
     }
   } catch (err) {
     console.error('[anon-log] send failed:', err);

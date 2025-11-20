@@ -25,6 +25,10 @@ const isPeiwanIdFieldName = (name?: string | null) => {
   return PEIWAN_ID_FIELD_NAMES.has(trimmed) || PEIWAN_ID_FIELD_NAMES.has(upper);
 };
 
+function hasSend(channel: unknown): channel is TextBasedChannel & { send: Function } {
+  return !!channel && typeof (channel as any).send === 'function';
+}
+
 /**
  * 从 Embed 字段中提取陪玩 ID（兼容旧字段名 "PEIWANID"）
  */
@@ -72,8 +76,8 @@ async function sendAnonLogMessage(i: StringSelectMenuInteraction, content: strin
   if (!ANON_NOTIFY_CHANNEL_ID) return;
   try {
     const channel = await i.client.channels.fetch(ANON_NOTIFY_CHANNEL_ID).catch(() => null);
-    if (channel && channel.isTextBased() && typeof (channel as TextBasedChannel).send === 'function') {
-      await (channel as TextBasedChannel).send({ content, allowedMentions: { parse: ['users'] } });
+    if (channel && channel.isTextBased() && hasSend(channel)) {
+      await channel.send({ content, allowedMentions: { parse: ['users'] } });
     }
   } catch (err) {
     console.error('[orderPriceSelect] anon log send failed:', err);
