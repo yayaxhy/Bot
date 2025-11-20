@@ -11,6 +11,7 @@ import { registerInvitationMessage } from '../../services/orderInteractionManage
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const SUPPORT_STAFF_USER_ID = process.env.SUPPORT_STAFF_USER_ID ?? '';
+const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
 
 const PEIWAN_ID_FIELD_NAMES = new Set(['PEIWANID', '陪玩ID']);
 const ORDER_CONTENT_FIELD_NAMES = new Set(['订单内容']);
@@ -64,6 +65,18 @@ function getUnitPrice(peiwan: any, code: QuotationCode): number | null {
   if (raw == null) return null;
   const num = typeof raw === 'number' ? raw : Number(String(raw));
   return Number.isFinite(num) ? num : null;
+}
+
+async function sendAnonLogMessage(i: StringSelectMenuInteraction, content: string) {
+  if (!ANON_NOTIFY_CHANNEL_ID) return;
+  try {
+    const channel = await i.client.channels.fetch(ANON_NOTIFY_CHANNEL_ID);
+    if (channel && channel.isTextBased()) {
+      await channel.send({ content, allowedMentions: { parse: ['users'] } });
+    }
+  } catch (err) {
+    console.error('[orderPriceSelect] anon log send failed:', err);
+  }
 }
 
 /**
@@ -176,4 +189,17 @@ export async function handleOrderPriceSelect(i: Interaction) {
     content: `已向陪玩 ${userMention(workerId)} 发送邀请，请等待对方接单。\n订单号：${orderLabel}\n选择价格： ¥${unitPrice.toFixed(2)}`,
     ephemeral: false,
   });
+
+  if (mode === OrderMode.ANONYMOUS) {
+    const balanceLabel = Number.isFinite(hostBalance) ? hostBalance.toFixed(2) : '未知';
+    const logContent = [
+      '【匿名点单】',
+      `点单人：${userMention(hostId)} (${hostId})`,
+      `陪玩：${userMention(workerId)} (${workerId})`,
+      `订单号：${orderLabel}`,
+      `点单内容：${orderContentFromEmbed || '（无）'}`,
+      `点单人余额：${balanceLabel}`,
+    ].join('\n');
+    await sendAnonLogMessage(i, logContent);
+  }
 }

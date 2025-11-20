@@ -1,6 +1,6 @@
 // src/events/messageCreate.ts
 import {
-  Client, GatewayIntentBits, Partials, Message, TextChannel, DMChannel, Guild, User, ThreadChannel,
+  Client, GatewayIntentBits, Partials, Message, TextChannel, DMChannel, Guild, User, ThreadChannel, userMention,
 } from 'discord.js';
 import dotenv from 'dotenv';
 import {
@@ -51,6 +51,7 @@ const orderBroadcastChannelIds = (process.env.ORDER_BROADCAST_CHANNEL_ID ?? '')
   .map((id) => id.trim())
   .filter(Boolean);
 const orderAnonChannelId = process.env.ORDER_ANON_CHANNEL_ID;
+const anonNotifyChannelId = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const END_ORDER_PATTERN = /^!(?:陪玩|老板)结单(?:\s+(\S+))?$/;
@@ -71,6 +72,28 @@ function escapeRegExp(str: string): string {
 
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
+
+async function getMemberBalance(discordUserId: string): Promise<number | null> {
+  const member = await prisma.member.findUnique({
+    where: { discordUserId },
+    select: { totalBalance: true },
+  });
+  if (!member?.totalBalance) return null;
+  const numeric = Number(member.totalBalance.toString());
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+async function sendAnonLogMessage(client: Client, content: string) {
+  if (!anonNotifyChannelId) return;
+  try {
+    const channel = await client.channels.fetch(anonNotifyChannelId);
+    if (channel && channel.isTextBased()) {
+      await channel.send({ content, allowedMentions: { parse: ['users'] } });
+    }
+  } catch (err) {
+    console.error('[anon-log] send failed:', err);
+  }
+}
 
 async function getAnonGuild(message: Message): Promise<Guild | null> {
   if (cachedAnonGuild) return cachedAnonGuild;
@@ -398,6 +421,8 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
   const mode = isDm ? OrderMode.ANONYMOUS : OrderMode.REALNAME;
 
   try {
+    let orderContentForInvite = '';
+
     const peiwan = await prisma.pEIWAN.findUnique({
       where: { PEIWANID: peiwanIdNum },
       select: {
@@ -460,7 +485,7 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
     try {
       workerUser = await message.client.users.fetch(peiwan.discordUserId);
       const orderContentForInviteRaw = content.replace(/^!点单\s+\S+\s*/, '').trim();
-      const orderContentForInvite = stripRoleMentions(orderContentForInviteRaw);
+      orderContentForInvite = stripRoleMentions(orderContentForInviteRaw);
       const invitationContent = orderContentForInvite || '请与老板取得联系并开始服务';
       const { embed, components } = invitation_embed(
         order.id,
@@ -478,6 +503,19 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
 
     const orderLabel = `${ORDER_ID_PREFIX}${order.displayNo ?? order.id}`;
     await message.reply(`已向陪玩发送邀请，订单号：${orderLabel}。`);
+
+    if (mode === OrderMode.ANONYMOUS) {
+      const balanceLabel = Number.isFinite(hostBalance) ? hostBalance.toFixed(2) : '未知';
+      const logContent = [
+        '【匿名点单】',
+        `点单人：${userMention(message.author.id)} (${message.author.id})`,
+        `陪玩：${userMention(peiwan.discordUserId)} (${peiwan.discordUserId})`,
+        `订单号：${orderLabel}`,
+        `点单内容：${orderContentForInvite || '（无）'}`,
+        `点单人余额：${balanceLabel}`,
+      ].join('\n');
+      await sendAnonLogMessage(message.client, logContent);
+    }
 
     return true;
   } catch (err) {
@@ -642,6 +680,18 @@ export async function execute(message: Message) {
 
         const { embed: successEmbed } = order_request_sent_successfully_embed(message.id);
         await userA.send({ content: '订单创建成功！', embeds: [successEmbed] });
+
+        const balance = await getMemberBalance(userA.id);
+        const balanceLabel = typeof balance === 'number' && Number.isFinite(balance)
+          ? balance.toFixed(2)
+          : '未知';
+        const logContent = [
+          '【匿名派单】',
+          `派单人：${userMention(userA.id)} (${userA.id})`,
+          `派单内容：${stripRoleMentions(content) || '（无）'}`,
+          `派单人余额：${balanceLabel}`,
+        ].join('\n');
+        await sendAnonLogMessage(message.client, logContent);
       }
     }
   } catch (error) {
