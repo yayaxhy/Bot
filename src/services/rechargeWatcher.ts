@@ -17,6 +17,23 @@ let listener: PgClient | null = null;
 let reconnectTimer: NodeJS.Timeout | null = null;
 
 async function ensureTrigger() {
+  // Make sure the GUC is not left as an empty string; try to default it to 'false' at DB level.
+  const enforceDefaultSql = `
+    DO $$
+    BEGIN
+      IF current_setting('${RECHARGE_NOTIFY_SKIP_SETTING}', true) IS NULL
+         OR current_setting('${RECHARGE_NOTIFY_SKIP_SETTING}', true) = '' THEN
+        BEGIN
+          EXECUTE format('ALTER DATABASE %I SET %I = %L', current_database(), '${RECHARGE_NOTIFY_SKIP_SETTING}', 'false');
+        EXCEPTION
+          WHEN insufficient_privilege THEN
+            -- Fallback: set session-level so at least this connection is safe
+            PERFORM set_config('${RECHARGE_NOTIFY_SKIP_SETTING}', 'false', false);
+        END;
+      END IF;
+    END $$;
+  `;
+
   const functionSql = `
     CREATE OR REPLACE FUNCTION ${FUNCTION_NAME}() RETURNS trigger AS $$
     DECLARE
@@ -27,7 +44,13 @@ async function ensureTrigger() {
       skip BOOLEAN := false;
     BEGIN
       IF skip_setting IS NOT NULL THEN
-        skip := skip_setting::boolean;
+        BEGIN
+          -- tolerate blank/invalid values; treat as false instead of raising
+          skip := COALESCE(NULLIF(skip_setting, '')::boolean, false);
+        EXCEPTION
+          WHEN others THEN
+            skip := false;
+        END;
       END IF;
 
       IF skip OR delta <= 0 THEN
@@ -62,6 +85,7 @@ async function ensureTrigger() {
 
   await prisma.$executeRawUnsafe(functionSql);
   await prisma.$executeRawUnsafe(triggerSql);
+  await prisma.$executeRawUnsafe(enforceDefaultSql);
 }
 
 function resolveConnectionString() {

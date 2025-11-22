@@ -42,6 +42,12 @@ enum OrderStatus {
   EXPIRED
 }
 
+enum RechargeOrderStatus {
+  PENDING
+  PAID
+  FAILED
+}
+
 enum QuotationCode {
   Q1
   Q2
@@ -94,6 +100,7 @@ model Member {
 
   sentTransactions     Transaction[] @relation("FromMember")
   receivedTransactions Transaction[] @relation("ToMember")
+  zpayRechargeOrders   ZPayRechargeOrder[]
 
   // One-to-one: every 陪玩 is a member; not every member is a 陪玩
   peiwan PEIWAN? @relation("MemberToPeiwan")
@@ -108,6 +115,9 @@ model Member {
 
   // Back-relation for WorkerLock (one active lock at most)
   workerLock WorkerLock? @relation("MemberWorkerLock")
+
+  // Display name inside target Discord guild
+  serverDisplayName String?
 }
 
 model Transaction {
@@ -212,6 +222,23 @@ model Recharge {
   createdAt  DateTime @default(now())
 }
 
+model ZPayRechargeOrder {
+  id            String               @id @default(dbgenerated("concat('ZPAY', replace((gen_random_uuid())::text, '-'::text, ''::text))"))
+  outTradeNo    String               @unique
+  discordUserId String
+  amount        Decimal              @db.Decimal(19, 4)
+  channel       String
+  status        RechargeOrderStatus  @default(PENDING)
+  gatewayTradeNo String?
+  notifyPayload Json?
+  createdAt     DateTime             @default(now())
+  paidAt        DateTime?
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([status, createdAt])
+}
+
 model PEIWAN {
   PEIWANID      Int    @id
   discordUserId String @unique
@@ -235,6 +262,7 @@ model PEIWAN {
   balance   Decimal      @default(0) @db.Decimal(19, 4)
   MP_url    String?
   status    PeiwanStatus @default(free)
+  serverDisplayName String?
   techTag   Boolean      @default(false)
   sex       PeiwanSex    @default(小姐姐)
   exclusive Boolean      @default(false)

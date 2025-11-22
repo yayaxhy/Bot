@@ -647,14 +647,18 @@ export async function execute(message: Message) {
   const originalMsg = content;
   const orderId = message.id;       // 用消息 ID 作为 orderId
   const ownerId = userA.id;         // 🔴 显式传给按钮
+  const defaultCallEmoji = '<:11:1422321930043789343>';
 
   try {
     if (
       orderBroadcastChannelIds.includes(message.channel.id) &&
       hasAllowedRole
     ) {
+      const callEmoji =
+        message.guild?.emojis.resolve('1422321930043789343')?.toString()
+        ?? defaultCallEmoji;
       const embedResponse = ongoing_order_request_embed(
-        userA.tag, content, originalMsg, orderId, ownerId
+        userA.tag, content, originalMsg, orderId, ownerId, callEmoji
       );
       if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
         await message.channel.send('老板派单啦，快来抢单');
@@ -668,6 +672,9 @@ export async function execute(message: Message) {
       if (hasAllowedRole) {
         const channelB = await message.client.channels.fetch(orderAnonChannelId);
         if (channelB instanceof TextChannel) {
+          const callEmoji =
+            channelB.guild?.emojis.resolve('1422321930043789343')?.toString()
+            ?? defaultCallEmoji;
           const roleInfo = parseRoleMentions(content);
           if (roleInfo.mentionText) {
             await channelB.send({
@@ -676,7 +683,7 @@ export async function execute(message: Message) {
             });
           }
           const embedResponse = anonymous_ongoing_order_request_embed(
-            content, content, orderId, ownerId
+            content, content, orderId, ownerId, callEmoji
           );
           const posted = await channelB.send(embedResponse);
           scheduleOrderRequestClosure(posted);

@@ -10,6 +10,7 @@ const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const THANK_BOSS_GIF_PATH = 'src/img/thankBoss.gif';
 const ORDER_PIC_PATH = 'src/img/orderPic.gif';
 const DEFAULT_EMBED_COLOR = 0xf5a623;
+const PEIPEI_CALL_EMOJI = '<:11:1422321930043789343>';
 
 export const DEFAULT_GIFTS: Array<{ GiftName: string; price: number }> = [
   { GiftName: '冰淇淋', price: 1 },
@@ -103,15 +104,16 @@ export function ongoing_order_request_embed(
   rolesLine: string,
   originalMsg: string,
   orderId: string,
-  ownerId: string
+  ownerId: string,
+  callEmoji: string = PEIPEI_CALL_EMOJI
 ): MessageCreateOptions {
   const { plainText: mentionPlain } = parseRoleMentions(rolesLine);
   const mentionLinePlain = mentionPlain.trim();
 
   const lines = [
-    '正在派单 呼叫陪陪啦',
+    `正在派单 呼叫陪陪啦 ${callEmoji}`,
     '',
-    `⭐ ${authorTag}：正在呼叫陪陪`,
+    `⭐ <a:B5:1422305106304569474> ${authorTag}：正在呼叫陪陪`,
     '',
   ];
   if (mentionLinePlain) lines.push(`⭐ ${mentionLinePlain}`);
@@ -139,13 +141,14 @@ export function anonymous_ongoing_order_request_embed(
   rolesLine: string,
   originalMsg: string,
   orderId: string,
-  ownerId: string
+  ownerId: string,
+  callEmoji: string = PEIPEI_CALL_EMOJI
 ): MessageCreateOptions {
   const { plainText: mentionPlain } = parseRoleMentions(rolesLine);
   const mentionLinePlain = mentionPlain.trim();
 
   const lines = [
-    '【正在派单】 呼叫陪陪啦',
+    `【正在派单】 呼叫陪陪啦 ${callEmoji}`,
     '',
     '匿名老板：正在呼叫陪陪',
     '',
