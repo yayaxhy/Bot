@@ -13,9 +13,6 @@ export const registerPeiwanCommand = new SlashCommandBuilder()
 export async function handleRegisterPeiwanSlash(i: ChatInputCommandInteraction) {
   if (i.commandName !== '录入陪玩') return;
 
-  const emojiDebug = i.guild?.emojis.resolve('1422321930043789343');
-  console.log('[emoji-debug] resolve 1422321930043789343 =>', emojiDebug?.name, emojiDebug?.id);
-
   if (!isCashAdmin(i)) {
     await i.reply({ content: '❌ 你没有权限使用该命令。', ephemeral: false });
     return;
@@ -56,7 +53,7 @@ export async function handleRegisterPeiwanSlash(i: ChatInputCommandInteraction) 
     });
 
     await i.reply({
-      content: `<@${target.id}> 的陪玩资料已校验，编号：${result.PEIWANID}\nemoji 检查：${emojiDebug ? `${emojiDebug.name}:${emojiDebug.id}` : 'not found'}`,
+      content: `<@${target.id}> 的陪玩资料已校验，编号：${result.PEIWANID}`,
       ephemeral: false,
     });
   } catch (err: any) {
