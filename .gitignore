@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+
+# Environment files
+.env
+.env.*
+
+# Logs and temporary files
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+tmp.cjs
+.DS_Store
