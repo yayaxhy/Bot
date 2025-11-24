@@ -113,7 +113,7 @@ export function ongoing_order_request_embed(
   const lines = [
     `正在派单 呼叫陪陪啦 ${callEmoji}`,
     '',
-    `⭐ <a:B5:1422305106304569474> ${authorTag}：正在呼叫陪陪`,
+    `⭐${authorTag}：正在呼叫陪陪`,
     '',
   ];
   if (mentionLinePlain) lines.push(`⭐ ${mentionLinePlain}`);
