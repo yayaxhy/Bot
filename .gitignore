@@ -17,3 +17,8 @@ pnpm-debug.log*
 *.log
 tmp.cjs
 .DS_Store
+
+# Local-only files
+syncp.ps1
+jinlee-club/
+文件/
