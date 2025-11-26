@@ -142,7 +142,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
         const workIdLine = payload.workId != null ? `陪玩ID：${payload.workId}` : null;
         const lines = [
           `${mention} 发起了提现`,
-          `金额：${formatCurrency(amountNumber, currency)}。`,
+          `金额：${formatCurrency(amountNumber, currency)}`,
         ];
         if (payload.withdrawalId) {
           lines.push(`提现单号：${payload.withdrawalId}`);
