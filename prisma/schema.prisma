@@ -141,7 +141,7 @@ model Withdraw {
   id         String   @id @default(dbgenerated("concat('W', nextval('\"Withdraw_id_seq\"'::regclass))"))
   discordId  String
   createdAt  DateTime @default(now())
-  amount     Int
+  amount     Decimal  @db.Decimal(19, 4)
   method     String
   notifiedAt DateTime?
 
