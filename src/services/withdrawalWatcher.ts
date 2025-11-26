@@ -69,7 +69,7 @@ async function processPayload(raw: string | null) {
   try {
     await notifyWithdrawal({
       userDiscordId: record.discordId,
-      amount: record.amount,
+      amount: record.amount.toNumber(),
       requestedAt: record.createdAt,
       withdrawalId: record.id,
       note: record.method,
