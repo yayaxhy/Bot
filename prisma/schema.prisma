@@ -248,12 +248,12 @@ model PEIWAN {
 
   // Price slots (include DEFAULT)
   quotation_Q1 Decimal? @db.Decimal(10, 2)
-  lolPrice    Decimal? @db.Decimal(10, 2) @map("quotation_Q2")
-  valPrice    Decimal? @db.Decimal(10, 2) @map("quotation_Q3")
-  deltaPrice  Decimal? @db.Decimal(10, 2) @map("quotation_Q4")
-  csgoPrice   Decimal? @db.Decimal(10, 2) @map("quotation_Q5")
-  narakaPrice Decimal? @db.Decimal(10, 2) @map("quotation_Q6")
-  apexPrice   Decimal? @db.Decimal(10, 2) @map("quotation_Q7")
+  lolPrice    Decimal? @db.Decimal(10, 2)
+  valPrice    Decimal? @db.Decimal(10, 2)
+  deltaPrice  Decimal? @db.Decimal(10, 2)
+  csgoPrice   Decimal? @db.Decimal(10, 2)
+  narakaPrice Decimal? @db.Decimal(10, 2)
+  apexPrice   Decimal? @db.Decimal(10, 2)
 
   // Payout rate copy on PEIWAN (synced → Member via DB trigger)
   commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
