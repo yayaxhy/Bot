@@ -91,7 +91,7 @@ function buildPublicGiftSuccessMessage(result: GiftTransactionResult): MessageCr
 
 async function sendAnonGiftLog(
   client: Client,
-  payload: { receiverId: string; giftName: string; quantity: number; gross: number; imageUrl?: string }
+  payload: { giverId: string; receiverId: string; giftName: string; quantity: number; gross: number }
 ) {
   if (!ANON_NOTIFY_CHANNEL_ID) return;
   try {
@@ -99,12 +99,12 @@ async function sendAnonGiftLog(
     if (channel && channel.isTextBased() && hasSend(channel)) {
       const lines = [
         '【匿名打赏】',
+        `送礼人：<@${payload.giverId}> (${payload.giverId})`,
         `收礼人：<@${payload.receiverId}> (${payload.receiverId})`,
         `礼物：${payload.giftName} x ${payload.quantity}`,
         `总价：¥${payload.gross.toFixed(2)}`,
       ];
       await channel.send({ content: lines.join('\n'), allowedMentions: { parse: ['users'] } });
-      if (payload.imageUrl) await channel.send({ content: payload.imageUrl });
     }
   } catch (err) {
     console.error('[gifting] anon log send failed:', err);
@@ -298,11 +298,11 @@ export async function performGift(
   });
   if (anonymous) {
     await sendAnonGiftLog(client, {
+      giverId,
       receiverId,
       giftName: result.giftName,
       quantity: Number(result.quantity.toString()),
       gross: Number(result.gross.toString()),
-      imageUrl: result.imageUrl,
     });
   }
   await recalcAllOrdersForHost(giverId);
