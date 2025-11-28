@@ -250,7 +250,7 @@ export function buildQuotationSelect(
   const labelMap: Record<string, string> = {
     Q1: '默认单价',
     Q2: 'LoL单价',
-    Q3: 'Val单价',
+    Q3: 'Valorant单价',
     Q4: '三角洲单价',
     Q5: 'CSGO单价',
     Q6: '永劫单价',

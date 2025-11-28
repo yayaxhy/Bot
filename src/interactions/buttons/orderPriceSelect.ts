@@ -16,6 +16,15 @@ const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773
 
 const PEIWAN_ID_FIELD_NAMES = new Set(['PEIWANID', '陪玩ID']);
 const ORDER_CONTENT_FIELD_NAMES = new Set(['订单内容']);
+const QUOTATION_LABEL: Record<QuotationCode, string> = {
+  Q1: '默认单价',
+  Q2: 'LoL',
+  Q3: 'Valorant',
+  Q4: '三角洲',
+  Q5: 'CSGO',
+  Q6: '永劫',
+  Q7: 'Apex',
+};
 const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q1: 'quotation_Q1',
   Q2: 'lolPrice',
@@ -112,6 +121,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
     return i.reply({ content: '请选择一个有效的价格档位。', ephemeral: true });
   }
   const quotationCode = codeStr as QuotationCode;
+  const quotationLabel = QUOTATION_LABEL[quotationCode] ?? quotationCode;
 
   // 2) 从 embed 取出陪玩 ID
   const peiwanId = getPeiwanIdFromEmbed(i);
@@ -144,7 +154,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
 
   const unitPrice = getUnitPrice(peiwan, quotationCode);
   if (unitPrice == null || unitPrice <= 0) {
-    return i.reply({ content: `该价格档位暂不可用：${quotationCode}。`, ephemeral: true });
+    return i.reply({ content: `该价格档位暂不可用：${quotationLabel}。`, ephemeral: true });
   }
 
   // 3.5) 校验老板余额（最低 100）
@@ -187,7 +197,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
   try {
     const workerUser = await i.client.users.fetch(workerId);
     const gameContent = orderContentFromEmbed || '请与老板取得联系并开始服务';
-    const priceLabel = `¥${unitPrice.toFixed(2)}/小时（${quotationCode}）`;
+    const priceLabel = `¥${unitPrice.toFixed(2)}/小时（${quotationLabel}）`;
     const { embed, components } = invitation_embed(order.id, order.displayNo, hostId, gameContent, priceLabel);
     const inviteMessage = await workerUser.send({ embeds: [embed], components });
     registerInvitationMessage(order.id, inviteMessage);
