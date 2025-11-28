@@ -43,16 +43,26 @@ function numberOrZero(x: any): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
+  Q1: 'quotation_Q1',
+  Q2: 'lolPrice',
+  Q3: 'valPrice',
+  Q4: 'deltaPrice',
+  Q5: 'csgoPrice',
+  Q6: 'narakaPrice',
+  Q7: 'apexPrice',
+};
+
 /** Map peiwan pricing to QuotationCode => price (nullable allowed for hidden options) */
 function pricesFromPeiwan(peiwan: any): Partial<Record<QuotationCode, number | null>> {
   return {
-    Q1: numberOrZero(peiwan.quotation_Q1) || null,
-    Q2: numberOrZero(peiwan.quotation_Q2) || null,
-    Q3: numberOrZero(peiwan.quotation_Q3) || null,
-    Q4: numberOrZero(peiwan.quotation_Q4) || null,
-    Q5: numberOrZero(peiwan.quotation_Q5) || null,
-    Q6: numberOrZero(peiwan.quotation_Q6) || null,
-    Q7: numberOrZero(peiwan.quotation_Q7) || null,
+    Q1: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q1]) || null,
+    Q2: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q2]) || null,
+    Q3: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q3]) || null,
+    Q4: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q4]) || null,
+    Q5: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q5]) || null,
+    Q6: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q6]) || null,
+    Q7: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q7]) || null,
   };
 }
 

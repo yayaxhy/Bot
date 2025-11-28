@@ -16,6 +16,15 @@ const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773
 
 const PEIWAN_ID_FIELD_NAMES = new Set(['PEIWANID', '陪玩ID']);
 const ORDER_CONTENT_FIELD_NAMES = new Set(['订单内容']);
+const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
+  Q1: 'quotation_Q1',
+  Q2: 'lolPrice',
+  Q3: 'valPrice',
+  Q4: 'deltaPrice',
+  Q5: 'csgoPrice',
+  Q6: 'narakaPrice',
+  Q7: 'apexPrice',
+};
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
 const isPeiwanIdFieldName = (name?: string | null) => {
@@ -65,7 +74,7 @@ function getOrderContentFromEmbed(i: StringSelectMenuInteraction): string {
  * 读取陪玩的某一档位价格
  */
 function getUnitPrice(peiwan: any, code: QuotationCode): number | null {
-  const key = `quotation_${code}`; // quotation_Q1 ... quotation_Q7
+  const key = PRICE_FIELD_BY_CODE[code];
   const raw = peiwan?.[key];
   if (raw == null) return null;
   const num = typeof raw === 'number' ? raw : Number(String(raw));
@@ -121,12 +130,12 @@ export async function handleOrderPriceSelect(i: Interaction) {
       techTag: true,
       MP_url: true,
       quotation_Q1: true,
-      quotation_Q2: true,
-      quotation_Q3: true,
-      quotation_Q4: true,
-      quotation_Q5: true,
-      quotation_Q6: true,
-      quotation_Q7: true,
+      lolPrice: true,
+      valPrice: true,
+      deltaPrice: true,
+      csgoPrice: true,
+      narakaPrice: true,
+      apexPrice: true,
     },
   });
   if (!peiwan) {

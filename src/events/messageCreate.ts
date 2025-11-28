@@ -58,8 +58,18 @@ const END_ORDER_PATTERN = /^!(?:陪玩|老板)结单(?:\s+(\S+))?$/;
 
 let cachedAnonGuild: Guild | null = null;
 
+const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
+  Q1: 'quotation_Q1',
+  Q2: 'lolPrice',
+  Q3: 'valPrice',
+  Q4: 'deltaPrice',
+  Q5: 'csgoPrice',
+  Q6: 'narakaPrice',
+  Q7: 'apexPrice',
+};
+
 function priceFromPeiwan(peiwan: any, code: QuotationCode): number | null {
-  const key = `quotation_${code}` as keyof typeof peiwan;
+  const key = PRICE_FIELD_BY_CODE[code] as keyof typeof peiwan;
   const raw = peiwan?.[key];
   if (raw == null) return null;
   const num = typeof raw === 'number' ? raw : Number(raw?.toString?.());
@@ -431,17 +441,17 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
       where: { PEIWANID: peiwanIdNum },
       select: {
         PEIWANID: true,
-        discordUserId: true,
-        defaultQuotationCode: true,
-        quotation_Q1: true,
-        quotation_Q2: true,
-        quotation_Q3: true,
-        quotation_Q4: true,
-        quotation_Q5: true,
-        quotation_Q6: true,
-        quotation_Q7: true,
-      },
-    });
+      discordUserId: true,
+      defaultQuotationCode: true,
+      quotation_Q1: true,
+      lolPrice: true,
+      valPrice: true,
+      deltaPrice: true,
+      csgoPrice: true,
+      narakaPrice: true,
+      apexPrice: true,
+    },
+  });
     if (!peiwan) {
       await message.reply(`未找到编号为 ${peiwanIdNum} 的陪玩。`);
       return true;
