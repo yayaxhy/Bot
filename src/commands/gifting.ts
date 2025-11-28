@@ -12,6 +12,8 @@ const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
+const hasSend = (channel: unknown): channel is { send: Function } =>
+  !!channel && typeof (channel as any).send === 'function';
 
 /** Parse: "!打赏 3/liwu @UserB @UserC" */
 function parseGiftingCommand(msg: Message): { quantity: number; giftName: string; toUserIds: string[] } | null {
@@ -94,7 +96,7 @@ async function sendAnonGiftLog(
   if (!ANON_NOTIFY_CHANNEL_ID) return;
   try {
     const channel = await client.channels.fetch(ANON_NOTIFY_CHANNEL_ID).catch(() => null);
-    if (channel && channel.isTextBased()) {
+    if (channel && channel.isTextBased() && hasSend(channel)) {
       const lines = [
         '【匿名打赏】',
         `收礼人：<@${payload.receiverId}> (${payload.receiverId})`,
@@ -102,9 +104,7 @@ async function sendAnonGiftLog(
         `总价：¥${payload.gross.toFixed(2)}`,
       ];
       await channel.send({ content: lines.join('\n'), allowedMentions: { parse: ['users'] } });
-      if (payload.imageUrl) {
-        await channel.send({ content: payload.imageUrl });
-      }
+      if (payload.imageUrl) await channel.send({ content: payload.imageUrl });
     }
   } catch (err) {
     console.error('[gifting] anon log send failed:', err);
