@@ -111,12 +111,12 @@ export function ongoing_order_request_embed(
   const mentionLinePlain = mentionPlain.trim();
 
   const lines = [
-    `正在派单 呼叫陪陪啦 ${callEmoji}`,
+    `正在派单 呼叫陪陪啦 <a:45:1422335965174829056>`,
     '',
-    `⭐${authorTag}：正在呼叫陪陪`,
+    `<a:36:1422326912327618775>${authorTag}：正在呼叫陪陪`,
     '',
   ];
-  if (mentionLinePlain) lines.push(`⭐ ${mentionLinePlain}`);
+  if (mentionLinePlain) lines.push(`<a:41:1422335911236206723> ${mentionLinePlain}`);
 
   const embed = new EmbedBuilder()
     .setTitle('派单进行中')
@@ -148,12 +148,12 @@ export function anonymous_ongoing_order_request_embed(
   const mentionLinePlain = mentionPlain.trim();
 
   const lines = [
-    `【正在派单】 呼叫陪陪啦 ${callEmoji}`,
+    `正在派单 呼叫陪陪啦 <a:45:1422335965174829056>`,
     '',
-    '匿名老板：正在呼叫陪陪',
+    '<a:36:1422326912327618775> 匿名老板：正在呼叫陪陪',
     '',
   ];
-  if (mentionLinePlain) lines.push(`⭐ ${mentionLinePlain}`);
+  if (mentionLinePlain) lines.push(`<a:41:1422335911236206723> ${mentionLinePlain}`);
   const embed = new EmbedBuilder()
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
@@ -177,13 +177,13 @@ export function order_request_sent_successfully_embed(interId: string): {
   embed: APIEmbed; components: any[];
 } {
   const lines = [
-    '## 💕【订单已创建】正在火速派单中！',
+    '## <a:44:1422335952378007683>【订单已创建】正在火速派单中！',
     '',
-    `✨\`订单号\`：\`${interId}\``,
+    `<a:36:1422326912327618775>\`订单号\`：\`${interId}\``,
     '',
-    '✨以下陪陪已对该订单发起抢单，祝板板挑选到心仪的陪陪！',
+    '<a:36:1422326912327618775>以下陪陪已对该订单发起抢单，祝板板挑选到心仪的陪陪！',
     '',
-    '✨温馨提示：请板板确认余额充足，余额不足时会自动结单哦',
+    '<a:191:1422323424298143814>温馨提示：请板板确认余额充足，余额不足时会自动结单哦',
     '',
     `✨锦鲤客服随时在线为您服务 ${getAdminMentions()}`,
   ];
@@ -218,7 +218,7 @@ export function sent_MP_embed(
     .setColor(DEFAULT_EMBED_COLOR);
 
   if (sanitizedOrderContent) {
-    e.addFields({ name: '订单内容', value: sanitizedOrderContent, inline: false });
+    e.addFields({ name: ' <a:41:1422335911236206723> 订单内容', value: sanitizedOrderContent, inline: false });
   }
 
   if (mpUrl) e.setImage(mpUrl);
@@ -457,11 +457,11 @@ export function invite_success_boss_embed(orderId: string, displayNo: number, pe
   const lines = [
     `您已邀请了陪玩 *${peiwanId}* ${workerMention}`,
     `订单号：${ORDER_ID_PREFIX}${displayNo}`,
-    '陪陪已接单，正在火速赶来！',
+    '<a:191:1422323424298143814> 陪陪已接单，正在火速赶来！',
     '🪙计费标准：5分钟后开始计费',
-    '若需提前结束，可点击下方“结单”按钮或使用口令 !陪玩结单 / !老板结单',
+    '<a:47:1422335987849236652> 若需提前结束，可点击下方“结单”按钮或使用口令 !陪玩结单 / !老板结单',
   ];
-  const embed = base('点单成功', lines.join('\n\n'));
+  const embed = base('点单成功 <a:a1:1423093340316106752>', lines.join('\n\n'));
 
   const endButton = new ButtonBuilder()
     .setCustomId(`order:end:${orderId}`)
@@ -552,6 +552,7 @@ export function invite_successfully_inDiscord_embed(bossTag: string, workerTag: 
       `老板 ${bossTag} 已点单陪玩 ${workerTag}`,
       '',
       '💕祝老板玩的开心，期待下次相遇💕',
+      '<:_001_:1438676013860257943> https://jinleeclub.vip',
     ].join('\n'));
   const attachment = new AttachmentBuilder(THANK_BOSS_GIF_PATH).setName('thankBoss.gif');
 
