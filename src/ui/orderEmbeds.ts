@@ -552,6 +552,7 @@ export function invite_successfully_inDiscord_embed(bossTag: string, workerTag: 
       `老板 ${bossTag} 已点单陪玩 ${workerTag}`,
       '',
       '💕祝老板玩的开心，期待下次相遇💕',
+      '',
       '<:_001_:1438676013860257943> https://jinleeclub.vip',
     ].join('\n'));
   const attachment = new AttachmentBuilder(THANK_BOSS_GIF_PATH).setName('thankBoss.gif');
@@ -568,6 +569,7 @@ export function anon_invite_successfully_inDiscord_embed(workerTag: string): Mes
       `匿名老板已点单陪玩 ${workerTag}`,
       '',
       '💕祝老板玩的开心，期待下次相遇💕',
+      '<:_001_:1438676013860257943> https://jinleeclub.vip',
     ].join('\n'));
   const attachment = new AttachmentBuilder(THANK_BOSS_GIF_PATH).setName('thankBoss.gif');
 
