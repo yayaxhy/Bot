@@ -18,6 +18,7 @@ import {
   refuse_order_request_embed,
   DEFAULT_GIFTS,
 } from '../../ui/orderEmbeds.js';
+import { ORDER_REQUEST_CLOSE_MS } from '../../services/orderInteractionManager.js';
 
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
@@ -68,6 +69,12 @@ function pricesFromPeiwan(peiwan: any): Partial<Record<QuotationCode, number | n
 
 const sanitizeOrderContent = (text: string): string =>
   stripRoleMentions(text).slice(0, 1024);
+
+function isOrderRequestExpired(message: Message): boolean {
+  const created = message?.createdTimestamp ?? 0;
+  if (!Number.isFinite(created) || created <= 0) return false;
+  return Date.now() - created > ORDER_REQUEST_CLOSE_MS;
+}
 
 function extractOrderContent(message: Message | null | undefined): string {
   if (!message) return '';
@@ -202,6 +209,28 @@ export async function handlePlayButton(i: ButtonInteraction) {
     const parts = i.customId.split(':');
     const orderId = parts[1];
     const ownerId = parts[2] || 'unknown';
+
+    // 过期的派单（可能因机器人重启未被定时器关闭）
+    if (isOrderRequestExpired(i.message as Message)) {
+      try {
+        if (i.message.editable) {
+          const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId('request:expired')
+              .setStyle(ButtonStyle.Secondary)
+              .setLabel('派单已关闭')
+              .setDisabled(true)
+          );
+          await i.message.edit({ components: [row] });
+        }
+      } catch (err) {
+        console.error('[handlePlayButton] expire edit failed:', err);
+      }
+      if (!i.replied && !i.deferred) {
+        await i.reply({ content: '派单已过期，无法抢单。', ephemeral: true });
+      }
+      return;
+    }
 
     // 立即 ACK（就算后面静默返回也不会超时）
     if (!i.deferred && !i.replied) {

@@ -8,7 +8,7 @@ import prisma from '../db/prisma.js';
 import { OrderStatus } from '@prisma/client';
 import { MIN } from '../lib/time.js';
 
-const ORDER_REQUEST_CLOSE_MS = 20 * MIN;
+export const ORDER_REQUEST_CLOSE_MS = 20 * MIN;
 const INVITATION_EXPIRE_MS = 10 * MIN;
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 
