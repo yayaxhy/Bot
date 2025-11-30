@@ -63,7 +63,11 @@ function computeHeartRoleSet(heartValue: number): string[] {
   return Array.from(roleSet);
 }
 
-export async function syncSpentRolesForMember(discordId: string) {
+export async function syncSpentRolesForMember(
+  discordId: string,
+  options: { includeSpendRoles?: boolean } = {}
+) {
+  const includeSpendRoles = options.includeSpendRoles ?? true;
   if (!SPENT_ROLE_GUILD_ID) {
     return;
   }
@@ -82,8 +86,10 @@ export async function syncSpentRolesForMember(discordId: string) {
     return;
   }
 
-  const totalSpentNumber = Number(memberRecord.totalSpent?.toString?.() ?? memberRecord.totalSpent ?? 0);
-  const spendRoles = computeRoleSet(totalSpentNumber);
+  const totalSpentNumber = includeSpendRoles
+    ? Number(memberRecord.totalSpent?.toString?.() ?? memberRecord.totalSpent ?? 0)
+    : 0;
+  const spendRoles = includeSpendRoles ? computeRoleSet(totalSpentNumber) : [];
 
   const [heartSent, heartReceived] = await Promise.all([
     prisma.heartCounter.aggregate({

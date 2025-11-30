@@ -35,6 +35,9 @@ export async function notifyOrderEnded(orderId: string) {
     return;
   }
   syncSpentRolesForMember(order.hostId).catch((err) => console.error('[spent-role] schedule failed', err));
+  syncSpentRolesForMember(order.workerId, { includeSpendRoles: false }).catch((err) =>
+    console.error('[spent-role] schedule failed for worker', err)
+  );
   const now = new Date();
   const [availableCoupons, existingUsage] = await Promise.all([
     prisma.coupon.count({

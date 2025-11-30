@@ -321,6 +321,9 @@ export async function performGift(
   syncSpentRolesForMember(giverId).catch((err) =>
     console.error('[spent-role] gift sync failed', err)
   );
+  syncSpentRolesForMember(receiverId, { includeSpendRoles: false }).catch((err) =>
+    console.error('[spent-role] gift sync failed for receiver', err)
+  );
 
   return result;
 }
