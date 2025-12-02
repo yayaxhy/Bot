@@ -13,7 +13,6 @@ import prisma from '../db/prisma.js';
 const DEC = (v: number | string | Prisma.Decimal) =>
   v instanceof Prisma.Decimal ? v : new Prisma.Decimal(v);
 
-const MIN_SLICE = DEC('0.10');
 const MIN_TOTAL = DEC('10');
 const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
 
