@@ -7,10 +7,10 @@ import { recordIndividualTransaction } from './individualTransactionService.js';
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
 const MIN_SLICE = new Prisma.Decimal('0.10'); // 单份最小 0.1 元
-// 默认 30 分钟过期，未抢完金额自动退回（可通过 RED_ENVELOPE_EXPIRE_MS 覆盖）
+// 默认 1 分钟过期，未抢完金额自动退回（可通过 RED_ENVELOPE_EXPIRE_MS 覆盖）
 const DEFAULT_EXPIRE_MS = Math.max(
   60_000,
-  Number.parseInt(process.env.RED_ENVELOPE_EXPIRE_MS ?? '', 10) || 30 * 60_000
+  Number.parseInt(process.env.RED_ENVELOPE_EXPIRE_MS ?? '', 10) || 1 * 60_000
 );
 const LEDGER_COUNTERPART_ID = 'red-envelope-pool';
 export const CLAIM_EMOJI_ID = '1438676013860257943';
