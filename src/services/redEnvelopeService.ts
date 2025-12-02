@@ -133,6 +133,14 @@ const generateFairShares = (
   for (let i = 0; i < count; i += 1) {
     weights.push(sampleGammaIntShape(FAIRNESS_ALPHA, rng));
   }
+  if (weights.length) {
+    const applyKoi = rng() < 0.35;
+    if (applyKoi) {
+      const koiIndex = Math.floor(rng() * weights.length);
+      const koiBoost = 1.2 + rng() * 1.0; // 1.2x - 2.2x
+      weights[koiIndex] *= koiBoost;
+    }
+  }
   const weightSum = weights.reduce((acc, w) => acc + w, 0) || Number.EPSILON;
 
   let shares = weights.map((w) => {
@@ -140,6 +148,35 @@ const generateFairShares = (
     const raw = MIN_SLICE.add(portion);
     return new Prisma.Decimal(raw.toFixed(2));
   });
+
+  if (shares.length >= 2) {
+    const applyBump = rng() < 0.5;
+    if (applyBump) {
+      const target = Math.floor(rng() * shares.length);
+      const availablePool = shares.reduce((acc, s, idx) => {
+        if (idx === target) return acc;
+        const spare = s.sub(MIN_SLICE);
+        return spare.gt(0) ? acc.add(spare) : acc;
+      }, new Prisma.Decimal(0));
+      const bumpMax = Math.min(1, Number(availablePool.toString()));
+      if (bumpMax > 0.01) {
+        const rawBump = bumpMax * (0.4 + rng() * 0.6); // 40%-100% of cap
+        const bump = new Prisma.Decimal(Math.max(0.1, rawBump).toFixed(2));
+        if (bump.gt(0)) {
+          let remaining = bump;
+          for (let i = 0; i < shares.length && remaining.gt(0); i += 1) {
+            if (i === target) continue;
+            const spare = shares[i].sub(MIN_SLICE);
+            if (spare.lte(0)) continue;
+            const take = spare.gte(remaining) ? remaining : spare;
+            shares[i] = shares[i].sub(take);
+            remaining = remaining.sub(take);
+          }
+          shares[target] = shares[target].add(bump.sub(remaining));
+        }
+      }
+    }
+  }
 
   shares = fixRounding(shares, totalAmount);
   shares = shuffleWithRng(shares, rng);
