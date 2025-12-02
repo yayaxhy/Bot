@@ -8,10 +8,11 @@ import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
 const MIN_SLICE = new Prisma.Decimal('0.10'); // 单份最小 0.1 元
-// 默认 1 分钟过期，未抢完金额自动退回（可通过 RED_ENVELOPE_EXPIRE_MS 覆盖）
+const FAIRNESS_ALPHA = 6; // 越大越均匀
+// 默认 30 分钟过期，未抢完金额自动退回（可通过 RED_ENVELOPE_EXPIRE_MS 覆盖）
 const DEFAULT_EXPIRE_MS = Math.max(
   60_000,
-  Number.parseInt(process.env.RED_ENVELOPE_EXPIRE_MS ?? '', 10) || 1 * 60_000
+  Number.parseInt(process.env.RED_ENVELOPE_EXPIRE_MS ?? '', 10) || 30 * 60_000
 );
 const LEDGER_COUNTERPART_ID = 'red-envelope-pool';
 export const CLAIM_EMOJI_ID = '1438676013860257943';
@@ -27,6 +28,7 @@ const claimLogByEnvelope = new Map<
     amount: Prisma.Decimal;
   }>
 >();
+const fairSharePlans = new Map<string, Prisma.Decimal[]>(); // deterministic fair split per envelope
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -55,25 +57,147 @@ const sanitizeName = (name?: string | null) => {
   return cleaned || undefined;
 };
 
-function calcRandomShare(remainingAmount: Prisma.Decimal, remainingCount: number): Prisma.Decimal {
-  if (remainingCount <= 1) return remainingAmount;
+const hashToSeed = (input: string) => {
+  let h = 1779033703 ^ input.length;
+  for (let i = 0; i < input.length; i += 1) {
+    h = Math.imul(h ^ input.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return h >>> 0;
+};
 
-  const minForOthers = MIN_SLICE.mul(remainingCount - 1);
-  const maxShare = remainingAmount.sub(minForOthers);
+const mulberry32 = (seed: number) => {
+  let a = seed;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+
+const shuffleWithRng = <T>(list: T[], rng: () => number) => {
+  const arr = [...list];
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(rng() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+};
+
+const sampleGammaIntShape = (shape: number, rng: () => number) => {
+  let sum = 0;
+  for (let i = 0; i < shape; i += 1) {
+    const u = Math.max(rng(), Number.EPSILON);
+    sum += -Math.log(u);
+  }
+  return Math.max(sum, Number.EPSILON);
+};
+
+const fixRounding = (shares: Prisma.Decimal[], targetTotal: Prisma.Decimal) => {
+  const sum = shares.reduce((acc, s) => acc.add(s), new Prisma.Decimal(0));
+  const diff = targetTotal.sub(sum);
+  let cents = Math.round(Number(diff.toString()) * 100);
+  if (!Number.isFinite(cents) || cents === 0) return shares;
+
+  const direction = cents > 0 ? 1 : -1;
+  let idx = 0;
+  const delta = new Prisma.Decimal((direction / 100).toFixed(2));
+  while (cents !== 0 && idx < shares.length * 3) {
+    const i = idx % shares.length;
+    const next = shares[i].add(delta);
+    if (next.gte(MIN_SLICE)) {
+      shares[i] = next;
+      cents -= direction;
+    }
+    idx += 1;
+  }
+  return shares;
+};
+
+const generateFairShares = (
+  seedKey: string,
+  totalAmount: Prisma.Decimal,
+  count: number
+) => {
+  if (count <= 0) return [] as Prisma.Decimal[];
+  const minTotal = MIN_SLICE.mul(count);
+  const variablePool = totalAmount.sub(minTotal);
+  if (variablePool.lte(0)) {
+    return new Array(count).fill(MIN_SLICE);
+  }
+
+  const rng = mulberry32(hashToSeed(seedKey));
+  const weights: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    weights.push(sampleGammaIntShape(FAIRNESS_ALPHA, rng));
+  }
+  const weightSum = weights.reduce((acc, w) => acc + w, 0) || Number.EPSILON;
+
+  let shares = weights.map((w) => {
+    const portion = variablePool.mul(w).div(weightSum);
+    const raw = MIN_SLICE.add(portion);
+    return new Prisma.Decimal(raw.toFixed(2));
+  });
+
+  shares = fixRounding(shares, totalAmount);
+  shares = shuffleWithRng(shares, rng);
+  return shares;
+};
+
+const getFairSharePlan = (envelope: {
+  id: string;
+  totalAmount: Prisma.Decimal;
+  totalCount: number;
+  remainingAmount: Prisma.Decimal;
+  remainingCount: number;
+}) => {
+  const claimedCount = envelope.totalCount - envelope.remainingCount;
+  let plan = fairSharePlans.get(envelope.id);
+  if (!plan) {
+    plan = generateFairShares(envelope.id, envelope.totalAmount, envelope.totalCount);
+  }
+
+  const tail = plan.slice(claimedCount);
+  const tailSum = tail.reduce((acc, s) => acc.add(s), new Prisma.Decimal(0));
+  const diff = tailSum.sub(envelope.remainingAmount).abs();
+  if (diff.gte(new Prisma.Decimal('0.01'))) {
+    const rebuiltTail = generateFairShares(
+      `${envelope.id}-tail-${claimedCount}`,
+      envelope.remainingAmount,
+      envelope.remainingCount
+    );
+    plan = [...plan.slice(0, claimedCount), ...rebuiltTail];
+  }
+
+  fairSharePlans.set(envelope.id, plan);
+  return plan;
+};
+
+const pickFairShare = (
+  envelope: {
+    id: string;
+    totalAmount: Prisma.Decimal;
+    totalCount: number;
+    remainingAmount: Prisma.Decimal;
+    remainingCount: number;
+  }
+) => {
+  if (envelope.remainingCount <= 1) return envelope.remainingAmount;
+  const minForOthers = MIN_SLICE.mul(envelope.remainingCount - 1);
+  const maxShare = envelope.remainingAmount.sub(minForOthers);
   if (maxShare.lte(MIN_SLICE)) return MIN_SLICE;
 
-  const random = Math.random();
-  const spread = maxShare.sub(MIN_SLICE);
-  const candidate = MIN_SLICE.add(spread.mul(random));
+  const plan = getFairSharePlan(envelope);
+  const idx = envelope.totalCount - envelope.remainingCount;
+  const planned = plan[idx];
+  if (!planned) return maxShare;
 
-  // floor to 2 decimals using number math to avoid rounding up the total
-  const floored = Math.floor(Number(candidate.toString()) * 100) / 100;
-  const share = new Prisma.Decimal(floored.toFixed(2));
-
-  if (share.lt(MIN_SLICE)) return MIN_SLICE;
-  if (share.gt(maxShare)) return maxShare;
-  return share;
-}
+  if (planned.gt(maxShare)) return maxShare;
+  if (planned.lt(MIN_SLICE)) return MIN_SLICE;
+  return planned;
+};
 
 function splitFromPools(
   amount: Prisma.Decimal,
@@ -352,7 +476,13 @@ export async function claimRedEnvelope(
       return { status: 'ended', envelopeId: envelope.id };
     }
 
-    const share = calcRandomShare(remainingAmount, envelope.remainingCount);
+    const share = pickFairShare({
+      id: envelope.id,
+      totalAmount: asDecimal(envelope.totalAmount ?? 0),
+      totalCount: envelope.totalCount,
+      remainingAmount,
+      remainingCount: envelope.remainingCount,
+    });
     const { incomePart, rechargePart } = splitFromPools(
       share,
       asDecimal(envelope.incomePool ?? 0),
@@ -427,6 +557,7 @@ export async function claimRedEnvelope(
     if (updatedEnvelope.status !== RedEnvelopeStatus.ACTIVE) {
       clearExpirationTimer(envelope.id);
       claimedByEnvelope.delete(envelope.id);
+      fairSharePlans.delete(envelope.id);
     }
 
     return {
@@ -528,6 +659,7 @@ export async function expireEnvelope(
     clearExpirationTimer(envelope.id);
     claimedByEnvelope.delete(envelope.id);
     claimLogByEnvelope.delete(envelope.id);
+    fairSharePlans.delete(envelope.id);
 
     return { refundAmount: remainingAmount, status: 'refunded', creatorId: envelope.creatorId };
   });
