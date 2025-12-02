@@ -21,6 +21,14 @@ import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
 import { registerTechTagSync } from './services/techTagService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
+import { registerRedEnvelopeCommand } from './commands/redEnvelope.js';
+import {
+  CLAIM_EMOJI_ID,
+  claimRedEnvelope,
+  findEnvelopeByMessage,
+  recoverRedEnvelopeSchedules,
+  refreshRedEnvelopeMessage,
+} from './services/redEnvelopeService.js';
 
 
 dotenv.config();
@@ -32,14 +40,68 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessageReactions,
   ],
-  partials: [Partials.Channel, Partials.Message],
+  partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
 });
 
 (globalThis as any).__CLIENT__ = client;
 
 // message create
 client.on(Events.MessageCreate, messageCreateHandler);
+
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+  try {
+    if (user.bot) return;
+
+    if (reaction.partial) {
+      try {
+        await reaction.fetch();
+      } catch (err) {
+        console.error('[red-envelope] reaction fetch failed:', err);
+        return;
+      }
+    }
+
+    if (reaction.emoji.id !== CLAIM_EMOJI_ID) return;
+
+    const message = reaction.message;
+    if (!message || message.partial) {
+      try {
+        await message.fetch();
+      } catch (err) {
+        console.error('[red-envelope] message fetch failed:', err);
+        return;
+      }
+    }
+
+    const envelope = await findEnvelopeByMessage(message.id);
+    if (!envelope) {
+      try { await reaction.users.remove(user.id); } catch {}
+      return;
+    }
+
+    const result = await claimRedEnvelope(envelope.id, user.id);
+
+    if (result.status === 'claimed') {
+      await refreshRedEnvelopeMessage(client, envelope.id);
+      // 不提示
+    } else if (result.status === 'already_claimed') {
+      await refreshRedEnvelopeMessage(client, envelope.id);
+      // 重复点击不提示
+    } else if (result.status === 'expired') {
+      await refreshRedEnvelopeMessage(client, envelope.id);
+      // 过期点击静默
+    } else if (result.status === 'ended') {
+      // 红包已抢完，静默处理
+      await refreshRedEnvelopeMessage(client, envelope.id);
+    }
+  } catch (err) {
+    console.error('[red-envelope] reaction handler error:', err);
+  } finally {
+    try { await reaction.users.remove(user.id); } catch {}
+  }
+});
 
 // interaction router
 client.on(Events.InteractionCreate, async (i: Interaction) => {
@@ -111,6 +173,7 @@ client.once(Events.ClientReady, async () => {
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerTotalEarnCommand(client, prisma);
+  registerRedEnvelopeCommand(client, prisma);
   try {
         if (client.application) {
             await client.application.commands.create(grantCouponCommand);
@@ -119,6 +182,7 @@ client.once(Events.ClientReady, async () => {
   } catch (err) {
     console.error('[slash] register error:', err);
   }
+  await recoverRedEnvelopeSchedules(client);
   startInternalWebhookServer();
   startWithdrawWatcher().catch((err) => console.error('[withdraw.watch] init failed', err));
   startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));

@@ -75,6 +75,12 @@ enum PeiwanLevel {
   殿堂陪玩
 }
 
+enum RedEnvelopeStatus {
+  ACTIVE
+  FINISHED
+  REFUNDED
+}
+
 /**
  * ---------------- Models ----------------
  */
@@ -369,4 +375,25 @@ model HeartCounter {
   updatedAt DateTime @updatedAt
 
   @@unique([fromMemberId, toMemberId])
+}
+
+model RedEnvelope {
+  id              String             @id @default(cuid())
+  creatorId       String
+  totalAmount     Decimal            @db.Decimal(19, 4)
+  remainingAmount Decimal            @db.Decimal(19, 4)
+  totalCount      Int
+  remainingCount  Int
+  note            String?
+  status          RedEnvelopeStatus  @default(ACTIVE)
+  expiresAt       DateTime
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  messageId       String?
+  channelId       String?
+  refundedAmount  Decimal?           @db.Decimal(19, 4)
+  incomePool      Decimal            @db.Decimal(19, 4)
+  rechargePool    Decimal            @db.Decimal(19, 4)
+
+  @@index([status, expiresAt])
 }
