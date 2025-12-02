@@ -315,6 +315,9 @@ export async function claimRedEnvelope(
   };
 
   return client.$transaction(async (tx) => {
+    // lock the envelope row to avoid concurrent over-claims
+    await tx.$queryRaw`SELECT 1 FROM "RedEnvelope" WHERE id = ${envelopeId} FOR UPDATE`;
+
     const envelope = await tx.redEnvelope.findUnique({
       where: { id: envelopeId },
     });
