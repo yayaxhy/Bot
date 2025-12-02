@@ -441,19 +441,34 @@ export async function claimRedEnvelope(
 export async function expireEnvelope(
   envelopeId: string,
   client: DbClient = prisma
-): Promise<{ refundAmount: Prisma.Decimal; status: 'refunded' | 'noop' | 'not_due' }> {
+): Promise<{
+  refundAmount: Prisma.Decimal;
+  status: 'refunded' | 'noop' | 'not_due';
+  creatorId?: string;
+}> {
   const runner = typeof (client as any).$transaction === 'function'
     ? (client as PrismaClient).$transaction.bind(client as PrismaClient)
     : async (fn: (tx: DbClient) => any) => fn(client);
 
   return runner(async (tx: DbClient) => {
-    const envelope = await tx.redEnvelope.findUnique({ where: { id: envelopeId } });
+    const envelope = await tx.redEnvelope.findUnique({
+      where: { id: envelopeId },
+      select: {
+        id: true,
+        creatorId: true,
+        status: true,
+        expiresAt: true,
+        remainingAmount: true,
+        incomePool: true,
+        rechargePool: true,
+      },
+    });
     if (!envelope) return { refundAmount: new Prisma.Decimal(0), status: 'noop' };
     if (envelope.status !== RedEnvelopeStatus.ACTIVE) {
-      return { refundAmount: new Prisma.Decimal(0), status: 'noop' };
+      return { refundAmount: new Prisma.Decimal(0), status: 'noop', creatorId: envelope.creatorId };
     }
     if (envelope.expiresAt.getTime() > Date.now()) {
-      return { refundAmount: new Prisma.Decimal(0), status: 'not_due' };
+      return { refundAmount: new Prisma.Decimal(0), status: 'not_due', creatorId: envelope.creatorId };
     }
 
     const remainingAmount = asDecimal(envelope.remainingAmount ?? 0);
@@ -476,18 +491,18 @@ export async function expireEnvelope(
         where: { discordUserId: envelope.creatorId },
         select: { totalBalance: true },
       });
-        if (member) {
-          const balanceBefore = new Prisma.Decimal(member.totalBalance ?? 0);
-          const balanceAfter = balanceBefore.add(remainingAmount);
+      if (member) {
+        const balanceBefore = new Prisma.Decimal(member.totalBalance ?? 0);
+        const balanceAfter = balanceBefore.add(remainingAmount);
 
-          await tx.member.update({
-            where: { discordUserId: envelope.creatorId },
-            data: {
-              recharge: { increment: refundRecharge },
-              totalBalance: { increment: remainingAmount },
-              totalSpent: { decrement: remainingAmount },
-            },
-          });
+        await tx.member.update({
+          where: { discordUserId: envelope.creatorId },
+          data: {
+            recharge: { increment: refundRecharge },
+            totalBalance: { increment: remainingAmount },
+            totalSpent: { decrement: remainingAmount },
+          },
+        });
 
         const peiwan = await tx.pEIWAN.findUnique({
           where: { discordUserId: envelope.creatorId },
@@ -584,6 +599,15 @@ async function runExpiration(client: Client, envelopeId: string) {
     const result = await expireEnvelope(envelopeId);
     if (result.status === 'refunded') {
       await refreshRedEnvelopeMessage(client, envelopeId);
+      if (result.refundAmount.gt(0) && result.creatorId) {
+        const refundText = Number(result.refundAmount.toString()).toFixed(2);
+        try {
+          const user = await client.users.fetch(result.creatorId);
+          await user.send(`网站自动充值成功，已为你余额增加 ¥${refundText}`);
+        } catch (err) {
+          console.error('[red-envelope] notify refund failed:', err);
+        }
+      }
     }
   } catch (err) {
     console.error('[red-envelope] expire failed:', err);
