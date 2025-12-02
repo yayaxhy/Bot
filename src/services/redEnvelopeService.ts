@@ -1,4 +1,4 @@
-import { Client, EmbedBuilder, userMention } from 'discord.js';
+import { Client, EmbedBuilder } from 'discord.js';
 import { Prisma, PrismaClient, RedEnvelopeStatus } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
@@ -46,6 +46,12 @@ type EnvelopeForDisplay = {
 const clampNote = (note?: string | null) => {
   if (!note) return undefined;
   return note.trim().slice(0, 120);
+};
+
+const sanitizeName = (name?: string | null) => {
+  if (!name) return undefined;
+  const cleaned = name.replace(/<@!?\d+>/g, '').trim();
+  return cleaned || undefined;
 };
 
 function calcRandomShare(remainingAmount: Prisma.Decimal, remainingCount: number): Prisma.Decimal {
@@ -515,11 +521,11 @@ async function resolveCreatorName(
         const member =
           channel.guild.members.cache.get(creatorId) ??
           (await channel.guild.members.fetch(creatorId).catch(() => null));
-        if (member?.displayName) return member.displayName;
+        if (member?.displayName) return sanitizeName(member.displayName);
       }
     }
     const user = await client.users.fetch(creatorId).catch(() => null);
-    return user?.username;
+    return sanitizeName(user?.username);
   } catch {
     return undefined;
   }

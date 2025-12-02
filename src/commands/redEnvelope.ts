@@ -14,6 +14,12 @@ const DEC = (v: number | string | Prisma.Decimal) =>
 
 const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
 
+const sanitizeName = (name?: string | null) => {
+  if (!name) return undefined;
+  const cleaned = name.replace(/<@!?\d+>/g, '').trim();
+  return cleaned || undefined;
+};
+
 type ParsedCommand = {
   count: number;
   amount: Prisma.Decimal;
@@ -91,7 +97,8 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
       }
 
       try {
-        const creatorDisplayName = msg.member?.displayName || msg.author.username;
+        const creatorDisplayName =
+          sanitizeName(msg.member?.displayName) ?? sanitizeName(msg.author.username);
         const payload = buildRedEnvelopeMessagePayload({
           id: envelope.id,
           creatorId: envelope.creatorId,
