@@ -287,7 +287,8 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
         `留言：${envelope.note ?? '锦鲤附体，好运暴击！'}`,
         `点击下方表情 ${CLAIM_EMOJI} 抢红包！`,
       ].join('\n')
-    );
+    )
+    .setThumbnail('attachment://redPocket.gif');
 
   const claims = getClaimLog(envelope.id);
   if (claims.length) {
@@ -316,7 +317,10 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
     embed.setFooter({ text: `红包已过期，退回 ¥${refunded}` });
   }
 
-  return { embeds: [embed] };
+  return {
+    embeds: [embed],
+    files: [{ attachment: 'src/img/redPocket.gif', name: 'redPocket.gif' }],
+  };
 }
 
 export type ClaimResult =
