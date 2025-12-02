@@ -3,6 +3,7 @@ import { Prisma, PrismaClient, RedEnvelopeStatus } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
+import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -488,8 +489,10 @@ export async function expireEnvelope(
         select: { totalBalance: true },
       });
         if (member) {
-          const balanceBefore = new Prisma.Decimal(member.totalBalance ?? 0);
-          const balanceAfter = balanceBefore.add(remainingAmount);
+        await suppressRechargeNotifications(tx);
+
+        const balanceBefore = new Prisma.Decimal(member.totalBalance ?? 0);
+        const balanceAfter = balanceBefore.add(remainingAmount);
 
           await tx.member.update({
             where: { discordUserId: envelope.creatorId },
