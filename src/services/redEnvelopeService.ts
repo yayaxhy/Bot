@@ -300,6 +300,15 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
     embed.addFields({ name: '已抢', value: lines.join('\n') });
   }
 
+  if (envelope.status === RedEnvelopeStatus.FINISHED && claims.length) {
+    const top = claims.reduce((best, cur) =>
+      cur.amount.gt(best.amount) ? cur : best
+    );
+    const koiName = sanitizeName(top.displayName) ?? '用户';
+    const koiLine = `${CLAIM_EMOJI} 恭喜锦鲤宝宝 ${koiName} 抢到了最高金额 ¥${formatAmount(top.amount)}`;
+    embed.addFields({ name: '锦鲤', value: koiLine });
+  }
+
   if (envelope.status === RedEnvelopeStatus.FINISHED) {
     embed.setFooter({ text: '红包已抢完 🎉' });
   } else if (envelope.status === RedEnvelopeStatus.REFUNDED) {
