@@ -8,7 +8,7 @@ import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
 const MIN_SLICE = new Prisma.Decimal('0.10'); // 单份最小 0.1 元
-const FAIRNESS_ALPHA = 2; // 越小越刺激，允许更大落差
+const FAIRNESS_ALPHA = 1; // 越小越刺激，允许更大落差
 // 默认 30 分钟过期，未抢完金额自动退回（可通过 RED_ENVELOPE_EXPIRE_MS 覆盖）
 const DEFAULT_EXPIRE_MS = Math.max(
   60_000,
@@ -134,10 +134,13 @@ const generateFairShares = (
     weights.push(sampleGammaIntShape(FAIRNESS_ALPHA, rng));
   }
   if (weights.length) {
-    const applyKoi = rng() < 0.35;
-    if (applyKoi) {
+    const koiHits = rng() < 0.6 ? 1 + (rng() < 0.3 ? 1 : 0) : 0; // 0/1/2 个加成
+    const used = new Set<number>();
+    for (let k = 0; k < koiHits; k += 1) {
       const koiIndex = Math.floor(rng() * weights.length);
-      const koiBoost = 1.2 + rng() * 1.0; // 1.2x - 2.2x
+      if (used.has(koiIndex)) continue;
+      used.add(koiIndex);
+      const koiBoost = 1.5 + rng() * 1.5; // 1.5x - 3.0x
       weights[koiIndex] *= koiBoost;
     }
   }
@@ -158,10 +161,11 @@ const generateFairShares = (
         const spare = s.sub(MIN_SLICE);
         return spare.gt(0) ? acc.add(spare) : acc;
       }, new Prisma.Decimal(0));
-      const bumpMax = Math.min(1, Number(availablePool.toString()));
+      const bumpMax = Math.min(3, Number(availablePool.toString())); // 单次最多挪 3 元
       if (bumpMax > 0.01) {
-        const rawBump = bumpMax * (0.4 + rng() * 0.6); // 40%-100% of cap
-        const bump = new Prisma.Decimal(Math.max(0.1, rawBump).toFixed(2));
+        const rawBump = bumpMax * (0.5 + rng() * 0.7); // 50%-120% of cap
+        const cappedBump = Math.min(bumpMax, Math.max(0.1, rawBump));
+        const bump = new Prisma.Decimal(cappedBump.toFixed(2));
         if (bump.gt(0)) {
           let remaining = bump;
           for (let i = 0; i < shares.length && remaining.gt(0); i += 1) {
