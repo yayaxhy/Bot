@@ -40,10 +40,11 @@ function parseRedEnvelopeCommand(content: string): ParsedCommand | null {
   if (!firstToken.includes('/')) return null;
 
   const [countRaw, amountRaw] = firstToken.split('/');
-  const countMatch = countRaw.match(/^(\d+)\s*个?$/);
-  const amountMatch = amountRaw.match(/^(\d+(?:\.\d{1,2})?)\s*元?$/);
-  const count = countMatch ? Number(countMatch[1]) : Number(countRaw);
-  const amount = amountMatch ? Number(amountMatch[1]) : Number(amountRaw);
+  const countMatch = countRaw.match(/^(\d+)\s*个$/);
+  const amountMatch = amountRaw.match(/^(\d+(?:\.\d{1,2})?)\s*元$/);
+  if (!countMatch || !amountMatch) return null;
+  const count = Number(countMatch[1]);
+  const amount = Number(amountMatch[1]);
   if (!Number.isInteger(count) || count <= 0) return null;
   if (!Number.isFinite(amount) || amount <= 0) return null;
 
