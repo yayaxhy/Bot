@@ -16,6 +16,7 @@ import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
 import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
 import { handleRegisterPeiwanSlash, registerPeiwanCommand } from './commands/registerPeiwanSlash.js';
+import { handleRedEnvelopeSlash, redEnvelopeSlashCommand } from './commands/redEnvelopeSlash.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
@@ -140,6 +141,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleRegisterPeiwanSlash(i);
                 return;
             }
+            if (i.commandName === '红包') {
+                await handleRedEnvelopeSlash(i);
+                return;
+            }
         }
 
     // Buttons
@@ -187,6 +192,7 @@ client.once(Events.ClientReady, async () => {
         if (client.application) {
             await client.application.commands.create(grantCouponCommand);
             await client.application.commands.create(registerPeiwanCommand);
+            await client.application.commands.create(redEnvelopeSlashCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);
