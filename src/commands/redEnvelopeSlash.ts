@@ -23,7 +23,7 @@ export const redEnvelopeSlashCommand = new SlashCommandBuilder()
   .addIntegerOption((option) =>
     option
       .setName('份数')
-      .setDescription('红包份数，1-100，每份至少 ¥0.10')
+      .setDescription('红包份数，1-100')
       .setRequired(true)
       .setMinValue(1)
       .setMaxValue(100)
@@ -31,14 +31,14 @@ export const redEnvelopeSlashCommand = new SlashCommandBuilder()
   .addNumberOption((option) =>
     option
       .setName('总额')
-      .setDescription('红包总金额，至少 ¥10，且需 >= 份数 * 0.10')
+      .setDescription('红包总金额，至少 ¥10')
       .setRequired(true)
       .setMinValue(10)
   )
   .addStringOption((option) =>
     option
       .setName('留言')
-      .setDescription('可选祝福语，展示在红包上（最多 120 字符）')
+      .setDescription('可选祝福语，展示在红包上（默认为：锦鲤附体，好运暴击！）')
       .setRequired(false)
   );
 
@@ -70,11 +70,6 @@ export async function handleRedEnvelopeSlash(
   }
   if (amount.lt(MIN_TOTAL)) {
     await i.reply({ content: '红包总金额至少 ¥10。', ephemeral: true });
-    return;
-  }
-  if (amount.lt(MIN_SLICE.mul(count))) {
-    const minNeeded = MIN_SLICE.mul(count).toFixed(2);
-    await i.reply({ content: `金额不足，每份至少 ¥0.10（本次至少 ¥${minNeeded}）。`, ephemeral: true });
     return;
   }
 
