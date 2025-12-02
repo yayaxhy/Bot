@@ -77,29 +77,35 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 
     const envelope = await findEnvelopeByMessage(message.id);
     if (!envelope) {
-      try { await reaction.users.remove(user.id); } catch {}
       return;
     }
 
-    const result = await claimRedEnvelope(envelope.id, user.id);
+    const guild = reaction.message.guild;
+    let displayName: string | undefined = user.username ?? undefined;
+    try {
+      if (guild) {
+        const member = await guild.members.fetch(user.id);
+        displayName = member.displayName || member.user.username || displayName;
+      }
+    } catch {}
 
-    if (result.status === 'claimed') {
+    const claimResult = await claimRedEnvelope(envelope.id, user.id, displayName);
+
+    if (claimResult.status === 'claimed') {
       await refreshRedEnvelopeMessage(client, envelope.id);
       // 不提示
-    } else if (result.status === 'already_claimed') {
+    } else if (claimResult.status === 'already_claimed') {
       await refreshRedEnvelopeMessage(client, envelope.id);
       // 重复点击不提示
-    } else if (result.status === 'expired') {
+    } else if (claimResult.status === 'expired') {
       await refreshRedEnvelopeMessage(client, envelope.id);
       // 过期点击静默
-    } else if (result.status === 'ended') {
+    } else if (claimResult.status === 'ended') {
       // 红包已抢完，静默处理
       await refreshRedEnvelopeMessage(client, envelope.id);
     }
   } catch (err) {
     console.error('[red-envelope] reaction handler error:', err);
-  } finally {
-    try { await reaction.users.remove(user.id); } catch {}
   }
 });
 

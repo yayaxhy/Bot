@@ -20,7 +20,11 @@ const timers = new Map<string, NodeJS.Timeout>();
 const claimedByEnvelope = new Map<string, Map<string, Prisma.Decimal>>(); // de-dupe per session (stores net credited)
 const claimLogByEnvelope = new Map<
   string,
-  Array<{ userId: string; amount: Prisma.Decimal; netAmount: Prisma.Decimal; rate: Prisma.Decimal }>
+  Array<{
+    userId: string;
+    displayName?: string;
+    amount: Prisma.Decimal;
+  }>
 >();
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
@@ -88,7 +92,11 @@ function getClaimLog(envelopeId: string) {
 
 function pushClaimLog(
   envelopeId: string,
-  entry: { userId: string; amount: Prisma.Decimal; netAmount: Prisma.Decimal; rate: Prisma.Decimal }
+  entry: {
+    userId: string;
+    displayName?: string;
+    amount: Prisma.Decimal;
+  }
 ) {
   const list = claimLogByEnvelope.get(envelopeId) ?? [];
   list.push(entry);
@@ -103,7 +111,6 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
       [
         `总额：¥${formatAmount(envelope.totalAmount)} | 份数：${envelope.totalCount}`,
         `留言：${envelope.note ?? '锦鲤附体，好运暴击！'}`,
-        `有效期：${envelope.expiresAt.toLocaleString('zh-CN', { hour12: false })}`,
         `点击下方表情 ${CLAIM_EMOJI} 抢红包！`,
       ].join('\n')
     );
@@ -114,7 +121,7 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
       .slice(-50)
       .map(
         (c) =>
-          `${userMention(c.userId)} 抢到 ¥${formatAmount(c.amount)}，到手 ¥${formatAmount(c.netAmount)}`
+          `${c.displayName ?? '用户'} 抢到 ¥${formatAmount(c.amount)}`
       );
     embed.addFields({ name: '已抢', value: lines.join('\n') });
   }
@@ -276,6 +283,7 @@ export async function findEnvelopeByMessage(messageId: string) {
 export async function claimRedEnvelope(
   envelopeId: string,
   claimerId: string,
+  displayName?: string,
   client: PrismaClient = prisma
 ): Promise<ClaimResult> {
   const getClaimed = (envId: string, userId: string) => {
@@ -395,7 +403,7 @@ export async function claimRedEnvelope(
       typeOfTransaction: '红包收入',
     });
 
-    pushClaimLog(envelope.id, { userId: claimerId, amount: share, netAmount, rate });
+    pushClaimLog(envelope.id, { userId: claimerId, displayName, amount: share });
     setClaimed(envelope.id, claimerId, netAmount);
 
     if (updatedEnvelope.status !== RedEnvelopeStatus.ACTIVE) {
