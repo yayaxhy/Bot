@@ -93,9 +93,9 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 
     if (claimResult.status === 'claimed') {
       await refreshRedEnvelopeMessage(client, envelope.id);
-      const msgText = `恭喜你锦鲤附体，好运暴击抢到了红包 ¥${Number(
-        claimResult.amount.toString()
-      ).toFixed(2)}，实际到手 ¥${Number(claimResult.amount.toString()).toFixed(2)}！`;
+      const grossText = Number(claimResult.gross.toString()).toFixed(2);
+      const netText = Number(claimResult.amount.toString()).toFixed(2);
+      const msgText = `恭喜你锦鲤附体，好运暴击抢到了红包 ¥${grossText}，实际到手 ¥${netText}！`;
       try { await user.send(msgText); } catch {}
     } else if (claimResult.status === 'already_claimed') {
       await refreshRedEnvelopeMessage(client, envelope.id);

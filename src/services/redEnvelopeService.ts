@@ -145,7 +145,13 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
 }
 
 export type ClaimResult =
-  | { status: 'claimed'; amount: Prisma.Decimal; finished: boolean; envelopeId: string }
+  | {
+      status: 'claimed';
+      amount: Prisma.Decimal; // net amount
+      gross: Prisma.Decimal; // raw share before commission
+      finished: boolean;
+      envelopeId: string;
+    }
   | {
       status: 'already_claimed';
       amount: Prisma.Decimal;
@@ -422,6 +428,7 @@ export async function claimRedEnvelope(
     return {
       status: 'claimed',
       amount: netAmount,
+      gross: share,
       finished: updatedEnvelope.status !== RedEnvelopeStatus.ACTIVE,
       envelopeId: envelope.id,
     };
