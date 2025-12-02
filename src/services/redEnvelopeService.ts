@@ -33,6 +33,7 @@ const asDecimal = (value: Prisma.Decimal | number | string) =>
 type EnvelopeForDisplay = {
   id: string;
   creatorId: string;
+  creatorDisplayName?: string | null;
   totalAmount: Prisma.Decimal;
   totalCount: number;
   remainingCount: number;
@@ -104,9 +105,10 @@ function pushClaimLog(
 }
 
 export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
+  const creatorLabel = envelope.creatorDisplayName ?? '红包发起人';
   const embed = new EmbedBuilder()
     .setColor(0xffc28b)
-    .setTitle(`🧧 ${userMention(envelope.creatorId)} 发了一个红包啦`)
+    .setTitle(`🧧 ${creatorLabel} 发了一个红包啦`)
     .setDescription(
       [
         `总额：¥${formatAmount(envelope.totalAmount)} | 份数：${envelope.totalCount}`,
@@ -501,6 +503,28 @@ export async function expireEnvelope(
   });
 }
 
+async function resolveCreatorName(
+  client: Client,
+  creatorId: string,
+  channelId?: string | null
+): Promise<string | undefined> {
+  try {
+    if (channelId) {
+      const channel = await client.channels.fetch(channelId).catch(() => null);
+      if (channel && channel.isTextBased() && 'guild' in channel && channel.guild) {
+        const member =
+          channel.guild.members.cache.get(creatorId) ??
+          (await channel.guild.members.fetch(creatorId).catch(() => null));
+        if (member?.displayName) return member.displayName;
+      }
+    }
+    const user = await client.users.fetch(creatorId).catch(() => null);
+    return user?.username;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function refreshRedEnvelopeMessage(client: Client, envelopeId: string) {
   const envelope = await prisma.redEnvelope.findUnique({
     where: { id: envelopeId },
@@ -525,7 +549,8 @@ export async function refreshRedEnvelopeMessage(client: Client, envelopeId: stri
     if (!channel || !channel.isTextBased()) return;
 
     const message = await channel.messages.fetch(envelope.messageId);
-    const payload = buildRedEnvelopeMessagePayload(envelope);
+    const creatorDisplayName = await resolveCreatorName(client, envelope.creatorId, envelope.channelId);
+    const payload = buildRedEnvelopeMessagePayload({ ...envelope, creatorDisplayName });
     await message.edit(payload);
   } catch (err) {
     console.error('[red-envelope] refresh message failed:', err);

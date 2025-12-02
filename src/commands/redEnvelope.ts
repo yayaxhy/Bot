@@ -91,9 +91,11 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
       }
 
       try {
+        const creatorDisplayName = msg.member?.displayName || msg.author.username;
         const payload = buildRedEnvelopeMessagePayload({
           id: envelope.id,
           creatorId: envelope.creatorId,
+          creatorDisplayName,
           totalAmount: envelope.totalAmount,
           totalCount: envelope.totalCount,
           remainingCount: envelope.remainingCount,
