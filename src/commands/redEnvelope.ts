@@ -13,11 +13,6 @@ const DEC = (v: number | string | Prisma.Decimal) =>
   v instanceof Prisma.Decimal ? v : new Prisma.Decimal(v);
 
 const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
-const HELP_TEXT = [
-  '红包指令格式：!红包 {份数}个/{总金额}元 {留言(可选)}',
-  '示例：!红包 5个/88.88元 好运连连',
-  '限制：总金额至少 ¥10，份数不超过 100。',
-].join('\n');
 
 const sanitizeName = (name?: string | null) => {
   if (!name) return undefined;
@@ -66,12 +61,6 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
   client.on('messageCreate', async (msg: Message) => {
     try {
       if (msg.author.bot) return;
-
-      const trimmed = msg.content.trim();
-      if (trimmed.startsWith('/红包')) {
-        await msg.reply(HELP_TEXT);
-        return;
-      }
 
       const parsed = parseRedEnvelopeCommand(msg.content);
       if (!parsed) return;
