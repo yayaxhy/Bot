@@ -112,7 +112,11 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
           refundedAmount: envelope.refundedAmount ?? undefined,
         });
 
-        const sent = await channel.send(payload);
+        const sent = await channel.send({
+          ...payload,
+          content: '@here',
+          allowedMentions: { parse: ['everyone'] },
+        });
         await bindEnvelopeMessage(
           envelope.id,
           { messageId: sent.id, channelId: sent.channelId },
@@ -126,9 +130,9 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
         }
 
         try {
-          await channel.send({ content: '@here', allowedMentions: { parse: ['everyone'] } });
+          await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
         } catch (pingErr) {
-          console.error('[red-envelope] here ping failed:', pingErr);
+          console.error('[red-envelope] here clear failed:', pingErr);
         }
 
         scheduleRedEnvelopeExpiration(client, {
