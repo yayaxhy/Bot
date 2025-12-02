@@ -125,6 +125,12 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
           console.error('[red-envelope] add reaction failed:', reactErr);
         }
 
+        try {
+          await channel.send({ content: '@here', allowedMentions: { parse: ['everyone'] } });
+        } catch (pingErr) {
+          console.error('[red-envelope] here ping failed:', pingErr);
+        }
+
         scheduleRedEnvelopeExpiration(client, {
           id: envelope.id,
           expiresAt: envelope.expiresAt,
