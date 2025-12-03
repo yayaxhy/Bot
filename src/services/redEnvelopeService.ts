@@ -287,8 +287,7 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
         `留言：${envelope.note ?? '锦鲤附体，好运暴击！'}`,
         `点击下方表情 ${CLAIM_EMOJI} 抢红包！`,
       ].join('\n')
-    )
-    .setThumbnail('attachment://redPocket.gif');
+    );
 
   const claims = getClaimLog(envelope.id);
   if (claims.length) {
@@ -319,7 +318,6 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
 
   return {
     embeds: [embed],
-    files: [{ attachment: 'src/img/redPocket.gif', name: 'redPocket.gif' }],
   };
 }
 
