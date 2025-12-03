@@ -310,8 +310,8 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
       cur.amount.gt(best.amount) ? cur : best
     );
     const koiName = sanitizeName(top.displayName) ?? '用户';
-    const koiLine = `${CLAIM_EMOJI} 恭喜锦鲤宝宝 ${koiName} 抢到了最高金额 ¥${formatAmount(top.amount)}`;
-    embed.addFields({ name: '锦鲤', value: koiLine });
+    const koiLine = `🎉 ${koiName} 抢到了最高金额 ¥${formatAmount(top.amount)}`;
+    embed.addFields({ name: '欧皇', value: koiLine });
 
     let minClaim = claims[0];
     for (let i = 1; i < claims.length; i += 1) {
@@ -321,7 +321,7 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
       }
     }
     const unluckyName = sanitizeName(minClaim.displayName) ?? '用户';
-    const unluckyLine = `${CLAIM_EMOJI} ${unluckyName} 抢到了最低金额 ¥${formatAmount(minClaim.amount)}`;
+    const unluckyLine = `🤡 ${unluckyName} 抢到了最低金额 ¥${formatAmount(minClaim.amount)}`;
     embed.addFields({ name: '非酋', value: unluckyLine });
   }
 
