@@ -385,23 +385,22 @@ export async function createRedEnvelope(
     });
     if (!member) throw new Error('未找到用户。');
 
-    const totalBalance = asDecimal(member.totalBalance ?? 0);
-    if (totalBalance.lt(totalAmount)) {
+    const income = asDecimal(member.income ?? 0);
+    const recharge = asDecimal(member.recharge ?? 0);
+    const available = income.add(recharge);
+
+    if (available.lt(totalAmount)) {
       throw new Error('余额不足，无法发红包。');
     }
 
-    const split = splitIncomeRecharge(
-      member.income ?? 0,
-      member.recharge ?? 0,
-      totalAmount
-    );
+    const split = splitIncomeRecharge(income, recharge, totalAmount);
 
     const updatedMember = await tx.member.update({
       where: { discordUserId: params.creatorId },
       data: {
         income: { decrement: split.fromIncome },
         recharge: { decrement: split.fromRecharge },
-        totalBalance: { decrement: totalAmount },
+        totalBalance: split.totalAfter,
         totalSpent: { increment: totalAmount },
       },
       select: { totalBalance: true },
