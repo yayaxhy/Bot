@@ -385,22 +385,36 @@ export async function createRedEnvelope(
     });
     if (!member) throw new Error('未找到用户。');
 
-    const income = asDecimal(member.income ?? 0);
-    const recharge = asDecimal(member.recharge ?? 0);
-    const available = income.add(recharge);
-
-    if (available.lt(totalAmount)) {
+    let incomePool = asDecimal(member.income ?? 0);
+    let rechargePool = asDecimal(member.recharge ?? 0);
+    const totalBalance = asDecimal(member.totalBalance ?? 0);
+    const knownPool = incomePool.add(rechargePool);
+    const maxAvailable = knownPool.gt(totalBalance) ? knownPool : totalBalance;
+    if (maxAvailable.lt(totalAmount)) {
       throw new Error('余额不足，无法发红包。');
     }
 
-    const split = splitIncomeRecharge(income, recharge, totalAmount);
+    if (knownPool.lt(totalAmount)) {
+      const missing = totalAmount.sub(knownPool);
+      const extra = totalBalance.sub(knownPool);
+      if (extra.lt(missing)) {
+        throw new Error('余额不足，无法发红包。');
+      }
+      rechargePool = rechargePool.add(missing);
+    }
+
+    const split = splitIncomeRecharge(incomePool, rechargePool, totalAmount);
+
+    const incomeAfter = incomePool.sub(split.fromIncome);
+    const rechargeAfter = rechargePool.sub(split.fromRecharge);
+    const totalBalanceAfter = incomeAfter.add(rechargeAfter);
 
     const updatedMember = await tx.member.update({
       where: { discordUserId: params.creatorId },
       data: {
-        income: { decrement: split.fromIncome },
-        recharge: { decrement: split.fromRecharge },
-        totalBalance: split.totalAfter,
+        income: incomeAfter,
+        recharge: rechargeAfter,
+        totalBalance: totalBalanceAfter,
         totalSpent: { increment: totalAmount },
       },
       select: { totalBalance: true },
