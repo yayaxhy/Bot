@@ -292,6 +292,7 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
         `点击下方表情 ${CLAIM_EMOJI} 抢红包！`,
       ].join('\n')
     )
+    .setThumbnail(RED_ENVELOPE_ATTACHMENT_URL)
     .setImage(RED_ENVELOPE_IMAGE_URL);
 
   const claims = getClaimLog(envelope.id);
@@ -323,7 +324,6 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
 
   return {
     embeds: [embed],
-    files: [{ attachment: RED_ENVELOPE_ATTACHMENT_URL, name: 'red-envelope.png' }],
   };
 }
 
