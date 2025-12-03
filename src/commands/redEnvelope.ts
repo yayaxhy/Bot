@@ -13,6 +13,25 @@ const DEC = (v: number | string | Prisma.Decimal) =>
   v instanceof Prisma.Decimal ? v : new Prisma.Decimal(v);
 
 const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
+const LOG_TIMING = process.env.RED_ENVELOPE_TIMING === '1';
+
+type TimerCtx = Record<string, string | number | boolean | undefined>;
+const makeTimer = (ctx: TimerCtx) => {
+  const start = Date.now();
+  let last = start;
+  return (step: string, extra: TimerCtx = {}) => {
+    if (!LOG_TIMING) return;
+    const now = Date.now();
+    console.log('[red-envelope timing]', {
+      step,
+      totalMs: now - start,
+      stepMs: now - last,
+      ...ctx,
+      ...extra,
+    });
+    last = now;
+  };
+};
 
 const sanitizeName = (name?: string | null) => {
   if (!name) return undefined;
@@ -65,6 +84,9 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
       const parsed = parseRedEnvelopeCommand(msg.content);
       if (!parsed) return;
 
+      const timer = makeTimer({ trigger: 'text', userId: msg.author.id });
+      timer('start');
+
       if (!msg.guild) {
         await msg.reply('请在服务器频道里发红包哦。');
         return;
@@ -91,6 +113,7 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
         },
         prisma
       );
+      timer('createRedEnvelope', { envelopeId: envelope.id });
 
       const channel: any = msg.channel;
       if (!channel || typeof channel.send !== 'function') {
@@ -125,24 +148,29 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
           { messageId: sent.id, channelId: sent.channelId },
           prisma
         );
+        timer('channel.send', { messageId: sent.id });
 
         try {
           await sent.react(CLAIM_EMOJI_ID);
         } catch (reactErr) {
           console.error('[red-envelope] add reaction failed:', reactErr);
         }
+        timer('message.react');
 
         try {
           await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
         } catch (pingErr) {
           console.error('[red-envelope] here clear failed:', pingErr);
         }
+        timer('message.edit');
 
         scheduleRedEnvelopeExpiration(client, {
           id: envelope.id,
           expiresAt: envelope.expiresAt,
         });
+        timer('scheduled-expire');
       } catch (sendErr) {
+        timer('error', { message: (sendErr as Error)?.message });
         await expireEnvelope(envelope.id, prisma);
         throw sendErr;
       }
