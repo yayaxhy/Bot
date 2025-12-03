@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 import { handlePlayButton } from './interactions/buttons/play.js';
 import { execute as messageCreateHandler } from './events/messageCreate.js';
 import { registerGiftingCommand } from './commands/gifting.js';
-import prisma from './db/prisma.js';
+import prisma, { prismaReady } from './db/prisma.js';
 import { registerCashCommand } from './commands/cash.js';
 import { recoverAllTimers } from './services/timerService.js';
 import { handleOrderPriceSelect } from './interactions/buttons/orderPriceSelect.js';
@@ -33,6 +33,11 @@ import {
 
 
 dotenv.config();
+
+await prismaReady.catch((err) => {
+  console.error('[startup] prisma warmup failed:', err);
+  process.exit(1);
+});
 
 const client = new Client({
   intents: [
