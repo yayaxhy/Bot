@@ -70,9 +70,9 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
         return;
       }
 
-      const minTotal = DEC('10');
+      const minTotal = DEC('1');
       if (parsed.amount.lt(minTotal)) {
-        await msg.reply('红包总金额至少 ¥10。');
+        await msg.reply('红包总金额至少 ¥1。');
         return;
       }
 
