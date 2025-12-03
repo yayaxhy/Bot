@@ -13,6 +13,7 @@ const DEC = (v: number | string | Prisma.Decimal) =>
   v instanceof Prisma.Decimal ? v : new Prisma.Decimal(v);
 
 const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
+const MIN_TOTAL = DEC('10');
 
 const sanitizeName = (name?: string | null) => {
   if (!name) return undefined;
@@ -70,9 +71,8 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
         return;
       }
 
-      const minTotal = DEC('1');
-      if (parsed.amount.lt(minTotal)) {
-        await msg.reply('红包总金额至少 ¥1。');
+      if (parsed.amount.lt(MIN_TOTAL)) {
+        await msg.reply('红包总金额至少 ¥10。');
         return;
       }
 

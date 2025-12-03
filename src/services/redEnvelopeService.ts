@@ -15,6 +15,7 @@ const DEFAULT_EXPIRE_MS = Math.max(
   Number.parseInt(process.env.RED_ENVELOPE_EXPIRE_MS ?? '', 10) || 30 * 60_000
 );
 const LEDGER_COUNTERPART_ID = 'red-envelope-pool';
+const MIN_TOTAL_AMOUNT = new Prisma.Decimal('10'); // 红包总额至少 10 元
 const RED_ENVELOPE_IMAGE_URL =
   'https://cdn.discordapp.com/attachments/1445864521343439019/1445864584853454970/1.gif?ex=6931e5d3&is=69309453&hm=f0192801767f99ec50a829fb4ab65af32e5a3af1489e1ae80f6fba1ce54e190d';
 const RED_ENVELOPE_ATTACHMENT_URL =
@@ -384,6 +385,9 @@ export async function createRedEnvelope(
     throw new Error('份数必须为正整数。');
   }
   const minTotal = MIN_SLICE.mul(params.count);
+  if (totalAmount.lt(MIN_TOTAL_AMOUNT)) {
+    throw new Error('红包总金额至少 ¥10。');
+  }
   if (totalAmount.lt(minTotal)) {
     throw new Error(`总金额不足，每份至少 ¥${MIN_SLICE.toString()}`);
   }
