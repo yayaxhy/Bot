@@ -312,6 +312,17 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
     const koiName = sanitizeName(top.displayName) ?? '用户';
     const koiLine = `${CLAIM_EMOJI} 恭喜锦鲤宝宝 ${koiName} 抢到了最高金额 ¥${formatAmount(top.amount)}`;
     embed.addFields({ name: '锦鲤', value: koiLine });
+
+    let minClaim = claims[0];
+    for (let i = 1; i < claims.length; i += 1) {
+      const cur = claims[i];
+      if (cur.amount.lt(minClaim.amount)) {
+        minClaim = cur;
+      }
+    }
+    const unluckyName = sanitizeName(minClaim.displayName) ?? '用户';
+    const unluckyLine = `${CLAIM_EMOJI} ${unluckyName} 抢到了最低金额 ¥${formatAmount(minClaim.amount)}`;
+    embed.addFields({ name: '非酋', value: unluckyLine });
   }
 
   if (envelope.status === RedEnvelopeStatus.FINISHED) {
