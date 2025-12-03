@@ -15,6 +15,8 @@ const DEFAULT_EXPIRE_MS = Math.max(
   Number.parseInt(process.env.RED_ENVELOPE_EXPIRE_MS ?? '', 10) || 30 * 60_000
 );
 const LEDGER_COUNTERPART_ID = 'red-envelope-pool';
+const RED_ENVELOPE_IMAGE_URL =
+  'https://cdn.discordapp.com/attachments/960892910994325605/1445860423202111686/1.gif?ex=6931e1f3&is=69309073&hm=a413a59f95a19e63804914e44921e871f5e53c2a0872af65d1085d0030488e4b';
 export const CLAIM_EMOJI_ID = '1438676013860257943';
 export const CLAIM_EMOJI = '<:_001_:1438676013860257943>';
 
@@ -287,7 +289,8 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
         `留言：${envelope.note ?? '锦鲤附体，好运暴击！'}`,
         `点击下方表情 ${CLAIM_EMOJI} 抢红包！`,
       ].join('\n')
-    );
+    )
+    .setImage(RED_ENVELOPE_IMAGE_URL);
 
   const claims = getClaimLog(envelope.id);
   if (claims.length) {
