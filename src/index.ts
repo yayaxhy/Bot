@@ -24,7 +24,7 @@ import { registerTechTagSync } from './services/techTagService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
 import { registerRedEnvelopeCommand } from './commands/redEnvelope.js';
 import {
-  CLAIM_EMOJI_ID,
+  CLAIM_EMOJI_REACTION,
   claimRedEnvelope,
   findEnvelopeByMessage,
   recoverRedEnvelopeSchedules,
@@ -69,7 +69,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
       }
     }
 
-    if (reaction.emoji.id !== CLAIM_EMOJI_ID) return;
+    if (reaction.emoji.name !== CLAIM_EMOJI_REACTION) return;
 
     const message = reaction.message;
     if (!message || message.partial) {

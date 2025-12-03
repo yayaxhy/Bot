@@ -6,7 +6,7 @@ import {
   createRedEnvelope,
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
-  CLAIM_EMOJI_ID,
+  CLAIM_EMOJI_REACTION,
 } from '../services/redEnvelopeService.js';
 
 const DEC = (v: number | string | Prisma.Decimal) =>
@@ -127,7 +127,7 @@ export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient)
         );
 
         try {
-          await sent.react(CLAIM_EMOJI_ID);
+          await sent.react(CLAIM_EMOJI_REACTION);
         } catch (reactErr) {
           console.error('[red-envelope] add reaction failed:', reactErr);
         }

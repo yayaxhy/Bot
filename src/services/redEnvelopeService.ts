@@ -19,8 +19,8 @@ const RED_ENVELOPE_IMAGE_URL =
   'https://cdn.discordapp.com/attachments/1445864521343439019/1445864584853454970/1.gif?ex=6931e5d3&is=69309453&hm=f0192801767f99ec50a829fb4ab65af32e5a3af1489e1ae80f6fba1ce54e190d';
 const RED_ENVELOPE_ATTACHMENT_URL =
   'https://cdn.discordapp.com/attachments/1445864521343439019/1445864697013211351/1.png?ex=6931e5ee&is=6930946e&hm=87e2bd7bc8ba1865a674d9af6197eeeaa5b5dc96431f9a40b6c80cf12446db4b';
-export const CLAIM_EMOJI_ID = '1438676013860257943';
-export const CLAIM_EMOJI = '<:_001_:1438676013860257943>';
+export const CLAIM_EMOJI_REACTION = '🧧';
+export const CLAIM_EMOJI = '🧧';
 
 const timers = new Map<string, NodeJS.Timeout>();
 const claimedByEnvelope = new Map<string, Map<string, Prisma.Decimal>>(); // de-dupe per session (stores net credited)

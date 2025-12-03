@@ -6,7 +6,7 @@ import {
   createRedEnvelope,
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
-  CLAIM_EMOJI_ID,
+  CLAIM_EMOJI_REACTION,
 } from '../services/redEnvelopeService.js';
 import prisma from '../db/prisma.js';
 
@@ -120,7 +120,7 @@ export async function handleRedEnvelopeSlash(
     );
 
     try {
-      await sent.react(CLAIM_EMOJI_ID);
+      await sent.react(CLAIM_EMOJI_REACTION);
     } catch (reactErr) {
       console.error('[red-envelope slash] add reaction failed:', reactErr);
     }
