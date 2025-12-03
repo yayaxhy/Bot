@@ -13,7 +13,7 @@ import prisma from '../db/prisma.js';
 const DEC = (v: number | string | Prisma.Decimal) =>
   v instanceof Prisma.Decimal ? v : new Prisma.Decimal(v);
 
-const MIN_TOTAL = DEC('10');
+const MIN_TOTAL = DEC('1');
 const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
 
 export const redEnvelopeSlashCommand = new SlashCommandBuilder()
@@ -30,9 +30,9 @@ export const redEnvelopeSlashCommand = new SlashCommandBuilder()
   .addNumberOption((option) =>
     option
       .setName('总额')
-      .setDescription('红包总金额，至少 ¥10')
+      .setDescription('红包总金额，至少 ¥1')
       .setRequired(true)
-      .setMinValue(10)
+      .setMinValue(1)
   )
   .addStringOption((option) =>
     option
@@ -68,7 +68,7 @@ export async function handleRedEnvelopeSlash(
     return;
   }
   if (amount.lt(MIN_TOTAL)) {
-    await i.reply({ content: '红包总金额至少 ¥10。', ephemeral: true });
+    await i.reply({ content: '红包总金额至少 ¥1。', ephemeral: true });
     return;
   }
 
