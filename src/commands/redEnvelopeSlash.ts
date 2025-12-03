@@ -15,25 +15,6 @@ const DEC = (v: number | string | Prisma.Decimal) =>
 
 const MIN_TOTAL = DEC('1');
 const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
-const LOG_TIMING = process.env.RED_ENVELOPE_TIMING === '1';
-
-type TimerCtx = Record<string, string | number | boolean | undefined>;
-const makeTimer = (ctx: TimerCtx) => {
-  const start = Date.now();
-  let last = start;
-  return (step: string, extra: TimerCtx = {}) => {
-    if (!LOG_TIMING) return;
-    const now = Date.now();
-    console.log('[red-envelope timing]', {
-      step,
-      totalMs: now - start,
-      stepMs: now - last,
-      ...ctx,
-      ...extra,
-    });
-    last = now;
-  };
-};
 
 export const redEnvelopeSlashCommand = new SlashCommandBuilder()
   .setName('红包')
@@ -72,9 +53,6 @@ export async function handleRedEnvelopeSlash(
 ) {
   if (i.commandName !== '红包') return;
 
-  const timer = makeTimer({ trigger: 'slash', userId: i.user.id });
-  timer('start');
-
   if (!i.guild) {
     await i.reply({ content: '请在服务器频道里发红包哦。', ephemeral: true });
     return;
@@ -107,7 +85,6 @@ export async function handleRedEnvelopeSlash(
       },
       client
     );
-    timer('createRedEnvelope', { envelopeId: envelope.id });
 
     const channel: any = i.channel;
     if (!channel || typeof channel.send !== 'function') {
@@ -136,7 +113,6 @@ export async function handleRedEnvelopeSlash(
       content: '@here',
       allowedMentions: { parse: ['everyone'] },
     });
-    timer('channel.send', { messageId: sent.id });
     await bindEnvelopeMessage(
       envelope.id,
       { messageId: sent.id, channelId: sent.channelId },
@@ -148,14 +124,12 @@ export async function handleRedEnvelopeSlash(
     } catch (reactErr) {
       console.error('[red-envelope slash] add reaction failed:', reactErr);
     }
-    timer('message.react');
 
     try {
       await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
     } catch (pingErr) {
       console.error('[red-envelope slash] here clear failed:', pingErr);
     }
-    timer('message.edit');
 
     scheduleRedEnvelopeExpiration((globalThis as any).__CLIENT__, {
       id: envelope.id,
@@ -163,10 +137,8 @@ export async function handleRedEnvelopeSlash(
     });
 
     await i.editReply('红包已发出，大家快来抢！');
-    timer('done');
   } catch (err: any) {
     console.error('[red-envelope slash] create failed:', err);
-    timer('error', { message: err?.message });
     const message = err?.message ?? '创建红包失败，请稍后再试。';
     try {
       await i.editReply(`无法发红包：${message}`);
