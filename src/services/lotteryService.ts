@@ -11,7 +11,7 @@ const ALERT_CHANNEL_ID = '1446819752692416542';
 const PITY_THRESHOLD = 99; // 100 抽保底（missCount >= 99 时强制特级）
 
 export const PRIZE_NAMES = {
-  CAKE_VOUCHER: '小蛋糕礼物的代金券',
+  CAKE_VOUCHER: '小蛋糕代金券',
   LOTTERY_VOUCHER: '抽奖代金券',
   DISCOUNT_80: '8折券',
   RENAME_CARD: '改名卡',
