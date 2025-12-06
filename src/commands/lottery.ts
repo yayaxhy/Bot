@@ -5,10 +5,18 @@ import { DRAW_COST, LotteryError, POOL_LABEL, performLotteryDraw } from '../serv
 const LOTTERY_CMD_PATTERN = /^!抽奖$/;
 const LOTTERY_REVEAL_DELAY_MS = 4500; // 动画结束后再揭晓，毫秒
 const LOTTERY_ANIMATIONS: Record<LotteryPool, string | undefined> = {
-  NORMAL: process.env.LOTTERY_ANIM_NORMAL,
-  MEDIUM: process.env.LOTTERY_ANIM_MEDIUM,
-  ADVANCED: process.env.LOTTERY_ANIM_ADVANCED,
-  SPECIAL: process.env.LOTTERY_ANIM_SPECIAL,
+  NORMAL:
+    process.env.LOTTERY_ANIM_NORMAL
+    ?? 'https://cdn.discordapp.com/attachments/1446831159047622769/1446831227465240689/18.gif?ex=69356a15&is=69341895&hm=06fb3f1b4f4c84db4d6f639a4fb9a187730bfd80c37456e4a600f95041550412&',
+  MEDIUM:
+    process.env.LOTTERY_ANIM_MEDIUM
+    ?? 'https://cdn.discordapp.com/attachments/1446831159047622769/1446831200240013362/19.gif?ex=69356a0e&is=6934188e&hm=814fccdba9be13ac799939f69d684b00baa1e4a0c256474241d97e0b67589d1e&',
+  ADVANCED:
+    process.env.LOTTERY_ANIM_ADVANCED
+    ?? 'https://cdn.discordapp.com/attachments/1446831159047622769/1446834078203641970/jimeng-2025-12-06-7864-....png?ex=69356cbd&is=69341b3d&hm=afbc06c209d672f4517659eb9afdc05c6a54c4ef72369d9f9e40667312be05c0&',
+  SPECIAL:
+    process.env.LOTTERY_ANIM_SPECIAL
+    ?? 'https://cdn.discordapp.com/attachments/1436573568032047255/1436575507771555911/ff274cd0ede7f16b.gif?ex=693504b3&is=6933b333&hm=266f4004628420cd172ec5501f006b692cc91561ffdc890a76bcfe9a32b3cefb&',
 };
 const LOTTERY_COLORS: Record<LotteryPool, number> = {
   NORMAL: 0xc0c0c0,
