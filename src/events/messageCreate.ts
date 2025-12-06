@@ -24,6 +24,8 @@ import {
 } from '../services/orderInteractionManager.js';
 import { runOrderAcceptanceFlow } from '../interactions/buttons/acceptOrder.js';
 import { runOrderDeclineFlow } from '../interactions/buttons/declineOrder.js';
+import { handleLotteryMessage } from '../commands/lottery.js';
+import { handleRenameCardCommand } from '../commands/renameCard.js';
 
 dotenv.config();
 
@@ -646,6 +648,8 @@ export async function execute(message: Message) {
   const userA = message.author;     // 老板（发单人）
   if (!content || !userA) return;
 
+  if (await handleRenameCardCommand(message)) return;
+  if (await handleLotteryMessage(message)) return;
   if (await tryHandleEndOrderCommand(message)) return;
   if (await tryHandleInviteResponseCommand(message)) return;
   if (await tryHandleQuickOrderCommand(message)) return;

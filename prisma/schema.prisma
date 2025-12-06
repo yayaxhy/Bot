@@ -81,6 +81,13 @@ enum RedEnvelopeStatus {
   REFUNDED
 }
 
+enum LotteryPool {
+  NORMAL   // 银色
+  MEDIUM   // 金色
+  ADVANCED // 高级（有限）
+  SPECIAL  // 特级（有限）
+}
+
 /**
  * ---------------- Models ----------------
  */
@@ -118,6 +125,9 @@ model Member {
   // Heart counters (from → to)
   heartFrom HeartCounter[] @relation("HeartFrom")
   heartTo   HeartCounter[] @relation("HeartTo")
+
+  // Lottery draws
+  lotteryDraws LotteryDraw[]
 
   // Back-relation for WorkerLock (one active lock at most)
   workerLock WorkerLock? @relation("MemberWorkerLock")
@@ -169,6 +179,7 @@ model IndividualTransaction {
 
 enum CouponType {
   DISCOUNT_90
+  DISCOUNT_80
 }
 
 enum CouponStatus {
@@ -396,4 +407,45 @@ model RedEnvelope {
   rechargePool    Decimal            @db.Decimal(19, 4)
 
   @@index([status, expiresAt])
+}
+
+model LotteryPrize {
+  id           String      @id @default(cuid())
+  name         String
+  pool         LotteryPool
+  weight       Int
+  unlimited    Boolean     @default(false)
+  stock        Int?
+  imageUrl     String?
+  active       Boolean     @default(true)
+
+  draws LotteryDraw[]
+}
+
+model LotteryDraw {
+  id        String      @id @default(cuid())
+  nonce     String      @unique
+  requestId String?
+  userId    String
+  pool      LotteryPool
+  prizeId   String?
+  cost      Decimal     @db.Decimal(19, 4)
+  random    Float?
+  createdAt DateTime    @default(now())
+  status    LotteryStatus @default(UNUSED)
+  code      String?       @unique
+  expiresAt DateTime?
+  consumeAt DateTime?
+
+  prize  LotteryPrize? @relation(fields: [prizeId], references: [id])
+  member Member        @relation(fields: [userId], references: [discordUserId])
+
+  @@index([userId, createdAt])
+  @@index([pool, createdAt])
+}
+
+enum LotteryStatus {
+  UNUSED
+  USED
+  EXPIRED
 }

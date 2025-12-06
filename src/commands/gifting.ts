@@ -1,5 +1,5 @@
 import { Client, Message, MessageCreateOptions } from 'discord.js';
-import { Prisma, PrismaClient, MemberStatus } from '@prisma/client';
+import { Prisma, PrismaClient, MemberStatus, LotteryStatus } from '@prisma/client';
 import { postGiftFeed } from '../features/giftFeedHelper.js';
 import { recalcAllOrdersForHost } from '../services/orderService.js';
 import { addHeart } from '../services/heartService.js';
@@ -7,6 +7,7 @@ import { recordIndividualTransaction } from '../services/individualTransactionSe
 import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
+import { PRIZE_NAMES } from '../services/lotteryService.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -14,6 +15,7 @@ const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 const hasSend = (channel: unknown): channel is { send: Function } =>
   !!channel && typeof (channel as any).send === 'function';
+const CAKE_GIFT_NAME = '小蛋糕';
 
 /** Parse: "!打赏 3/liwu @UserB @UserC" */
 function parseGiftingCommand(msg: Message): { quantity: number; giftName: string; toUserIds: string[] } | null {
@@ -157,6 +159,7 @@ export async function performGift(
   if (gross.lte(0)) throw new Error('金额必须大于 0。');
 
   const result = await prisma.$transaction(async (tx) => {
+    const now = new Date();
     const [giverAccount, receiver] = await Promise.all([
       tx.member.findUnique({
         where: { discordUserId: giverId },
@@ -182,19 +185,64 @@ export async function performGift(
       select: { PEIWANID: true, totalEarn: true },
     });
 
+    // 小蛋糕代金券：按最早优先，1 券抵 1 个小蛋糕
+    const isCakeGift = normalizedGiftName === CAKE_GIFT_NAME;
+    let voucherCount = 0;
+    if (isCakeGift) {
+      await tx.lotteryDraw.updateMany({
+        where: { userId: giverId, status: LotteryStatus.UNUSED, expiresAt: { lte: now } },
+        data: { status: LotteryStatus.EXPIRED },
+      });
+      const vouchers = await tx.lotteryDraw.findMany({
+        where: {
+          userId: giverId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { gt: now },
+          prize: { name: PRIZE_NAMES.CAKE_VOUCHER },
+        },
+        select: { id: true },
+        orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+        take: quantity,
+      });
+      voucherCount = vouchers.length;
+      if (voucherCount > 0) {
+        const ids = vouchers.map((v) => v.id);
+        await tx.lotteryDraw.updateMany({
+          where: { id: { in: ids } },
+          data: { status: LotteryStatus.USED, consumeAt: now },
+        });
+      }
+    }
+
+    const voucherValue = unitPrice.mul(voucherCount);
+    const payableRaw = gross.sub(voucherValue);
+    const payable = payableRaw.lt(0) ? DEC(0) : payableRaw;
+
     const giverIncome = new Prisma.Decimal(giverAccount.income ?? 0);
     const giverRecharge = new Prisma.Decimal(giverAccount.recharge ?? 0);
     const giverTotal = new Prisma.Decimal(giverAccount.totalBalance ?? 0);
-    if (giverTotal.lt(gross)) throw new Error('余额不足，无法完成打赏。');
+    if (giverTotal.lt(payable)) throw new Error('余额不足，无法完成打赏。');
 
-    let giverSplit;
-    try {
-      giverSplit = splitIncomeRecharge(giverIncome, giverRecharge, gross);
-    } catch (err: any) {
-      if (err?.message === 'INSUFFICIENT_FUNDS') {
-        throw new Error('余额不足，无法完成打赏。');
+    let giverSplit: ReturnType<typeof splitIncomeRecharge>;
+    if (payable.lte(0)) {
+      const total = giverIncome.add(giverRecharge);
+      giverSplit = {
+        fromIncome: DEC(0),
+        fromRecharge: DEC(0),
+        incomeAfter: giverIncome,
+        rechargeAfter: giverRecharge,
+        totalBefore: total,
+        totalAfter: total,
+      };
+    } else {
+      try {
+        giverSplit = splitIncomeRecharge(giverIncome, giverRecharge, payable);
+      } catch (err: any) {
+        if (err?.message === 'INSUFFICIENT_FUNDS') {
+          throw new Error('余额不足，无法完成打赏。');
+        }
+        throw err;
       }
-      throw err;
     }
 
     await tx.member.update({
@@ -202,8 +250,8 @@ export async function performGift(
       data: {
         income: { decrement: giverSplit.fromIncome },
         recharge: { decrement: giverSplit.fromRecharge },
-        totalBalance: { decrement: gross },
-        totalSpent: { increment: gross },
+        totalBalance: { decrement: payable },
+        totalSpent: { increment: payable },
       },
     });
 
@@ -211,7 +259,7 @@ export async function performGift(
       discordId: giverId,
       thirdPartydiscordId: receiverId,
       balanceBefore: giverSplit.totalBefore,
-      amountChange: gross,
+      amountChange: payable,
       balanceAfter: giverSplit.totalAfter,
       typeOfTransaction: '打赏',
     });

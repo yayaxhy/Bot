@@ -2,6 +2,8 @@ import { order_end_boss_embed, order_end_pw_embed, discount_prompt_embed } from 
 import prisma from '../db/prisma.js';
 import type { Client } from 'discord.js';
 import { syncSpentRolesForMember } from './spentRoleService.js';
+import { PRIZE_NAMES } from './lotteryService.js';
+import { LotteryStatus } from '@prisma/client';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 
@@ -39,20 +41,36 @@ export async function notifyOrderEnded(orderId: string) {
     console.error('[spent-role] schedule failed for worker', err)
   );
   const now = new Date();
-  const [availableCoupons, existingUsage] = await Promise.all([
-    prisma.coupon.count({
-      where: {
-        discordId: order.hostId,
-        type: 'DISCOUNT_90',
-        status: 'ACTIVE',
-        expiresAt: { gt: now },
-      },
-    }),
-    prisma.coupon.findFirst({
-      where: { orderId, status: 'USED' },
-      select: { id: true },
-    }),
-  ]);
+  const availableCoupons = await prisma.coupon.count({
+    where: {
+      discordId: order.hostId,
+      type: 'DISCOUNT_90',
+      status: 'ACTIVE',
+      expiresAt: { gt: now },
+    },
+  });
+  const existingUsage = await prisma.coupon.findFirst({
+    where: { orderId, status: 'USED' },
+    select: { id: true },
+  });
+
+  await prisma.lotteryDraw.updateMany({
+    where: {
+      userId: order.hostId,
+      status: LotteryStatus.UNUSED,
+      expiresAt: { lte: now },
+      prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+    },
+    data: { status: LotteryStatus.EXPIRED },
+  });
+  const bazheCount = await prisma.lotteryDraw.count({
+    where: {
+      userId: order.hostId,
+      status: LotteryStatus.UNUSED,
+      expiresAt: { gt: now },
+      prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+    },
+  });
 
   const totalMinutes = order.totalMinutes ?? 0;
   const gross = order.grossAmount ? Number(order.grossAmount.toString()) : 0;
@@ -88,8 +106,9 @@ export async function notifyOrderEnded(orderId: string) {
     ];
     let components: any[] = [];
 
-    if (availableCoupons > 0 && !existingUsage) {
-      const prompt = discount_prompt_embed(orderLabel, order.id, availableCoupons);
+    const totalCoupons = availableCoupons + bazheCount;
+    if (totalCoupons > 0 && !existingUsage) {
+      const prompt = discount_prompt_embed(orderLabel, order.id, availableCoupons, bazheCount);
       if (prompt) {
         embeds.push(prompt.embed);
         components = prompt.components;
@@ -97,6 +116,7 @@ export async function notifyOrderEnded(orderId: string) {
           orderId: order.id,
           hostId: order.hostId,
           availableCoupons,
+          bazheCount,
           destination: 'boss_dm',
         });
       } else {
@@ -104,6 +124,7 @@ export async function notifyOrderEnded(orderId: string) {
           orderId: order.id,
           hostId: order.hostId,
           availableCoupons,
+          bazheCount,
         });
       }
     } else {
@@ -111,6 +132,7 @@ export async function notifyOrderEnded(orderId: string) {
         orderId: order.id,
         hostId: order.hostId,
         availableCoupons,
+        bazheCount,
         existingUsage,
       });
     }

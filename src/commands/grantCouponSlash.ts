@@ -6,6 +6,7 @@ import { isCashAdmin } from './cash.js';
 
 const COUPON_LABEL: Record<CouponType, string> = {
   [CouponType.DISCOUNT_90]: '9折券',
+  [CouponType.DISCOUNT_80]: '8折券',
 };
 
 export const grantCouponCommand = new SlashCommandBuilder()

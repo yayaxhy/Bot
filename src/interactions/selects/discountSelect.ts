@@ -1,9 +1,10 @@
-import { Prisma, OrderStatus, CouponType } from '@prisma/client';
+import { Prisma, OrderStatus, CouponType, LotteryStatus } from '@prisma/client';
 import { StringSelectMenuInteraction } from 'discord.js';
 import prisma from '../../db/prisma.js';
 import { round2 } from '../../lib/money.js';
 import { recordIndividualTransaction } from '../../services/individualTransactionService.js';
 import { suppressRechargeNotifications } from '../../services/rechargeNotifyConfig.js';
+import { PRIZE_NAMES } from '../../services/lotteryService.js';
 
 export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   if (!i.customId.startsWith('discount_box')) return;
@@ -16,7 +17,13 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
     return;
   }
 
-  if (choice !== 'jiuzhe') {
+  const discountRule =
+    choice === 'jiuzhe'
+      ? { kind: 'coupon' as const, label: '9折券', rate: 0.1, cap: new Prisma.Decimal(20) }
+      : choice === 'bazhe'
+        ? { kind: 'lottery' as const, label: '8折券', rate: 0.2, cap: new Prisma.Decimal(200) }
+        : null;
+  if (!discountRule) {
     await i.reply({ content: '当前暂不支持该优惠券。' });
     return;
   }
@@ -49,36 +56,75 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   }
 
   const now = new Date();
-  await prisma.coupon.updateMany({
-    where: {
-      discordId: i.user.id,
-      status: 'ACTIVE',
-      expiresAt: { lte: now },
-    },
-    data: { status: 'EXPIRED' },
-  });
+  let couponId: string | null = null;
+  let lotteryId: string | null = null;
 
-  const availableCoupon = await prisma.coupon.findFirst({
-    where: {
-      discordId: i.user.id,
-      type: CouponType.DISCOUNT_90,
-      status: 'ACTIVE',
-      expiresAt: { gt: now },
-    },
-    orderBy: { issuedAt: 'asc' },
-  });
-  if (!availableCoupon) {
-    await i.reply({ content: '没有可用的九折券。' });
-    return;
-  }
-
-  const existing = await prisma.coupon.findFirst({
+  const existingCouponUsage = await prisma.coupon.findFirst({
     where: { orderId, status: 'USED' },
     select: { id: true },
   });
-  if (existing) {
+  const existingLotteryUsage = await prisma.lotteryDraw.findFirst({
+    where: {
+      userId: i.user.id,
+      status: LotteryStatus.USED,
+      requestId: orderId,
+      prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+    },
+    select: { id: true },
+  });
+  if (existingCouponUsage || existingLotteryUsage) {
     await i.reply({ content: '该订单已使用过优惠券。' });
     return;
+  }
+
+  if (discountRule.kind === 'coupon') {
+    await prisma.coupon.updateMany({
+      where: {
+        discordId: i.user.id,
+        status: 'ACTIVE',
+        expiresAt: { lte: now },
+      },
+      data: { status: 'EXPIRED' },
+    });
+    const availableCoupon = await prisma.coupon.findFirst({
+      where: {
+        discordId: i.user.id,
+        type: CouponType.DISCOUNT_90,
+        status: 'ACTIVE',
+        expiresAt: { gt: now },
+      },
+      orderBy: { issuedAt: 'asc' },
+    });
+    if (!availableCoupon) {
+      await i.reply({ content: '没有可用的九折券。' });
+      return;
+    }
+    couponId = availableCoupon.id;
+  } else {
+    await prisma.lotteryDraw.updateMany({
+      where: {
+        userId: i.user.id,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { lte: now },
+        prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+      },
+      data: { status: LotteryStatus.EXPIRED },
+    });
+    const voucher = await prisma.lotteryDraw.findFirst({
+      where: {
+        userId: i.user.id,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { gt: now },
+        prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+      },
+      select: { id: true },
+      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (!voucher) {
+      await i.reply({ content: '没有可用的 8 折券。' });
+      return;
+    }
+    lotteryId = voucher.id;
   }
 
   const totalMinutes = order.totalMinutes ?? 0;
@@ -105,9 +151,8 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
     return;
   }
 
-  let discountAmount = round2(perMinute.mul(billableMinutes).mul(0.1));
-  const maxDiscount = new Prisma.Decimal(20);
-  if (discountAmount.gt(maxDiscount)) discountAmount = maxDiscount;
+  let discountAmount = round2(perMinute.mul(billableMinutes).mul(discountRule.rate));
+  if (discountAmount.gt(discountRule.cap)) discountAmount = discountRule.cap;
 
   if (discountAmount.lte(0)) {
     await i.reply({ content: '该订单不符合优惠条件。' });
@@ -125,15 +170,27 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
     const balanceBefore = new Prisma.Decimal(bossAccount?.totalBalance ?? 0);
     const balanceAfter = balanceBefore.add(discountAmount);
 
-    await tx.coupon.update({
-      where: { id: availableCoupon.id },
-      data: {
-        consumedAt: new Date(),
-        orderId: order.id,
-        discountAmount,
-        status: 'USED',
-      },
-    });
+    if (discountRule.kind === 'coupon' && couponId) {
+      await tx.coupon.update({
+        where: { id: couponId },
+        data: {
+          consumedAt: new Date(),
+          orderId: order.id,
+          discountAmount,
+          status: 'USED',
+        },
+      });
+    }
+    if (discountRule.kind === 'lottery' && lotteryId) {
+      await tx.lotteryDraw.update({
+        where: { id: lotteryId },
+        data: {
+          status: LotteryStatus.USED,
+          consumeAt: new Date(),
+          requestId: order.id,
+        },
+      });
+    }
 
     await tx.member.update({
       where: { discordUserId: i.user.id },
@@ -155,6 +212,6 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
 
   await i.editReply({ components: [] });
   await i.followUp({
-    content: `已使用 9折券，本单返还 ¥${discountAmount.toFixed(2)}，金额已入账。`,
+    content: `已使用 ${discountRule.label}，本单返还 ¥${discountAmount.toFixed(2)}，金额已入账。`,
   });
 }

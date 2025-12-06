@@ -1,0 +1,2 @@
+-- Add DISCOUNT_80 to CouponType enum
+ALTER TYPE "CouponType" ADD VALUE IF NOT EXISTS 'DISCOUNT_80';

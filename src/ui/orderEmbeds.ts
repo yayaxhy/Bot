@@ -360,7 +360,8 @@ export function invitation_embed(
 export function discount_prompt_embed(
   orderLabel: string,
   orderId: string,
-  jiuzheCount: number
+  jiuzheCount: number,
+  bazheCount: number
 ): { embed: APIEmbed; components: any[] } | null {
   const description = [
     '检测到您有可以使用的优惠，如若使用可以点击下面列表进行选择（每个单子只能使用一次优惠券）',
@@ -380,6 +381,15 @@ export function discount_prompt_embed(
         .setLabel(`9折券（剩余 ${jiuzheCount} 张）`)
         .setValue('jiuzhe')
         .setDescription('最高抵扣 2 小时')
+    );
+    hasOption = true;
+  }
+  if (bazheCount > 0) {
+    menu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`8折券（剩余 ${bazheCount} 张）`)
+        .setValue('bazhe')
+        .setDescription('最高抵扣 2 小时，单张封顶 ¥200')
     );
     hasOption = true;
   }
