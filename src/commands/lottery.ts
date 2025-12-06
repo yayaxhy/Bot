@@ -60,8 +60,8 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
   const poolColor = LOTTERY_COLORS[pool] ?? undefined;
 
   const startEmbed = new EmbedBuilder()
-    .setTitle('开始抽奖！')
-    .setDescription(`已扣除 ¥${costLabel}，抽奖动画播放中...`)
+    .setTitle('已扣除 ¥${costLabel}，开始抽奖！')
+    .setDescription(`抽奖中...`)
     .setFooter({ text: `奖池：${poolLabel}` });
   if (poolColor) startEmbed.setColor(poolColor);
   if (animationUrl) startEmbed.setImage(animationUrl);
