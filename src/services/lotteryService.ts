@@ -1,6 +1,7 @@
 import { LotteryPool, LotteryStatus, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import crypto from 'crypto';
+import { splitIncomeRecharge } from '../lib/balanceMath.js';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -231,16 +232,26 @@ export async function performLotteryDraw(params: {
     });
 
     if (!useFreeVoucher) {
-      const debit = await tx.member.updateMany({
-        where: { discordUserId: userId, totalBalance: { gte: DRAW_COST } },
+      const account = await tx.member.findUnique({
+        where: { discordUserId: userId },
+        select: { income: true, recharge: true, totalBalance: true },
+      });
+      const income = new Prisma.Decimal(account?.income ?? 0);
+      const recharge = new Prisma.Decimal(account?.recharge ?? 0);
+      const total = new Prisma.Decimal(account?.totalBalance ?? 0);
+      if (total.lt(DRAW_COST)) {
+        throw new LotteryError('INSUFFICIENT_BALANCE');
+      }
+      const split = splitIncomeRecharge(income, recharge, DRAW_COST);
+      await tx.member.update({
+        where: { discordUserId: userId },
         data: {
+          income: { decrement: split.fromIncome },
+          recharge: { decrement: split.fromRecharge },
           totalBalance: { decrement: DRAW_COST },
           totalSpent: { increment: DRAW_COST },
         },
       });
-      if (debit.count === 0) {
-        throw new LotteryError('INSUFFICIENT_BALANCE');
-      }
     }
 
     // 读取/初始化保底计数
