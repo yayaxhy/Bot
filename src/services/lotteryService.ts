@@ -7,6 +7,8 @@ type TxClient = Prisma.TransactionClient;
 export const DRAW_COST = new Prisma.Decimal(29);
 const VOUCHER_EXPIRES_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
 const SHORT_ID_BYTES = 4;
+const ALERT_CHANNEL_ID = '1446819752692416542';
+const PITY_THRESHOLD = 99; // 100 抽保底（missCount >= 99 时强制特级）
 
 export const PRIZE_NAMES = {
   CAKE_VOUCHER: '小蛋糕礼物的代金券',
@@ -57,7 +59,6 @@ type PrizeLike = {
   unlimited: boolean;
   stock: number | null;
   imageUrl: string | null;
-  animationUrl: string | null;
 };
 
 const normalizeName = (name?: string | null) => (name ?? '').trim();
@@ -92,6 +93,19 @@ const generateCode = (kind: PrizeKind): string => {
 
 const voucherExpiresAt = (kind: PrizeKind, now: Date) =>
   kind === 'OTHER' ? null : new Date(now.getTime() + VOUCHER_EXPIRES_MS);
+
+const sendLotteryAlert = async (text: string) => {
+  try {
+    const client = (globalThis as any).__CLIENT__;
+    if (!client || !ALERT_CHANNEL_ID) return;
+    const channel = await client.channels.fetch(ALERT_CHANNEL_ID).catch(() => null);
+    if (channel && channel.isTextBased()) {
+      await channel.send({ content: text });
+    }
+  } catch (err) {
+    console.error('[lottery][alert] send failed:', err);
+  }
+};
 
 const adjustWeight = (p: PrizeLike) => {
   if (p.unlimited) return Math.max(0, p.weight);
@@ -229,11 +243,39 @@ export async function performLotteryDraw(params: {
       }
     }
 
-    let picked = await pickPrize(tx, pool);
+    // 读取/初始化保底计数
+    const pity = await tx.lotteryPity.upsert({
+      where: { userId },
+      update: {},
+      create: { userId, missCount: 0 },
+    });
+    const shouldForceSpecial = pity.missCount >= PITY_THRESHOLD;
+
+    let picked: PrizeLike | null = null;
+    let forcedSpecial = false;
+    let forcedButNoSpecial = false;
+
+    if (shouldForceSpecial) {
+      forcedSpecial = true;
+      try {
+        picked = await pickPrize(tx, LotteryPool.SPECIAL);
+      } catch (err) {
+        forcedButNoSpecial = true;
+        await sendLotteryAlert(`[lottery][pity] 用户 ${userId} 触发保底，但特级奖池无可用库存，回落到其他奖池`);
+      }
+    }
+
+    if (!picked) {
+      picked = await pickPrize(tx, pool);
+    }
 
     if (!picked.unlimited) {
+      if (picked.pool === LotteryPool.SPECIAL && (picked.stock ?? 0) === 1) {
+        await sendLotteryAlert(`[lottery][stock] 特级奖品「${picked.name}」仅剩 1 个库存`);
+      }
       const ok = await consumeStock(tx, picked);
       if (!ok) {
+        await sendLotteryAlert(`[lottery][stock_empty] 奖品「${picked.name}」库存不足，回落到金色池`);
         picked = await pickPrize(tx, LotteryPool.MEDIUM);
         // medium 也可能有限，再次尝试扣减；失败则抛错
         if (!picked.unlimited) {
@@ -265,6 +307,18 @@ export async function performLotteryDraw(params: {
     });
 
     if (!draw.prize) throw new LotteryError('MISSING_PRIZE');
+
+    // 更新保底计数：特级命中清零；非特级 +1；保底但无特级库存时不变
+    let nextMiss = pity.missCount;
+    if (draw.prize.pool === LotteryPool.SPECIAL) {
+      nextMiss = 0;
+    } else if (!forcedButNoSpecial) {
+      nextMiss = pity.missCount + 1;
+    }
+    await tx.lotteryPity.update({
+      where: { userId },
+      data: { missCount: nextMiss },
+    });
 
     return {
       drawId: draw.id,

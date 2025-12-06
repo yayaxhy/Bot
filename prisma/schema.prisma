@@ -128,6 +128,7 @@ model Member {
 
   // Lottery draws
   lotteryDraws LotteryDraw[]
+  lotteryPity  LotteryPity?
 
   // Back-relation for WorkerLock (one active lock at most)
   workerLock WorkerLock? @relation("MemberWorkerLock")
@@ -442,6 +443,14 @@ model LotteryDraw {
 
   @@index([userId, createdAt])
   @@index([pool, createdAt])
+}
+
+model LotteryPity {
+  userId    String   @id
+  missCount Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  user Member @relation(fields: [userId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
 }
 
 enum LotteryStatus {

@@ -48,7 +48,7 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
 
   const { prize, pool } = result;
   const poolLabel = POOL_LABEL[pool] ?? pool;
-  const animationUrl = prize.animationUrl ?? LOTTERY_ANIMATIONS[pool];
+  const animationUrl = LOTTERY_ANIMATIONS[pool];
   const poolColor = LOTTERY_COLORS[pool] ?? undefined;
 
   const startEmbed = new EmbedBuilder()
