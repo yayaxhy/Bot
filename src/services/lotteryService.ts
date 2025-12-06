@@ -14,7 +14,7 @@ export const PRIZE_NAMES = {
   CAKE_VOUCHER: '小蛋糕代金券',
   LOTTERY_VOUCHER: '抽奖代金券',
   DISCOUNT_80: '8折券',
-  RENAME_CARD: '改名卡',
+  RENAME_CARD: '4位数靓号卡',
 } as const;
 
 const PRIZE_NAME_BY_KIND: Record<PrizeKind, string | null> = {
