@@ -42,12 +42,16 @@ function detectUsedInvite(
   return null;
 }
 
+type RewardResult =
+  | { status: 'rewarded'; inviterId: string; balanceAfter: Prisma.Decimal }
+  | { status: 'already_joined' | 'joined_no_inviter' | 'already_rewarded' | 'error' };
+
 async function rewardIfEligible(opts: {
   guildId: string;
   inviterId?: string | null;
   inviteeId: string;
   code?: string | null;
-}) {
+}): Promise<RewardResult> {
   const { guildId, inviterId, inviteeId, code } = opts;
   const now = new Date();
 
@@ -122,11 +126,24 @@ async function rewardIfEligible(opts: {
       },
     });
 
-    return { status: 'rewarded' as const };
+    return { status: 'rewarded' as const, inviterId, balanceAfter };
   }).catch((err) => {
     console.error('[invite-reward] tx failed', { inviteeId, inviterId, code, err });
     return { status: 'error' as const };
   });
+}
+
+async function sendInviteDm(inviterId: string, balanceAfter: Prisma.Decimal) {
+  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+  if (!client) return;
+  try {
+    const user = await client.users.fetch(inviterId);
+    await user.send(
+      `感谢你邀请了新朋友的加入，获得 2 锦鲤币充值，当前余额：${balanceAfter.toString()}`
+    );
+  } catch (err) {
+    console.error('[invite-reward] dm inviter failed', { inviterId, err });
+  }
 }
 
 async function handleMemberAdd(member: GuildMember) {
@@ -159,6 +176,7 @@ async function handleMemberAdd(member: GuildMember) {
 
   if (result.status === 'rewarded') {
     console.log('[invite-reward] rewarded inviter', { inviterId, inviteeId: member.id, code });
+    sendInviteDm(result.inviterId, result.balanceAfter);
   } else if (result.status !== 'already_joined' && result.status !== 'joined_no_inviter') {
     console.log('[invite-reward] skipped', { inviteeId: member.id, status: result.status, inviterId, code });
   }
