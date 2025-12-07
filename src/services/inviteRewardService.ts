@@ -2,6 +2,7 @@ import { Client, Events, Guild, GuildMember, Invite } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
+import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 
 const INVITE_REWARD_GUILD_ID =
   process.env.INVITE_REWARD_GUILD_ID
@@ -74,6 +75,9 @@ async function rewardIfEligible(opts: {
       update: {},
       create: { discordUserId: inviteeId },
     });
+
+    // avoid triggering recharge DM for internal reward
+    await suppressRechargeNotifications(tx);
 
     await tx.guildJoinRecord.create({
       data: { userId: inviteeId, guildId, firstJoinedAt: now },
