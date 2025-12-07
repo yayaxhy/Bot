@@ -410,8 +410,7 @@ async function settle(
     order,
     gross,
     netToWorker,
-    feeToPlatform,
-    endTime,
+    endedAt,
   });
 }
 
@@ -419,15 +418,14 @@ type ReferralCommissionContext = {
   order: any;
   gross: Prisma.Decimal;
   netToWorker: Prisma.Decimal;
-  feeToPlatform: Prisma.Decimal;
-  endTime: Date;
+  endedAt: Date;
 };
 
 async function grantReferralCommission(
   tx: Prisma.TransactionClient,
   ctx: ReferralCommissionContext
 ) {
-  const { order, gross, netToWorker, endTime } = ctx;
+  const { order, gross, netToWorker, endedAt } = ctx;
   const REF_RATE = new Prisma.Decimal(0.01);
 
   // helper to pay and log
@@ -485,7 +483,7 @@ async function grantReferralCommission(
       amountChange: amount,
       balanceAfter,
       typeOfTransaction: `邀请提成-${baseLabel}`,
-      timeCreatedAt: endTime,
+      timeCreatedAt: endedAt,
     });
   };
 

@@ -157,14 +157,16 @@ export function registerInviteReward(client: Client) {
   }
 
   client.on(Events.InviteCreate, (invite) => {
-    if (invite.guild?.id === INVITE_REWARD_GUILD_ID) {
-      refreshInvites(invite.guild).catch((err) => console.error('[invite-reward] inviteCreate refresh failed', err));
+    const guild = invite.guild;
+    if (guild && 'invites' in guild && guild.id === INVITE_REWARD_GUILD_ID) {
+      refreshInvites(guild as Guild).catch((err) => console.error('[invite-reward] inviteCreate refresh failed', err));
     }
   });
 
   client.on(Events.InviteDelete, (invite) => {
-    if (invite.guild?.id === INVITE_REWARD_GUILD_ID) {
-      refreshInvites(invite.guild).catch((err) => console.error('[invite-reward] inviteDelete refresh failed', err));
+    const guild = invite.guild;
+    if (guild && 'invites' in guild && guild.id === INVITE_REWARD_GUILD_ID) {
+      refreshInvites(guild as Guild).catch((err) => console.error('[invite-reward] inviteDelete refresh failed', err));
     }
   });
 

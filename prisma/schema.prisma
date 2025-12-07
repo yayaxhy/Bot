@@ -82,10 +82,10 @@ enum RedEnvelopeStatus {
 }
 
 enum LotteryPool {
-  NORMAL   // 银色
-  MEDIUM   // 金色
+  NORMAL // 银色
+  MEDIUM // 金色
   ADVANCED // 高级（有限）
-  SPECIAL  // 特级（有限）
+  SPECIAL // 特级（有限）
 }
 
 /**
@@ -98,10 +98,10 @@ model Member {
   status        MemberStatus @default(LAOBAN)
 
   // Money
-  totalBalance Decimal @default(0) @db.Decimal(19, 4)
-  income       Decimal @default(0) @db.Decimal(19, 4)
-  recharge     Decimal @default(0) @db.Decimal(19, 4)
-  totalSpent   Decimal @default(0) @db.Decimal(19, 4)
+  totalBalance  Decimal @default(0) @db.Decimal(19, 4)
+  income        Decimal @default(0) @db.Decimal(19, 4)
+  recharge      Decimal @default(0) @db.Decimal(19, 4)
+  totalSpent    Decimal @default(0) @db.Decimal(19, 4)
   VIPRoleOptOut Boolean @default(false)
 
   // Payout rate (user receives this share of gross), default 75%
@@ -111,8 +111,8 @@ model Member {
   commissionFrom Commission[] @relation("CommissionFrom")
   commissionTo   Commission[] @relation("CommissionTo")
 
-  sentTransactions     Transaction[] @relation("FromMember")
-  receivedTransactions Transaction[] @relation("ToMember")
+  sentTransactions     Transaction[]       @relation("FromMember")
+  receivedTransactions Transaction[]       @relation("ToMember")
   zpayRechargeOrders   ZPayRechargeOrder[]
 
   // One-to-one: every 陪玩 is a member; not every member is a 陪玩
@@ -163,10 +163,10 @@ model Transaction {
 }
 
 model Withdraw {
-  id         String   @id @default(dbgenerated("concat('W', nextval('\"Withdraw_id_seq\"'::regclass))"))
+  id         String    @id @default(dbgenerated("concat('W', nextval('\"Withdraw_id_seq\"'::regclass))"))
   discordId  String
-  createdAt  DateTime @default(now())
-  amount     Decimal  @db.Decimal(19, 4)
+  createdAt  DateTime  @default(now())
+  amount     Decimal   @db.Decimal(19, 4)
   method     String
   notifiedAt DateTime?
 
@@ -174,14 +174,14 @@ model Withdraw {
 }
 
 model IndividualTransaction {
-  transactionId      String   @id @default(dbgenerated("concat('IT', nextval('\"IndividualTransaction_transactionId_seq\"'::regclass))"))
-  timeCreatedAt      DateTime @default(now())
-  discordId          String
+  transactionId       String   @id @default(dbgenerated("concat('IT', nextval('\"IndividualTransaction_transactionId_seq\"'::regclass))"))
+  timeCreatedAt       DateTime @default(now())
+  discordId           String
   thirdPartydiscordId String
-  balanceBefore      Decimal  @db.Decimal(19, 4)
-  amountChange       Decimal  @db.Decimal(19, 4)
-  balanceAfter       Decimal  @db.Decimal(19, 4)
-  typeOfTransaction  String
+  balanceBefore       Decimal  @db.Decimal(19, 4)
+  amountChange        Decimal  @db.Decimal(19, 4)
+  balanceAfter        Decimal  @db.Decimal(19, 4)
+  typeOfTransaction   String
 
   @@index([discordId])
 }
@@ -198,15 +198,15 @@ enum CouponStatus {
 }
 
 model Coupon {
-  id        String      @id @default(dbgenerated("concat('C', nextval('\"Coupon_id_seq\"'::regclass))"))
-  discordId String
-  type      CouponType
-  status    CouponStatus @default(ACTIVE)
-  issuedAt  DateTime    @default(now())
-  expiresAt DateTime
-  consumedAt DateTime?
-  orderId   String?
-  discountAmount Decimal? @db.Decimal(19, 4)
+  id             String       @id @default(dbgenerated("concat('C', nextval('\"Coupon_id_seq\"'::regclass))"))
+  discordId      String
+  type           CouponType
+  status         CouponStatus @default(ACTIVE)
+  issuedAt       DateTime     @default(now())
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  orderId        String?
+  discountAmount Decimal?     @db.Decimal(19, 4)
 }
 
 model Commission {
@@ -237,28 +237,27 @@ model Gift {
   price    Decimal? @db.Decimal(19, 4)
   url_link String?
   rate     Decimal  @default(1) @db.Decimal(10, 2)
-
 }
 
 model Recharge {
-  RechargeID String  @id @default(dbgenerated("concat('C', nextval('\"Recharge_RechargeID_seq\"'::regclass))"))
-  amount     Decimal @db.Decimal(19, 4)
+  RechargeID String   @id @default(dbgenerated("concat('C', nextval('\"Recharge_RechargeID_seq\"'::regclass))"))
+  amount     Decimal  @db.Decimal(19, 4)
   toWhom     String
-  fromWhom   String  @default("1421651539247894549")
+  fromWhom   String   @default("1421651539247894549")
   createdAt  DateTime @default(now())
 }
 
 model ZPayRechargeOrder {
-  id            String               @id @default(dbgenerated("concat('ZPAY', replace((gen_random_uuid())::text, '-'::text, ''::text))"))
-  outTradeNo    String               @unique
-  discordUserId String
-  amount        Decimal              @db.Decimal(19, 4)
-  channel       String
-  status        RechargeOrderStatus  @default(PENDING)
+  id             String              @id @default(dbgenerated("concat('ZPAY', replace((gen_random_uuid())::text, '-'::text, ''::text))"))
+  outTradeNo     String              @unique
+  discordUserId  String
+  amount         Decimal             @db.Decimal(19, 4)
+  channel        String
+  status         RechargeOrderStatus @default(PENDING)
   gatewayTradeNo String?
-  notifyPayload Json?
-  createdAt     DateTime             @default(now())
-  paidAt        DateTime?
+  notifyPayload  Json?
+  createdAt      DateTime            @default(now())
+  paidAt         DateTime?
 
   member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
 
@@ -274,43 +273,43 @@ model PEIWAN {
 
   // Price slots (include DEFAULT)
   quotation_Q1 Decimal? @db.Decimal(10, 2)
-  lolPrice    Decimal? @db.Decimal(10, 2)
-  valPrice    Decimal? @db.Decimal(10, 2)
-  deltaPrice  Decimal? @db.Decimal(10, 2)
-  csgoPrice   Decimal? @db.Decimal(10, 2)
-  narakaPrice Decimal? @db.Decimal(10, 2)
-  apexPrice   Decimal? @db.Decimal(10, 2)
+  lolPrice     Decimal? @db.Decimal(10, 2)
+  valPrice     Decimal? @db.Decimal(10, 2)
+  deltaPrice   Decimal? @db.Decimal(10, 2)
+  csgoPrice    Decimal? @db.Decimal(10, 2)
+  narakaPrice  Decimal? @db.Decimal(10, 2)
+  apexPrice    Decimal? @db.Decimal(10, 2)
 
   // Payout rate copy on PEIWAN (synced → Member via DB trigger)
   commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
 
-  totalEarn Decimal      @default(0) @db.Decimal(19, 4)
-  balance   Decimal      @default(0) @db.Decimal(19, 4)
-  MP_url    String?
-  status    PeiwanStatus @default(free)
+  totalEarn         Decimal      @default(0) @db.Decimal(19, 4)
+  balance           Decimal      @default(0) @db.Decimal(19, 4)
+  MP_url            String?
+  status            PeiwanStatus @default(free)
   serverDisplayName String?
-  techTag   Boolean      @default(false)
-  sex       PeiwanSex    @default(小姐姐)
-  exclusive Boolean      @default(false)
-  type      PeiwanType   @default(娱乐陪玩)
-  level     PeiwanLevel  @default(优选陪玩)
-  LOL       Boolean      @default(false)
-  CSGO      Boolean      @default(false)
-  Valorant  Boolean      @default(false)
-  Naraka    Boolean      @default(false)
-  OW2       Boolean      @default(false)
-  APEX      Boolean      @default(false)
-  deltaForce Boolean     @default(false)
-  marvel    Boolean      @default(false)
-  singer    Boolean      @default(false)
-  PUBG      Boolean      @default(false)
-  TFT       Boolean      @default(false)
-  R6        Boolean      @default(false)
-  tarkov    Boolean      @default(false)
-  chat      Boolean      @default(false)
-  steam     Boolean      @default(false)
-  DOTA      Boolean      @default(false)
-  COD       Boolean      @default(false)
+  techTag           Boolean      @default(false)
+  sex               PeiwanSex    @default(小姐姐)
+  exclusive         Boolean      @default(false)
+  type              PeiwanType   @default(娱乐陪玩)
+  level             PeiwanLevel  @default(优选陪玩)
+  LOL               Boolean      @default(false)
+  CSGO              Boolean      @default(false)
+  Valorant          Boolean      @default(false)
+  Naraka            Boolean      @default(false)
+  OW2               Boolean      @default(false)
+  APEX              Boolean      @default(false)
+  deltaForce        Boolean      @default(false)
+  marvel            Boolean      @default(false)
+  singer            Boolean      @default(false)
+  PUBG              Boolean      @default(false)
+  TFT               Boolean      @default(false)
+  R6                Boolean      @default(false)
+  tarkov            Boolean      @default(false)
+  chat              Boolean      @default(false)
+  steam             Boolean      @default(false)
+  DOTA              Boolean      @default(false)
+  COD               Boolean      @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -324,11 +323,11 @@ model PEIWAN {
 }
 
 model Order {
-  id       String @id @default(cuid()) // orderId
-  hostId   String
-  workerId String
-  peiwanId Int
-  displayNo Int @default(autoincrement()) @unique
+  id        String @id @default(cuid()) // orderId
+  hostId    String
+  workerId  String
+  peiwanId  Int
+  displayNo Int    @unique @default(autoincrement())
 
   host   Member @relation("HostOrders", fields: [hostId], references: [discordUserId], onDelete: Restrict)
   worker Member @relation("WorkerOrders", fields: [workerId], references: [discordUserId], onDelete: Restrict)
@@ -351,8 +350,8 @@ model Order {
   // Recalc snapshot & telemetry
   maxMinutesAtAccept Int?
   lastRecalcAt       DateTime?
-  chargedMinutes     Int      @default(0)
-  chargedGross       Decimal  @default(0) @db.Decimal(19, 4)
+  chargedMinutes     Int       @default(0)
+  chargedGross       Decimal   @default(0) @db.Decimal(19, 4)
 
   endedAt      DateTime?
   totalMinutes Int? // ceil((endedAt - stopwatchStartAt)/60)
@@ -398,49 +397,49 @@ model HeartCounter {
 }
 
 model RedEnvelope {
-  id              String             @id @default(cuid())
+  id              String            @id @default(cuid())
   creatorId       String
-  totalAmount     Decimal            @db.Decimal(19, 4)
-  remainingAmount Decimal            @db.Decimal(19, 4)
+  totalAmount     Decimal           @db.Decimal(19, 4)
+  remainingAmount Decimal           @db.Decimal(19, 4)
   totalCount      Int
   remainingCount  Int
   note            String?
-  status          RedEnvelopeStatus  @default(ACTIVE)
+  status          RedEnvelopeStatus @default(ACTIVE)
   expiresAt       DateTime
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
   messageId       String?
   channelId       String?
-  refundedAmount  Decimal?           @db.Decimal(19, 4)
-  incomePool      Decimal            @db.Decimal(19, 4)
-  rechargePool    Decimal            @db.Decimal(19, 4)
+  refundedAmount  Decimal?          @db.Decimal(19, 4)
+  incomePool      Decimal           @db.Decimal(19, 4)
+  rechargePool    Decimal           @db.Decimal(19, 4)
 
   @@index([status, expiresAt])
 }
 
 model LotteryPrize {
-  id           String      @id @default(cuid())
-  name         String
-  pool         LotteryPool
-  weight       Int
-  unlimited    Boolean     @default(false)
-  stock        Int?
-  imageUrl     String?
-  active       Boolean     @default(true)
+  id        String      @id @default(cuid())
+  name      String
+  pool      LotteryPool
+  weight    Int
+  unlimited Boolean     @default(false)
+  stock     Int?
+  imageUrl  String?
+  active    Boolean     @default(true)
 
   draws LotteryDraw[]
 }
 
 model LotteryDraw {
-  id        String      @id @default(cuid())
-  nonce     String      @unique
+  id        String        @id @default(cuid())
+  nonce     String        @unique
   requestId String?
   userId    String
   pool      LotteryPool
   prizeId   String?
-  cost      Decimal     @db.Decimal(19, 4)
+  cost      Decimal       @db.Decimal(19, 4)
   random    Float?
-  createdAt DateTime    @default(now())
+  createdAt DateTime      @default(now())
   status    LotteryStatus @default(UNUSED)
   code      String?       @unique
   expiresAt DateTime?
@@ -474,13 +473,13 @@ enum ReferralType {
 
 /// 手工指定唯一邀请人及类型（老板/陪玩）
 model Referral {
-  inviteeId String @id
+  inviteeId String       @id
   inviterId String
   type      ReferralType
-  createdAt DateTime @default(now())
+  createdAt DateTime     @default(now())
 
-  inviter Member @relation("ReferralInviter", fields: [inviterId], references: [discordUserId])
-  invitee Member @relation("ReferralInvitee", fields: [inviteeId], references: [discordUserId])
+  inviter Member           @relation("ReferralInviter", fields: [inviterId], references: [discordUserId])
+  invitee Member           @relation("ReferralInvitee", fields: [inviteeId], references: [discordUserId])
   payouts ReferralPayout[]
 
   @@index([inviterId, type])
@@ -501,24 +500,24 @@ model ReferralPayout {
 
 /// 记录用户是否曾经进入过目标 Guild（只插入一次，用于防止重复邀请奖励）
 model GuildJoinRecord {
-  userId       String   @id
-  guildId      String
+  userId        String   @id
+  guildId       String
   firstJoinedAt DateTime @default(now())
-  createdAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([guildId])
 }
 
 /// 邀请链接使用并发放 2 元奖励的流水（不依赖 Referral 表）
 model InviteLinkUsage {
-  id         String   @id @default(cuid())
-  guildId    String
-  inviteeId  String   @unique
-  inviterId  String
-  code       String?
-  rewardedAt DateTime @default(now())
-  rewardAmount Decimal @db.Decimal(19, 4)
-  createdAt  DateTime @default(now())
+  id           String   @id @default(cuid())
+  guildId      String
+  inviteeId    String   @unique
+  inviterId    String
+  code         String?
+  rewardedAt   DateTime @default(now())
+  rewardAmount Decimal  @db.Decimal(19, 4)
+  createdAt    DateTime @default(now())
 
   inviter Member @relation("MemberToInviteLinkUsage", fields: [inviterId], references: [discordUserId], onDelete: Cascade)
   invitee Member @relation("InviteeToInviteLinkUsage", fields: [inviteeId], references: [discordUserId], onDelete: Cascade)
