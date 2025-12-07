@@ -57,6 +57,20 @@ async function rewardIfEligible(opts: {
       return { status: 'already_joined' as const };
     }
 
+    // ensure inviter/invitee exist in Member table for FK on InviteLinkUsage
+    if (inviterId) {
+      await tx.member.upsert({
+        where: { discordUserId: inviterId },
+        update: {},
+        create: { discordUserId: inviterId },
+      });
+    }
+    await tx.member.upsert({
+      where: { discordUserId: inviteeId },
+      update: {},
+      create: { discordUserId: inviteeId },
+    });
+
     await tx.guildJoinRecord.create({
       data: { userId: inviteeId, guildId, firstJoinedAt: now },
     });
