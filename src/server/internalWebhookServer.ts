@@ -2,6 +2,11 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { notifyWithdrawal } from '../services/withdrawalNotificationService.js';
 import { processWithdrawal } from '../services/withdrawalService.js';
+import { performGift } from '../commands/gifting.js';
+import prisma from '../db/prisma.js';
+import { applyDiscountForOrder, type DiscountKind } from '../services/discountService.js';
+import { LotteryStatus } from '@prisma/client';
+import { PRIZE_NAMES } from '../services/lotteryService.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -10,6 +15,8 @@ const INTERNAL_API_ORIGIN = process.env.INTERNAL_API_ORIGIN ?? '*';
 const INTERNAL_API_ALLOWED_HEADERS =
   process.env.INTERNAL_API_ALLOWED_HEADERS ?? 'Content-Type, X-Internal-Token';
 const INTERNAL_API_ALLOWED_METHODS = 'POST, OPTIONS';
+const RENAME_NOTIFY_CHANNEL_ID = process.env.RENAME_NOTIFY_CHANNEL_ID ?? '1446819752692416542';
+const RENAME_NOTIFY_USER_ID = process.env.RENAME_NOTIFY_USER_ID ?? '1421651539247894549';
 
 let serverInstance: http.Server | null = null;
 
@@ -141,6 +148,165 @@ async function handleProcessWithdrawal(req: IncomingMessage, res: ServerResponse
   }
 }
 
+async function handleGift(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const { giverId, receiverId, giftName, quantity, anonymous } = payload ?? {};
+  if (!giverId || !receiverId || !giftName || !quantity) {
+    sendJson(res, 400, { ok: false, error: 'missing_fields' });
+    return;
+  }
+
+  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+  if (!client) {
+    sendJson(res, 503, { ok: false, error: 'client_not_ready' });
+    return;
+  }
+
+  try {
+    const result = await performGift(client, prisma, {
+      giverId,
+      receiverId,
+      giftName,
+      quantity: Number(quantity),
+      anonymous: !!anonymous,
+    });
+    sendJson(res, 200, { ok: true, result });
+  } catch (err: any) {
+    console.error('[internal-api] gift failed', err);
+    const message = err?.message ?? 'internal_error';
+    const statusCode =
+      typeof message === 'string' && message.includes('余额不足')
+        ? 400
+        : 500;
+    sendJson(res, statusCode, { ok: false, error: message });
+  }
+}
+
+async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const { orderId, userId, kind } = payload ?? {};
+  if (!orderId || !userId || !kind) {
+    sendJson(res, 400, { ok: false, error: 'missing_fields' });
+    return;
+  }
+
+  const discountKind = kind as DiscountKind;
+  if (discountKind !== 'coupon' && discountKind !== 'lottery') {
+    sendJson(res, 400, { ok: false, error: 'invalid_kind' });
+    return;
+  }
+
+  try {
+    const result = await applyDiscountForOrder({
+      orderId,
+      userId,
+      kind: discountKind,
+    });
+
+    if (result.status !== 'applied') {
+      const codeMap: Record<string, number> = {
+        order_not_found: 404,
+        not_order_host: 403,
+        order_not_ended: 400,
+        already_used: 409,
+        no_coupon: 400,
+        no_lottery: 400,
+        no_fee: 400,
+        insufficient_data: 400,
+      };
+      const statusCode = codeMap[result.status] ?? 400;
+      sendJson(res, statusCode, { ok: false, error: result.status });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      amount: result.discountAmount?.toString?.() ?? null,
+      kind: result.kind,
+    });
+  } catch (err) {
+    console.error('[internal-api] discount failed', err);
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+  }
+}
+
+async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const { userId } = payload ?? {};
+  if (!userId) {
+    sendJson(res, 400, { ok: false, error: 'missing_fields' });
+    return;
+  }
+
+  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+  if (!client) {
+    sendJson(res, 503, { ok: false, error: 'client_not_ready' });
+    return;
+  }
+
+  const now = new Date();
+
+  const used = await prisma.$transaction(async (tx) => {
+    await tx.lotteryDraw.updateMany({
+      where: {
+        userId,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { lte: now },
+        prize: { name: PRIZE_NAMES.RENAME_CARD },
+      },
+      data: { status: LotteryStatus.EXPIRED },
+    });
+
+    const card = await tx.lotteryDraw.findFirst({
+      where: {
+        userId,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { gt: now },
+        prize: { name: PRIZE_NAMES.RENAME_CARD },
+      },
+      select: { id: true },
+      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (!card) return false;
+
+    await tx.lotteryDraw.update({
+      where: { id: card.id },
+      data: { status: LotteryStatus.USED, consumeAt: now },
+    });
+    return true;
+  });
+
+  if (!used) {
+    sendJson(res, 404, { ok: false, error: 'no_card' });
+    return;
+  }
+
+  const notifyText = `老板 <@${userId}> 使用了改名卡，请联系老板。`;
+  try {
+    const channel = await client.channels.fetch(RENAME_NOTIFY_CHANNEL_ID).catch(() => null);
+    if (channel && channel.isTextBased()) {
+      await (channel as any).send({ content: notifyText, allowedMentions: { users: [userId] } });
+    }
+  } catch (err) {
+    console.error('[rename-card] channel notify failed:', err);
+  }
+
+  try {
+    const user = await client.users.fetch(RENAME_NOTIFY_USER_ID);
+    await user.send({ content: notifyText, allowedMentions: { users: [userId] } });
+  } catch (err) {
+    console.error('[rename-card] dm notify failed:', err);
+  }
+
+  sendJson(res, 200, { ok: true });
+}
+
 export function startInternalWebhookServer() {
   if (serverInstance) {
     return serverInstance;
@@ -167,6 +333,18 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/withdraw') {
       await handleProcessWithdrawal(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/gift') {
+      await handleGift(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/discount') {
+      await handleDiscount(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/rename-card') {
+      await handleRenameCard(req, res);
       return;
     }
 
