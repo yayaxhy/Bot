@@ -23,6 +23,7 @@ import { startPeiwanWatcher } from './services/peiwanWatcher.js';
 import { registerTechTagSync } from './services/techTagService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
 import { registerRedEnvelopeCommand } from './commands/redEnvelope.js';
+import { registerInviteReward } from './services/inviteRewardService.js';
 import {
   CLAIM_EMOJI_REACTION,
   claimRedEnvelope,
@@ -185,6 +186,7 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
 
 
 registerTechTagSync(client);
+registerInviteReward(client);
 
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);

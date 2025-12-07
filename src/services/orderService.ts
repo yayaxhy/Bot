@@ -6,6 +6,7 @@ import { addHeart } from './heartService.js';
 import { notifyOrderEnded } from './orderNotificationService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 
 /** Accept an existing PENDING order and lock the peiwan busy */
 export async function acceptOrder(orderId: string) {
@@ -403,4 +404,124 @@ async function settle(
       feeAmount: feeToPlatform,
     },
   });
+
+  // Referral commission: inviter of host (LAOBAN) earns 1% of gross; inviter of worker (PEIWAN) earns 1% of worker net
+  await grantReferralCommission(tx, {
+    order,
+    gross,
+    netToWorker,
+    feeToPlatform,
+    endTime,
+  });
+}
+
+type ReferralCommissionContext = {
+  order: any;
+  gross: Prisma.Decimal;
+  netToWorker: Prisma.Decimal;
+  feeToPlatform: Prisma.Decimal;
+  endTime: Date;
+};
+
+async function grantReferralCommission(
+  tx: Prisma.TransactionClient,
+  ctx: ReferralCommissionContext
+) {
+  const { order, gross, netToWorker, endTime } = ctx;
+  const REF_RATE = new Prisma.Decimal(0.01);
+
+  // helper to pay and log
+  const payReferral = async ({
+    referral,
+    amount,
+    baseLabel,
+  }: {
+    referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN' };
+    amount: Prisma.Decimal;
+    baseLabel: string;
+  }) => {
+    if (amount.lte(0)) return;
+    try {
+      await tx.referralPayout.create({
+        data: {
+          referralId: referral.inviteeId,
+          orderId: order.id,
+          amount,
+        },
+      });
+    } catch (err) {
+      if (
+        err instanceof PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        // duplicate (already paid)
+        return;
+      }
+      throw err;
+    }
+
+    const inviter = await tx.member.upsert({
+      where: { discordUserId: referral.inviterId },
+      create: { discordUserId: referral.inviterId },
+      update: {},
+      select: { totalBalance: true, income: true, recharge: true },
+    });
+
+    const balanceBefore = new Prisma.Decimal(inviter.totalBalance ?? 0);
+    const balanceAfter = balanceBefore.add(amount);
+
+    await tx.member.update({
+      where: { discordUserId: referral.inviterId },
+      data: {
+        income: { increment: amount },
+        totalBalance: { increment: amount },
+      },
+    });
+
+    await recordIndividualTransaction(tx, {
+      discordId: referral.inviterId,
+      thirdPartydiscordId: referral.inviteeId,
+      balanceBefore,
+      amountChange: amount,
+      balanceAfter,
+      typeOfTransaction: `邀请提成-${baseLabel}`,
+      timeCreatedAt: endTime,
+    });
+  };
+
+  // boss side
+  const bossReferral = await tx.referral.findUnique({
+    where: { inviteeId: order.hostId },
+    select: { inviterId: true, inviteeId: true, type: true },
+  });
+  if (bossReferral?.type === 'LAOBAN') {
+    const amount = round2(gross.mul(REF_RATE));
+    await payReferral({
+      referral: {
+        inviterId: bossReferral.inviterId,
+        inviteeId: bossReferral.inviteeId,
+        type: 'LAOBAN',
+      },
+      amount,
+      baseLabel: '老板1%',
+    });
+  }
+
+  // worker side
+  const workerReferral = await tx.referral.findUnique({
+    where: { inviteeId: order.workerId },
+    select: { inviterId: true, inviteeId: true, type: true },
+  });
+  if (workerReferral?.type === 'PEIWAN') {
+    const amount = round2(netToWorker.mul(REF_RATE));
+    await payReferral({
+      referral: {
+        inviterId: workerReferral.inviterId,
+        inviteeId: workerReferral.inviteeId,
+        type: 'PEIWAN',
+      },
+      amount,
+      baseLabel: '陪玩1%',
+    });
+  }
 }
