@@ -148,7 +148,7 @@ async function grantReferralForGift(
       balanceBefore,
       amountChange: amount,
       balanceAfter,
-      typeOfTransaction: `邀请提成-${label}`,
+      typeOfTransaction: `邀请提成`,
       timeCreatedAt: at,
     });
   };

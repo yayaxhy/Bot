@@ -482,7 +482,7 @@ async function grantReferralCommission(
       balanceBefore,
       amountChange: amount,
       balanceAfter,
-      typeOfTransaction: `邀请提成-${baseLabel}`,
+      typeOfTransaction: `邀请提成`,
       timeCreatedAt: endedAt,
     });
   };
