@@ -1,5 +1,6 @@
 import { Client, Message, MessageCreateOptions } from 'discord.js';
 import { Prisma, PrismaClient, MemberStatus, LotteryStatus } from '@prisma/client';
+import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 import { postGiftFeed } from '../features/giftFeedHelper.js';
 import { recalcAllOrdersForHost } from '../services/orderService.js';
 import { addHeart } from '../services/heartService.js';
@@ -16,6 +17,7 @@ const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 const hasSend = (channel: unknown): channel is { send: Function } =>
   !!channel && typeof (channel as any).send === 'function';
 const CAKE_GIFT_NAME = '小蛋糕';
+const REF_RATE = new Prisma.Decimal(0.01);
 
 /** Parse: "!打赏 3/liwu @UserB @UserC" */
 function parseGiftingCommand(msg: Message): { quantity: number; giftName: string; toUserIds: string[] } | null {
@@ -82,6 +84,100 @@ export interface GiftTransactionResult {
   netAmount: Prisma.Decimal;
   heartGain: Prisma.Decimal;
   imageUrl?: string;
+}
+
+async function grantReferralForGift(
+  tx: Prisma.TransactionClient,
+  params: {
+    giverId: string;
+    receiverId: string;
+    gross: Prisma.Decimal;
+    netToReceiver: Prisma.Decimal;
+    txOrderId: number;
+    at: Date;
+  }
+) {
+  const { giverId, receiverId, gross, netToReceiver, txOrderId, at } = params;
+
+  const payReferral = async ({
+    referral,
+    amount,
+    label,
+  }: {
+    referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN' };
+    amount: Prisma.Decimal;
+    label: string;
+  }) => {
+    if (amount.lte(0)) return;
+    try {
+      await tx.referralPayout.create({
+        data: {
+          referralId: referral.inviteeId,
+          orderId: txOrderId.toString(),
+          amount,
+        },
+      });
+    } catch (err) {
+      if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') {
+        return; // already paid for this tx
+      }
+      throw err;
+    }
+
+    const inviterAccount = await tx.member.upsert({
+      where: { discordUserId: referral.inviterId },
+      create: { discordUserId: referral.inviterId },
+      update: {},
+      select: { totalBalance: true },
+    });
+
+    const balanceBefore = new Prisma.Decimal(inviterAccount.totalBalance ?? 0);
+    const balanceAfter = balanceBefore.add(amount);
+
+    await tx.member.update({
+      where: { discordUserId: referral.inviterId },
+      data: {
+        income: { increment: amount },
+        totalBalance: { increment: amount },
+      },
+    });
+
+    await recordIndividualTransaction(tx, {
+      discordId: referral.inviterId,
+      thirdPartydiscordId: referral.inviteeId,
+      balanceBefore,
+      amountChange: amount,
+      balanceAfter,
+      typeOfTransaction: `邀请提成-${label}`,
+      timeCreatedAt: at,
+    });
+  };
+
+  // Boss inviter: giver consumes, type=LAOBAN earns 1% of gross
+  const bossRef = await tx.referral.findUnique({
+    where: { inviteeId: giverId },
+    select: { inviterId: true, inviteeId: true, type: true },
+  });
+  if (bossRef?.type === 'LAOBAN') {
+    await payReferral({
+      referral: { inviterId: bossRef.inviterId, inviteeId: bossRef.inviteeId, type: 'LAOBAN' },
+      amount: gross.mul(REF_RATE),
+      label: '打赏老板1%',
+    });
+  }
+
+  // Peiwan inviter: receiver earns, type=PEIWAN earns 1% of netToReceiver
+  const pwRef = await tx.referral.findUnique({
+    where: { inviteeId: receiverId },
+    select: { inviterId: true, inviteeId: true, type: true },
+  });
+  if (pwRef?.type === 'PEIWAN') {
+    await payReferral({
+      referral: { inviterId: pwRef.inviterId, inviteeId: pwRef.inviteeId, type: 'PEIWAN' },
+      amount: netToReceiver.mul(REF_RATE),
+      label: '打赏陪玩1%',
+    });
+  }
 }
 
 function buildPublicGiftSuccessMessage(result: GiftTransactionResult): MessageCreateOptions {
@@ -318,6 +414,15 @@ export async function performGift(
         toId: receiverId,
         feeAmount,
       },
+    });
+
+    await grantReferralForGift(tx, {
+      giverId,
+      receiverId,
+      gross,
+      netToReceiver: netAmount,
+      txOrderId: txRow.orderID,
+      at: now,
     });
 
     return {

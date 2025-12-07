@@ -143,7 +143,7 @@ async function sendInviteDm(inviterId: string, balanceAfter: Prisma.Decimal) {
   try {
     const user = await client.users.fetch(inviterId);
     await user.send(
-      `感谢你邀请了新朋友的加入，获得 2 锦鲤币充值，当前余额：${balanceAfter.toString()}`
+      `🩷感谢你邀请了新朋友的加入，获得 2 锦鲤币充值，当前余额：${balanceAfter.toString()}`
     );
   } catch (err) {
     console.error('[invite-reward] dm inviter failed', { inviterId, err });
