@@ -56,6 +56,8 @@ const keywordEnvelopeCache = new Map<
   }
 >();
 const KEYWORD_AUDIT_CHANNEL_ID = process.env.KEYWORD_AUDIT_CHANNEL_ID ?? '1448271094892068937';
+const PENDING_APPROVED_TEXT = '红包已通过审核，已发出';
+const PENDING_REJECTED_TEXT = '该红包口令不通过';
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -104,7 +106,7 @@ const clampNote = (note?: string | null) => {
   return note.trim().slice(0, MAX_NOTE_LENGTH);
 };
 
-const rememberKeywordEnvelope = (
+export const rememberKeywordEnvelope = (
   payload: {
     id: string;
     note?: string | null;
@@ -139,6 +141,26 @@ const setKeywordStatus = (envelopeId: string, status: KeywordEnvelopeStatus) => 
   const prev = keywordEnvelopeCache.get(envelopeId);
   if (prev) keywordEnvelopeCache.set(envelopeId, { ...prev, status });
 };
+
+async function editPendingMessage(
+  client: Client,
+  envelopeId: string,
+  content: string
+) {
+  const entry = keywordEnvelopeCache.get(envelopeId);
+  if (!entry?.pendingMessageId) return;
+  const channelId = entry.pendingChannelId ?? entry.channelId;
+  if (!channelId) return;
+  try {
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+    const msg = await channel.messages.fetch(entry.pendingMessageId).catch(() => null);
+    if (!msg) return;
+    await msg.edit({ content, components: [] });
+  } catch (err) {
+    console.error('[keyword-pending] edit pending message failed:', err);
+  }
+}
 
 export const isKeywordEnvelopeNote = (note?: string | null) =>
   parseEnvelopeNote(note).kind === 'keyword';
@@ -1074,6 +1096,56 @@ export async function recoverRedEnvelopeSchedules(client: Client) {
   }
 }
 
+async function publishApprovedKeywordEnvelope(client: Client, envelopeId: string) {
+  const envelope = await prisma.redEnvelope.findUnique({
+    where: { id: envelopeId },
+    select: {
+      id: true,
+      creatorId: true,
+      totalAmount: true,
+      totalCount: true,
+      remainingCount: true,
+      status: true,
+      expiresAt: true,
+      note: true,
+      refundedAmount: true,
+      channelId: true,
+    },
+  });
+  if (!envelope) return;
+  const cache = keywordEnvelopeCache.get(envelopeId);
+  const channelId = envelope.channelId ?? cache?.pendingChannelId ?? cache?.channelId;
+  if (!channelId) return;
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased() || !('send' in channel)) return;
+
+    const creatorDisplayName = await resolveCreatorName(client, envelope.creatorId, channelId);
+    const payload = buildRedEnvelopeMessagePayload({
+      ...envelope,
+      creatorDisplayName,
+    });
+
+    const sent = await channel.send({
+      ...payload,
+      content: '@here',
+      allowedMentions: { parse: ['everyone'] },
+    });
+    await bindEnvelopeMessage(
+      envelope.id,
+      { messageId: sent.id, channelId: sent.channelId },
+      prisma
+    );
+    try {
+      await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
+    } catch (err) {
+      console.error('[keyword-approve] clear here failed:', err);
+    }
+  } catch (err) {
+    console.error('[keyword-approve] publish failed:', err);
+  }
+}
+
 const buildKeywordAuditComponents = (
   envelopeId: string,
   status: KeywordEnvelopeStatus = 'pending' as KeywordEnvelopeStatus
@@ -1144,6 +1216,13 @@ export async function handleKeywordAuditInteraction(i: ButtonInteraction) {
     await i.update({ components });
   } catch (err) {
     console.error('[keyword-audit] update message failed:', err);
+  }
+
+  if (next === 'approved') {
+    await editPendingMessage(i.client as Client, envelopeId, PENDING_APPROVED_TEXT);
+    await publishApprovedKeywordEnvelope(i.client as Client, envelopeId);
+  } else if (next === 'rejected') {
+    await editPendingMessage(i.client as Client, envelopeId, PENDING_REJECTED_TEXT);
   }
 
   return true;

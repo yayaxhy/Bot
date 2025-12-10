@@ -5,6 +5,7 @@ import {
   scheduleRedEnvelopeExpiration,
   sendKeywordAuditMessage,
   rememberKeywordEnvelope,
+  expireEnvelope,
 } from '../services/redEnvelopeService.js';
 
 const DEC = (v: number | string | Prisma.Decimal) =>
@@ -65,6 +66,7 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
   if (!parsed) return false;
 
   try { await msg.delete(); } catch {}
+  if (!('send' in msg.channel)) return true;
   const pendingMessage = await msg.channel.send('红包正在审核中~ 请稍等');
 
   if (!msg.guild) {

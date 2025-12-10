@@ -1,8 +1,6 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
-  bindEnvelopeMessage,
-  buildRedEnvelopeMessagePayload,
   createRedEnvelope,
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
@@ -16,12 +14,6 @@ const DEC = (v: number | string | Prisma.Decimal) =>
 
 const MIN_TOTAL = DEC('10');
 const DEFAULT_NOTE = '发送口令即可抢红包，拼手气领赏！';
-
-const sanitizeName = (name?: string | null) => {
-  if (!name) return undefined;
-  const cleaned = name.replace(/<@!?\d+>/g, '').trim();
-  return cleaned || undefined;
-};
 
 export const keywordRedEnvelopeSlashCommand = new SlashCommandBuilder()
   .setName('口令红包')
