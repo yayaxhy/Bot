@@ -1072,12 +1072,12 @@ const buildKeywordAuditComponents = (
         .setCustomId(`keyword_audit:approve:${envelopeId}`)
         .setLabel(approveLabel)
         .setStyle(ButtonStyle.Success)
-        .setDisabled(disableAll || state === 'approved'),
+        .setDisabled(disableAll),
       new ButtonBuilder()
         .setCustomId(`keyword_audit:reject:${envelopeId}`)
         .setLabel(rejectLabel)
         .setStyle(ButtonStyle.Danger)
-        .setDisabled(disableAll || state === 'rejected')
+        .setDisabled(disableAll)
     ),
   ];
 };
