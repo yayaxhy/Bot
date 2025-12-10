@@ -1,4 +1,12 @@
-import { Client, EmbedBuilder, Message } from 'discord.js';
+import {
+  Client,
+  EmbedBuilder,
+  Message,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  type ButtonInteraction,
+} from 'discord.js';
 import { Prisma, PrismaClient, RedEnvelopeStatus } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
@@ -36,7 +44,12 @@ const claimLogByEnvelope = new Map<
   }>
 >();
 const fairSharePlans = new Map<string, Prisma.Decimal[]>(); // deterministic fair split per envelope
-const keywordEnvelopeCache = new Map<string, { keyword: string; channelId?: string | null }>();
+type KeywordEnvelopeStatus = 'pending' | 'approved' | 'rejected';
+const keywordEnvelopeCache = new Map<
+  string,
+  { keyword: string; channelId?: string | null; status: KeywordEnvelopeStatus }
+>();
+const KEYWORD_AUDIT_CHANNEL_ID = process.env.KEYWORD_AUDIT_CHANNEL_ID ?? '1448271094892068937';
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -85,14 +98,21 @@ const clampNote = (note?: string | null) => {
   return note.trim().slice(0, MAX_NOTE_LENGTH);
 };
 
-const rememberKeywordEnvelope = (payload: {
-  id: string;
-  note?: string | null;
-  channelId?: string | null;
-}) => {
+const rememberKeywordEnvelope = (
+  payload: {
+    id: string;
+    note?: string | null;
+    channelId?: string | null;
+  },
+  status: KeywordEnvelopeStatus = 'approved'
+) => {
   const meta = parseEnvelopeNote(payload.note);
   if (meta.kind === 'keyword' && meta.keyword) {
-    keywordEnvelopeCache.set(payload.id, { keyword: meta.keyword, channelId: payload.channelId });
+    keywordEnvelopeCache.set(payload.id, {
+      keyword: meta.keyword,
+      channelId: payload.channelId,
+      status,
+    });
   }
 };
 
@@ -104,6 +124,11 @@ const keywordsMatch = (input: string, target: string) => {
   return input.trim() === target.trim();
 };
 
+const setKeywordStatus = (envelopeId: string, status: KeywordEnvelopeStatus) => {
+  const prev = keywordEnvelopeCache.get(envelopeId);
+  if (prev) keywordEnvelopeCache.set(envelopeId, { ...prev, status });
+};
+
 export const isKeywordEnvelopeNote = (note?: string | null) =>
   parseEnvelopeNote(note).kind === 'keyword';
 
@@ -113,7 +138,7 @@ export function findKeywordEnvelopeByMessage(content: string, channelId?: string
   for (const [id, meta] of keywordEnvelopeCache.entries()) {
     if (!keywordsMatch(trimmed, meta.keyword)) continue;
     if (meta.channelId && channelId && meta.channelId !== channelId) continue;
-    return { id, keyword: meta.keyword };
+    return { id, keyword: meta.keyword, status: meta.status };
   }
   return null;
 }
@@ -567,7 +592,8 @@ export async function createRedEnvelope(
       },
     });
 
-    rememberKeywordEnvelope({ id: envelope.id, note: storedNote, channelId: params.channelId });
+    const status: KeywordEnvelopeStatus = kind === 'keyword' ? 'pending' : 'approved';
+    rememberKeywordEnvelope({ id: envelope.id, note: storedNote, channelId: params.channelId }, status);
 
     return envelope;
   });
@@ -934,6 +960,14 @@ export async function tryClaimKeywordEnvelopeFromMessage(
   if (!content) return false;
   const match = findKeywordEnvelopeByMessage(content, message.channelId);
   if (!match) return false;
+  if (match.status === 'pending') {
+    await notify('口令红包正在审核，请稍后再试。');
+    return true;
+  }
+  if (match.status === 'rejected') {
+    await notify('口令红包未通过审核。');
+    return true;
+  }
 
   const displayName =
     (message.member?.displayName?.trim() || message.author.username || '').trim() || undefined;
@@ -1019,7 +1053,85 @@ export async function recoverRedEnvelopeSchedules(client: Client) {
     select: { id: true, expiresAt: true, note: true, channelId: true },
   });
   for (const env of actives) {
-    rememberKeywordEnvelope({ id: env.id, note: env.note, channelId: env.channelId });
+    rememberKeywordEnvelope({ id: env.id, note: env.note, channelId: env.channelId }, 'approved');
     scheduleRedEnvelopeExpiration(client, env);
   }
+}
+
+const buildKeywordAuditComponents = (
+  envelopeId: string,
+  status: KeywordEnvelopeStatus = 'pending'
+) => {
+  const disableAll = status !== 'pending';
+  const approveLabel = status === 'approved' ? '审核通过' : '通过';
+  const rejectLabel = status === 'rejected' ? '审核不通过' : '拒绝';
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`keyword_audit:approve:${envelopeId}`)
+        .setLabel(approveLabel)
+        .setStyle(ButtonStyle.Success)
+        .setDisabled(disableAll || status === 'approved'),
+      new ButtonBuilder()
+        .setCustomId(`keyword_audit:reject:${envelopeId}`)
+        .setLabel(rejectLabel)
+        .setStyle(ButtonStyle.Danger)
+        .setDisabled(disableAll || status === 'rejected')
+    ),
+  ];
+};
+
+export async function sendKeywordAuditMessage(client: Client, payload: {
+  envelopeId: string;
+  creatorId: string;
+  keyword: string;
+}) {
+  if (!KEYWORD_AUDIT_CHANNEL_ID) return;
+  try {
+    const channel = await client.channels.fetch(KEYWORD_AUDIT_CHANNEL_ID).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+    await channel.send({
+      content: `<@${payload.creatorId}> 发送了口令红包，内容：${payload.keyword}`,
+      allowedMentions: { parse: ['users'] },
+      components: buildKeywordAuditComponents(payload.envelopeId),
+    });
+  } catch (err) {
+    console.error('[keyword-audit] send audit message failed:', err);
+  }
+}
+
+export async function handleKeywordAuditInteraction(i: ButtonInteraction) {
+  if (!i.isButton()) return false;
+  if (!i.customId.startsWith('keyword_audit:')) return false;
+
+  const [, action, envelopeId] = i.customId.split(':');
+  if (!action || !envelopeId) return false;
+
+  const entry = keywordEnvelopeCache.get(envelopeId);
+  if (!entry) {
+    await i.reply({ content: '未找到红包记录，可能已过期。', ephemeral: true });
+    return true;
+  }
+
+  const current = entry.status;
+  if (current !== 'pending') {
+    await i.reply({ content: `已${current === 'approved' ? '审核通过' : '审核不通过'}`, ephemeral: true });
+    return true;
+  }
+
+  const next: KeywordEnvelopeStatus = action === 'approve' ? 'approved' : 'rejected';
+  setKeywordStatus(envelopeId, next);
+
+  const components = buildKeywordAuditComponents(envelopeId, next);
+  try {
+    await i.update({ components });
+  } catch (err) {
+    console.error('[keyword-audit] update message failed:', err);
+  }
+
+  try {
+    await i.followUp({ content: `已${next === 'approved' ? '审核通过' : '审核不通过'}`, ephemeral: true });
+  } catch {}
+
+  return true;
 }

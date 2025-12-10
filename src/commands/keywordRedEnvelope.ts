@@ -6,6 +6,7 @@ import {
   createRedEnvelope,
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
+  sendKeywordAuditMessage,
 } from '../services/redEnvelopeService.js';
 
 const DEC = (v: number | string | Prisma.Decimal) =>
@@ -149,7 +150,13 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
       id: envelope.id,
       expiresAt: envelope.expiresAt,
     });
-  } catch (sendErr) {
+
+      await sendKeywordAuditMessage(msg.client, {
+        envelopeId: envelope.id,
+        creatorId: msg.author.id,
+        keyword: parsed.keyword,
+      });
+   } catch (sendErr) {
     await expireEnvelope(envelope.id, prismaClient);
     throw sendErr;
   }

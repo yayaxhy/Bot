@@ -32,6 +32,7 @@ import {
   recoverRedEnvelopeSchedules,
   refreshRedEnvelopeMessage,
   isKeywordEnvelopeNote,
+  handleKeywordAuditInteraction,
 } from './services/redEnvelopeService.js';
 
 
@@ -185,6 +186,7 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
         await handleEndOrderButton(i);
         return;
       }
+      if (await handleKeywordAuditInteraction(i)) return;
     }
   } catch (err) {
     console.error('[InteractionCreate] error:', err);

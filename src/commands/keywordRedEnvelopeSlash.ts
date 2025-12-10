@@ -6,6 +6,7 @@ import {
   createRedEnvelope,
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
+  sendKeywordAuditMessage,
 } from '../services/redEnvelopeService.js';
 import prisma from '../db/prisma.js';
 
@@ -148,6 +149,12 @@ export async function handleKeywordRedEnvelopeSlash(
     scheduleRedEnvelopeExpiration((globalThis as any).__CLIENT__, {
       id: envelope.id,
       expiresAt: envelope.expiresAt,
+    });
+
+    await sendKeywordAuditMessage((globalThis as any).__CLIENT__ ?? i.client, {
+      envelopeId: envelope.id,
+      creatorId: i.user.id,
+      keyword,
     });
 
     await i.editReply('口令红包已发出，大家快来抢！');
