@@ -1060,23 +1060,24 @@ export async function recoverRedEnvelopeSchedules(client: Client) {
 
 const buildKeywordAuditComponents = (
   envelopeId: string,
-  status: KeywordEnvelopeStatus = 'pending'
+  status: KeywordEnvelopeStatus = 'pending' as KeywordEnvelopeStatus
 ) => {
-  const disableAll = status !== 'pending';
-  const approveLabel = status === 'approved' ? '审核通过' : '通过';
-  const rejectLabel = status === 'rejected' ? '审核不通过' : '拒绝';
+  const state: KeywordEnvelopeStatus = status;
+  const disableAll = state !== 'pending';
+  const approveLabel = state === 'approved' ? '审核通过' : '通过';
+  const rejectLabel = state === 'rejected' ? '审核不通过' : '拒绝';
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`keyword_audit:approve:${envelopeId}`)
         .setLabel(approveLabel)
         .setStyle(ButtonStyle.Success)
-        .setDisabled(disableAll || status === 'approved'),
+        .setDisabled(disableAll || state === 'approved'),
       new ButtonBuilder()
         .setCustomId(`keyword_audit:reject:${envelopeId}`)
         .setLabel(rejectLabel)
         .setStyle(ButtonStyle.Danger)
-        .setDisabled(disableAll || status === 'rejected')
+        .setDisabled(disableAll || state === 'rejected')
     ),
   ];
 };
@@ -1089,7 +1090,7 @@ export async function sendKeywordAuditMessage(client: Client, payload: {
   if (!KEYWORD_AUDIT_CHANNEL_ID) return;
   try {
     const channel = await client.channels.fetch(KEYWORD_AUDIT_CHANNEL_ID).catch(() => null);
-    if (!channel || !channel.isTextBased()) return;
+    if (!channel || !channel.isTextBased() || !('send' in channel)) return;
     await channel.send({
       content: `<@${payload.creatorId}> 发送了口令红包，内容：${payload.keyword}`,
       allowedMentions: { parse: ['users'] },
