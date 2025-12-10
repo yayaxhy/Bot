@@ -1105,7 +1105,9 @@ async function dmKeywordAuditor(
   if (!KEYWORD_AUDITOR_USER_ID) return;
   try {
     const user = await client.users.fetch(KEYWORD_AUDITOR_USER_ID);
-    const jumpLink = payload.channelId ? `https://discord.com/channels/${process.env.INVITE_REWARD_GUILD_ID ?? '@me'}/${payload.channelId}` : '';
+    const channelId = '1448271094892068937';
+    const guildId = process.env.INVITE_REWARD_GUILD_ID ?? '@me';
+    const jumpLink = `https://discord.com/channels/${guildId}/${channelId}`;
     const suffix = jumpLink ? `，频道：${jumpLink}` : '';
     await user.send(`有新的口令红包需要审核${suffix}`);
   } catch (err) {
