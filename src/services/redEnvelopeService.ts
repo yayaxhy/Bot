@@ -1252,7 +1252,16 @@ export async function handleKeywordAuditInteraction(i: ButtonInteraction) {
     await publishApprovedKeywordEnvelope(i.client as Client, envelopeId);
   } else if (next === 'rejected') {
     await editPendingMessage(i.client as Client, envelopeId, PENDING_REJECTED_TEXT);
-    await expireEnvelope(envelopeId, prisma, true);
+    const rejected = await expireEnvelope(envelopeId, prisma, true);
+    if (rejected.status === 'refunded' && rejected.creatorId) {
+      const refundText = Number(rejected.refundAmount.toString()).toFixed(2);
+      try {
+        const user = await i.client.users.fetch(rejected.creatorId);
+        await user.send(`您的口令红包审核未通过，金额 ¥${refundText} 已返还。`);
+      } catch (err) {
+        console.error('[keyword-audit] dm creator refund failed:', err);
+      }
+    }
   }
 
   return true;
