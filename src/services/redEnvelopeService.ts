@@ -1129,9 +1129,5 @@ export async function handleKeywordAuditInteraction(i: ButtonInteraction) {
     console.error('[keyword-audit] update message failed:', err);
   }
 
-  try {
-    await i.followUp({ content: `已${next === 'approved' ? '审核通过' : '审核不通过'}`, ephemeral: true });
-  } catch {}
-
   return true;
 }
