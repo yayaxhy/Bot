@@ -6,14 +6,12 @@ import {
   createRedEnvelope,
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
-  CLAIM_EMOJI_REACTION,
-  isKeywordEnvelopeNote,
 } from '../services/redEnvelopeService.js';
 
 const DEC = (v: number | string | Prisma.Decimal) =>
   v instanceof Prisma.Decimal ? v : new Prisma.Decimal(v);
 
-const DEFAULT_NOTE = '锦鲤附体，好运暴击！';
+const DEFAULT_NOTE = '发送口令即可抢红包，拼手气领赏！';
 const MIN_TOTAL = DEC('10');
 
 const sanitizeName = (name?: string | null) => {
@@ -22,47 +20,49 @@ const sanitizeName = (name?: string | null) => {
   return cleaned || undefined;
 };
 
-type ParsedCommand = {
+type ParsedKeywordEnvelope = {
+  keyword: string;
   count: number;
   amount: Prisma.Decimal;
   note?: string;
 };
 
-function parseRedEnvelopeCommand(content: string): ParsedCommand | null {
+function parseKeywordRedEnvelopeCommand(content: string): ParsedKeywordEnvelope | null {
   const trimmed = content.trim();
-  if (!trimmed.startsWith('!红包')) return null;
+  if (!trimmed.startsWith('!口令红包')) return null;
 
-  const rest = trimmed.slice('!红包'.length).trim();
+  const rest = trimmed.slice('!口令红包'.length).trim();
   if (!rest) return null;
 
-  const parts = rest.split(/\s+/);
-  if (parts.length < 1) return null;
+  const [rawKeyword, ...restParts] = rest.split(/\s+/);
+  const keyword = rawKeyword?.trim();
+  if (!keyword) return null;
 
-  const [firstToken, ...noteParts] = parts;
-  if (!firstToken.includes('/')) return null;
+  const remainder = restParts.join(' ').trim();
+  if (!remainder) return null;
 
-  const [countRaw, amountRaw] = firstToken.split('/');
-  const countMatch = countRaw.match(/^(\d+)\s*个$/);
-  const amountMatch = amountRaw.match(/^(\d+(?:\.\d{1,2})?)\s*元$/);
-  if (!countMatch || !amountMatch) return null;
-  const count = Number(countMatch[1]);
-  const amount = Number(amountMatch[1]);
+  const match = remainder.match(/^(\d+)\s*个\s*\/\s*(\d+(?:\.\d{1,2})?)\s*元?(?:\s+(.*))?$/);
+  if (!match) return null;
+
+  const count = Number(match[1]);
+  const amountNumber = Number(match[2]);
   if (!Number.isInteger(count) || count <= 0) return null;
-  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (!Number.isFinite(amountNumber) || amountNumber <= 0) return null;
 
-  const note = noteParts.join(' ').trim();
+  const note = match[3]?.trim();
 
   return {
+    keyword,
     count,
-    amount: DEC(amount.toFixed(2)),
+    amount: DEC(amountNumber.toFixed(2)),
     note: note || undefined,
   };
 }
 
-export async function handleRedEnvelopeMessage(msg: Message, prisma: PrismaClient): Promise<boolean> {
+export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient: PrismaClient): Promise<boolean> {
   if (msg.author.bot) return false;
 
-  const parsed = parseRedEnvelopeCommand(msg.content);
+  const parsed = parseKeywordRedEnvelopeCommand(msg.content);
   if (!parsed) return false;
 
   if (!msg.guild) {
@@ -70,6 +70,18 @@ export async function handleRedEnvelopeMessage(msg: Message, prisma: PrismaClien
     return true;
   }
 
+  if (!parsed.keyword.trim()) {
+    await msg.reply('口令不能为空。');
+    return true;
+  }
+  if (parsed.keyword.length > 50) {
+    await msg.reply('口令长度不能超过 50 个字符。');
+    return true;
+  }
+  if (/@everyone|@here/.test(parsed.keyword) || /<@&\d+>/.test(parsed.keyword)) {
+    await msg.reply('口令不能包含 @everyone/@here 或角色提及。');
+    return true;
+  }
   if (parsed.amount.lt(MIN_TOTAL)) {
     await msg.reply('红包总金额至少 ¥10。');
     return true;
@@ -87,13 +99,15 @@ export async function handleRedEnvelopeMessage(msg: Message, prisma: PrismaClien
       count: parsed.count,
       note: parsed.note ?? DEFAULT_NOTE,
       channelId: msg.channel.id,
+      kind: 'keyword',
+      keyword: parsed.keyword,
     },
-    prisma
+    prismaClient
   );
 
   const channel: any = msg.channel;
   if (!channel || typeof channel.send !== 'function') {
-    await expireEnvelope(envelope.id, prisma);
+    await expireEnvelope(envelope.id, prismaClient);
     await msg.reply('当前频道不支持发送红包。');
     return true;
   }
@@ -122,21 +136,13 @@ export async function handleRedEnvelopeMessage(msg: Message, prisma: PrismaClien
     await bindEnvelopeMessage(
       envelope.id,
       { messageId: sent.id, channelId: sent.channelId },
-      prisma
+      prismaClient
     );
-
-    if (!isKeywordEnvelopeNote(envelope.note)) {
-      try {
-        await sent.react(CLAIM_EMOJI_REACTION);
-      } catch (reactErr) {
-        console.error('[red-envelope] add reaction failed:', reactErr);
-      }
-    }
 
     try {
       await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
     } catch (pingErr) {
-      console.error('[red-envelope] here clear failed:', pingErr);
+      console.error('[keyword-red-envelope] here clear failed:', pingErr);
     }
 
     scheduleRedEnvelopeExpiration(msg.client, {
@@ -144,22 +150,22 @@ export async function handleRedEnvelopeMessage(msg: Message, prisma: PrismaClien
       expiresAt: envelope.expiresAt,
     });
   } catch (sendErr) {
-    await expireEnvelope(envelope.id, prisma);
+    await expireEnvelope(envelope.id, prismaClient);
     throw sendErr;
   }
 
   return true;
 }
 
-export function registerRedEnvelopeCommand(client: Client, prisma: PrismaClient) {
+export function registerKeywordRedEnvelopeCommand(client: Client, prismaClient: PrismaClient) {
   client.on('messageCreate', async (msg: Message) => {
     try {
-      await handleRedEnvelopeMessage(msg, prisma);
+      await handleKeywordRedEnvelopeMessage(msg, prismaClient);
     } catch (err: any) {
-      console.error('[red-envelope] create failed:', err);
-      const message = err?.message ?? '创建红包失败，请稍后再试。';
+      console.error('[keyword-red-envelope] create failed:', err);
+      const message = err?.message ?? '创建口令红包失败，请稍后再试。';
       try {
-        await msg.reply(`无法发红包：${message}`);
+        await msg.reply(`无法发口令红包：${message}`);
       } catch {}
     }
   });

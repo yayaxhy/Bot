@@ -1,4 +1,4 @@
-import { Client, EmbedBuilder } from 'discord.js';
+import { Client, EmbedBuilder, Message } from 'discord.js';
 import { Prisma, PrismaClient, RedEnvelopeStatus } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
@@ -22,6 +22,8 @@ const RED_ENVELOPE_ATTACHMENT_URL =
   'https://cdn.discordapp.com/attachments/1445864521343439019/1445864697013211351/1.png?ex=6931e5ee&is=6930946e&hm=87e2bd7bc8ba1865a674d9af6197eeeaa5b5dc96431f9a40b6c80cf12446db4b';
 export const CLAIM_EMOJI_REACTION = '🧧';
 export const CLAIM_EMOJI = '🧧';
+const KEYWORD_NOTE_PREFIX = '__KW__';
+const MAX_NOTE_LENGTH = 120;
 
 const timers = new Map<string, NodeJS.Timeout>();
 const claimedByEnvelope = new Map<string, Map<string, Prisma.Decimal>>(); // de-dupe per session (stores net credited)
@@ -34,6 +36,7 @@ const claimLogByEnvelope = new Map<
   }>
 >();
 const fairSharePlans = new Map<string, Prisma.Decimal[]>(); // deterministic fair split per envelope
+const keywordEnvelopeCache = new Map<string, { keyword: string; channelId?: string | null }>();
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -51,10 +54,69 @@ type EnvelopeForDisplay = {
   refundedAmount?: Prisma.Decimal | null;
 };
 
+type EnvelopeNoteMeta =
+  | { kind: 'plain'; note?: string }
+  | { kind: 'keyword'; note?: string; keyword: string };
+
+const encodeKeywordNote = (keyword: string, note?: string | null) => {
+  const payload = { k: keyword, n: note ?? null };
+  return `${KEYWORD_NOTE_PREFIX}${JSON.stringify(payload)}`;
+};
+
+const parseEnvelopeNote = (note?: string | null): EnvelopeNoteMeta => {
+  if (!note) return { kind: 'plain' };
+  if (note.startsWith(KEYWORD_NOTE_PREFIX)) {
+    try {
+      const raw = note.slice(KEYWORD_NOTE_PREFIX.length);
+      const parsed = JSON.parse(raw);
+      const keyword = typeof parsed?.k === 'string' ? parsed.k : undefined;
+      const n = typeof parsed?.n === 'string' ? parsed.n : undefined;
+      if (keyword && keyword.trim()) {
+        return { kind: 'keyword', keyword: keyword.trim(), note: n?.trim() || undefined };
+      }
+    } catch {}
+  }
+  return { kind: 'plain', note: note.trim() || undefined };
+};
+
 const clampNote = (note?: string | null) => {
   if (!note) return undefined;
-  return note.trim().slice(0, 120);
+  if (note.startsWith(KEYWORD_NOTE_PREFIX)) return note.trim();
+  return note.trim().slice(0, MAX_NOTE_LENGTH);
 };
+
+const rememberKeywordEnvelope = (payload: {
+  id: string;
+  note?: string | null;
+  channelId?: string | null;
+}) => {
+  const meta = parseEnvelopeNote(payload.note);
+  if (meta.kind === 'keyword' && meta.keyword) {
+    keywordEnvelopeCache.set(payload.id, { keyword: meta.keyword, channelId: payload.channelId });
+  }
+};
+
+const forgetKeywordEnvelope = (envelopeId: string) => {
+  keywordEnvelopeCache.delete(envelopeId);
+};
+
+const keywordsMatch = (input: string, target: string) => {
+  return input.trim() === target.trim();
+};
+
+export const isKeywordEnvelopeNote = (note?: string | null) =>
+  parseEnvelopeNote(note).kind === 'keyword';
+
+export function findKeywordEnvelopeByMessage(content: string, channelId?: string | null) {
+  const trimmed = content.trim();
+  if (!trimmed) return null;
+  for (const [id, meta] of keywordEnvelopeCache.entries()) {
+    if (!keywordsMatch(trimmed, meta.keyword)) continue;
+    if (meta.channelId && channelId && meta.channelId !== channelId) continue;
+    return { id, keyword: meta.keyword };
+  }
+  return null;
+}
 
 const sanitizeName = (name?: string | null) => {
   if (!name) return undefined;
@@ -283,16 +345,23 @@ function pushClaimLog(
 
 export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
   const creatorLabel = envelope.creatorDisplayName ?? '红包发起人';
+  const meta = parseEnvelopeNote(envelope.note);
+  const noteText = meta.note ?? '锦鲤附体，好运暴击！';
+  const descriptionLines = [
+    `总额：¥${formatAmount(envelope.totalAmount)} | 份数：${envelope.totalCount}`,
+  ];
+  if (meta.kind === 'keyword') {
+    descriptionLines.push(`口令：${meta.keyword}`);
+    descriptionLines.push('在本频道发送口令即可抢红包');
+    if (noteText) descriptionLines.push(`留言：${noteText}`);
+  } else {
+    descriptionLines.push(`留言：${noteText}`);
+    descriptionLines.push(`点击下方表情 ${CLAIM_EMOJI} 抢红包！`);
+  }
   const embed = new EmbedBuilder()
     .setColor(0xffc28b)
     .setTitle(`🧧 ${creatorLabel} 发了一个红包啦`)
-    .setDescription(
-      [
-        `总额：¥${formatAmount(envelope.totalAmount)} | 份数：${envelope.totalCount}`,
-        `留言：${envelope.note ?? '锦鲤附体，好运暴击！'}`,
-        `点击下方表情 ${CLAIM_EMOJI} 抢红包！`,
-      ].join('\n')
-    )
+    .setDescription(descriptionLines.join('\n'))
     .setImage(RED_ENVELOPE_IMAGE_URL);
 
   const claims = getClaimLog(envelope.id);
@@ -352,6 +421,8 @@ export type ClaimResult =
       finished: boolean;
       envelopeId: string;
     }
+  | { status: 'keyword_required'; envelopeId?: string }
+  | { status: 'wrong_keyword'; envelopeId?: string }
   | { status: 'expired'; envelopeId?: string; refundAmount?: Prisma.Decimal }
   | { status: 'ended'; envelopeId?: string }
   | { status: 'not_found' };
@@ -361,6 +432,8 @@ export type CreateEnvelopeParams = {
   totalAmount: Prisma.Decimal | number | string;
   count: number;
   note?: string;
+  kind?: 'normal' | 'keyword';
+  keyword?: string;
   channelId?: string;
   expiresAt?: Date;
 };
@@ -377,6 +450,8 @@ export async function createRedEnvelope(
   params: CreateEnvelopeParams,
   client: PrismaClient = prisma
 ) {
+  const kind = params.kind ?? 'normal';
+  const keyword = params.keyword?.trim();
   const totalAmount = asDecimal(params.totalAmount);
   if (totalAmount.lte(0)) {
     throw new Error('金额必须大于 0。');
@@ -391,10 +466,26 @@ export async function createRedEnvelope(
   if (totalAmount.lt(minTotal)) {
     throw new Error(`总金额不足，每份至少 ¥${MIN_SLICE.toString()}`);
   }
+  if (kind === 'keyword') {
+    if (!keyword) {
+      throw new Error('口令不能为空。');
+    }
+    if (keyword.length > 50) {
+      throw new Error('口令长度不能超过 50 个字符。');
+    }
+    if (/@everyone|@here/.test(keyword) || /<@&\d+>/.test(keyword)) {
+      throw new Error('口令不能包含 @everyone/@here 或角色提及。');
+    }
+  }
 
   const expiresAt =
     params.expiresAt ??
     new Date(Date.now() + DEFAULT_EXPIRE_MS);
+  const displayNote = params.note?.trim().slice(0, MAX_NOTE_LENGTH) || undefined;
+  const storedNote =
+    kind === 'keyword'
+      ? encodeKeywordNote(keyword!, displayNote)
+      : clampNote(displayNote);
 
   return client.$transaction(async (tx) => {
     await ensureMemberExists(tx, params.creatorId);
@@ -467,7 +558,7 @@ export async function createRedEnvelope(
         remainingAmount: totalAmount,
         totalCount: params.count,
         remainingCount: params.count,
-        note: clampNote(params.note),
+        note: storedNote,
         status: RedEnvelopeStatus.ACTIVE,
         expiresAt,
         channelId: params.channelId,
@@ -475,6 +566,8 @@ export async function createRedEnvelope(
         rechargePool: split.fromRecharge,
       },
     });
+
+    rememberKeywordEnvelope({ id: envelope.id, note: storedNote, channelId: params.channelId });
 
     return envelope;
   });
@@ -500,6 +593,8 @@ export async function findEnvelopeByMessage(messageId: string) {
     select: {
       id: true,
       status: true,
+      note: true,
+      channelId: true,
     },
   });
 }
@@ -508,7 +603,8 @@ export async function claimRedEnvelope(
   envelopeId: string,
   claimerId: string,
   displayName?: string,
-  client: PrismaClient = prisma
+  client: PrismaClient = prisma,
+  opts?: { keyword?: string; channelId?: string | null }
 ): Promise<ClaimResult> {
   const getClaimed = (envId: string, userId: string) => {
     const m = claimedByEnvelope.get(envId);
@@ -534,7 +630,21 @@ export async function claimRedEnvelope(
     if (!envelope) return { status: 'not_found' };
 
     if (envelope.status !== RedEnvelopeStatus.ACTIVE || envelope.remainingCount <= 0) {
+      forgetKeywordEnvelope(envelope.id);
       return { status: 'ended', envelopeId: envelope.id };
+    }
+
+    const meta = parseEnvelopeNote(envelope.note);
+    if (meta.kind === 'keyword') {
+      rememberKeywordEnvelope({ id: envelope.id, note: envelope.note, channelId: envelope.channelId });
+      const provided = opts?.keyword?.trim();
+      if (!provided) return { status: 'keyword_required', envelopeId: envelope.id };
+      if (!keywordsMatch(provided, meta.keyword)) {
+        return { status: 'wrong_keyword', envelopeId: envelope.id };
+      }
+      if (envelope.channelId && opts?.channelId && envelope.channelId !== opts.channelId) {
+        return { status: 'wrong_keyword', envelopeId: envelope.id };
+      }
     }
 
     if (envelope.expiresAt.getTime() <= Date.now()) {
@@ -643,6 +753,7 @@ export async function claimRedEnvelope(
       clearExpirationTimer(envelope.id);
       claimedByEnvelope.delete(envelope.id);
       fairSharePlans.delete(envelope.id);
+      forgetKeywordEnvelope(envelope.id);
     }
 
     return {
@@ -745,6 +856,7 @@ export async function expireEnvelope(
     claimedByEnvelope.delete(envelope.id);
     claimLogByEnvelope.delete(envelope.id);
     fairSharePlans.delete(envelope.id);
+    forgetKeywordEnvelope(envelope.id);
 
     return { refundAmount: remainingAmount, status: 'refunded', creatorId: envelope.creatorId };
   });
@@ -804,6 +916,59 @@ export async function refreshRedEnvelopeMessage(client: Client, envelopeId: stri
   }
 }
 
+export async function tryClaimKeywordEnvelopeFromMessage(
+  message: Message,
+  client: PrismaClient = prisma
+): Promise<boolean> {
+  const content = message.content?.trim();
+  if (!content) return false;
+  const match = findKeywordEnvelopeByMessage(content, message.channelId);
+  if (!match) return false;
+
+  const displayName =
+    (message.member?.displayName?.trim() || message.author.username || '').trim() || undefined;
+
+  const result = await claimRedEnvelope(
+    match.id,
+    message.author.id,
+    displayName,
+    client,
+    { keyword: content, channelId: message.channelId }
+  );
+
+  if (result.status === 'claimed') {
+    await refreshRedEnvelopeMessage(message.client as Client, result.envelopeId);
+    const grossText = Number(result.gross.toString()).toFixed(2);
+    const netText = Number(result.amount.toString()).toFixed(2);
+    try {
+      await message.reply(`恭喜你抢到了口令红包 ¥${grossText}，实际到账 ¥${netText}！`);
+    } catch {}
+    return true;
+  }
+
+  if (result.status === 'already_claimed') {
+    try {
+      await message.reply('你已经抢过这个红包啦。');
+    } catch {}
+    if (result.envelopeId) {
+      await refreshRedEnvelopeMessage(message.client as Client, result.envelopeId);
+    }
+    return true;
+  }
+
+  if (result.status === 'expired' || result.status === 'ended') {
+    if (result.envelopeId) {
+      await refreshRedEnvelopeMessage(message.client as Client, result.envelopeId);
+    }
+    try {
+      await message.reply('红包已抢完或过期啦。');
+    } catch {}
+    return true;
+  }
+
+  return false;
+}
+
 function clearExpirationTimer(envelopeId: string) {
   const timer = timers.get(envelopeId);
   if (timer) clearTimeout(timer);
@@ -847,9 +1012,10 @@ export function scheduleRedEnvelopeExpiration(
 export async function recoverRedEnvelopeSchedules(client: Client) {
   const actives = await prisma.redEnvelope.findMany({
     where: { status: RedEnvelopeStatus.ACTIVE },
-    select: { id: true, expiresAt: true },
+    select: { id: true, expiresAt: true, note: true, channelId: true },
   });
   for (const env of actives) {
+    rememberKeywordEnvelope({ id: env.id, note: env.note, channelId: env.channelId });
     scheduleRedEnvelopeExpiration(client, env);
   }
 }

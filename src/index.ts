@@ -17,19 +17,21 @@ import { registerTotalEarnCommand } from './commands/totalEarn.js';
 import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
 import { handleRegisterPeiwanSlash, registerPeiwanCommand } from './commands/registerPeiwanSlash.js';
 import { handleRedEnvelopeSlash, redEnvelopeSlashCommand } from './commands/redEnvelopeSlash.js';
+import { handleKeywordRedEnvelopeSlash, keywordRedEnvelopeSlashCommand } from './commands/keywordRedEnvelopeSlash.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
 import { registerTechTagSync } from './services/techTagService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
-import { registerRedEnvelopeCommand } from './commands/redEnvelope.js';
 import { registerInviteReward } from './services/inviteRewardService.js';
+import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
 import {
   CLAIM_EMOJI_REACTION,
   claimRedEnvelope,
   findEnvelopeByMessage,
   recoverRedEnvelopeSchedules,
   refreshRedEnvelopeMessage,
+  isKeywordEnvelopeNote,
 } from './services/redEnvelopeService.js';
 
 
@@ -57,6 +59,7 @@ const client = new Client({
 
 // message create
 client.on(Events.MessageCreate, messageCreateHandler);
+registerRedEnvelopeMessageHandlers(client, prisma);
 
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   try {
@@ -85,6 +88,9 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 
     const envelope = await findEnvelopeByMessage(message.id);
     if (!envelope) {
+      return;
+    }
+    if (envelope.note && isKeywordEnvelopeNote(envelope.note)) {
       return;
     }
 
@@ -152,6 +158,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleRedEnvelopeSlash(i);
                 return;
             }
+            if (i.commandName === '口令红包') {
+                await handleKeywordRedEnvelopeSlash(i);
+                return;
+            }
         }
 
     // Buttons
@@ -195,12 +205,12 @@ client.once(Events.ClientReady, async () => {
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerTotalEarnCommand(client, prisma);
-  registerRedEnvelopeCommand(client, prisma);
   try {
         if (client.application) {
             await client.application.commands.create(grantCouponCommand);
             await client.application.commands.create(registerPeiwanCommand);
             await client.application.commands.create(redEnvelopeSlashCommand);
+            await client.application.commands.create(keywordRedEnvelopeSlashCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);
