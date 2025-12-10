@@ -124,11 +124,12 @@ export async function handleKeywordRedEnvelopeSlash(
       'pending'
     );
 
-    await sendKeywordAuditMessage((globalThis as any).__CLIENT__ ?? i.client, {
-      envelopeId: envelope.id,
-      creatorId: i.user.id,
-      keyword,
-    });
+  await sendKeywordAuditMessage((globalThis as any).__CLIENT__ ?? i.client, {
+    envelopeId: envelope.id,
+    creatorId: i.user.id,
+    keyword,
+    channelId: channel.id,
+  });
 
     await i.editReply('红包正在审核中~ 请稍等');
   } catch (err: any) {

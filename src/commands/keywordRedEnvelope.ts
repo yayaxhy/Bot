@@ -126,11 +126,12 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
       'pending'
     );
 
-    await sendKeywordAuditMessage(msg.client, {
-      envelopeId: envelope.id,
-      creatorId: msg.author.id,
-      keyword: parsed.keyword,
-    });
+  await sendKeywordAuditMessage(msg.client, {
+    envelopeId: envelope.id,
+    creatorId: msg.author.id,
+    keyword: parsed.keyword,
+    channelId: msg.channel.id,
+  });
   } catch (sendErr) {
     await expireEnvelope(envelope.id, prismaClient);
     throw sendErr;

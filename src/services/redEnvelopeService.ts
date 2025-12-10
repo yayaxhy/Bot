@@ -24,6 +24,7 @@ const DEFAULT_EXPIRE_MS = Math.max(
 );
 const LEDGER_COUNTERPART_ID = 'red-envelope-pool';
 const MIN_TOTAL_AMOUNT = new Prisma.Decimal('10'); // 红包总额至少 10 元
+const KEYWORD_AUDITOR_USER_ID = '1421651539247894549';
 const RED_ENVELOPE_IMAGE_URL =
   'https://cdn.discordapp.com/attachments/1445864521343439019/1445864584853454970/1.gif?ex=6931e5d3&is=69309453&hm=f0192801767f99ec50a829fb4ab65af32e5a3af1489e1ae80f6fba1ce54e190d';
 const RED_ENVELOPE_ATTACHMENT_URL =
@@ -833,7 +834,8 @@ export async function claimRedEnvelope(
 
 export async function expireEnvelope(
   envelopeId: string,
-  client: DbClient = prisma
+  client: DbClient = prisma,
+  force: boolean = false
 ): Promise<{ refundAmount: Prisma.Decimal; status: 'refunded' | 'noop' | 'not_due'; creatorId?: string }> {
   const runner = typeof (client as any).$transaction === 'function'
     ? (client as PrismaClient).$transaction.bind(client as PrismaClient)
@@ -856,7 +858,7 @@ export async function expireEnvelope(
     if (envelope.status !== RedEnvelopeStatus.ACTIVE) {
       return { refundAmount: new Prisma.Decimal(0), status: 'noop', creatorId: envelope.creatorId };
     }
-    if (envelope.expiresAt.getTime() > Date.now()) {
+    if (!force && envelope.expiresAt.getTime() > Date.now()) {
       return { refundAmount: new Prisma.Decimal(0), status: 'not_due', creatorId: envelope.creatorId };
     }
 
@@ -1096,6 +1098,21 @@ export async function recoverRedEnvelopeSchedules(client: Client) {
   }
 }
 
+async function dmKeywordAuditor(
+  client: Client,
+  payload: { envelopeId: string; channelId?: string | null }
+) {
+  if (!KEYWORD_AUDITOR_USER_ID) return;
+  try {
+    const user = await client.users.fetch(KEYWORD_AUDITOR_USER_ID);
+    const jumpLink = payload.channelId ? `https://discord.com/channels/${process.env.INVITE_REWARD_GUILD_ID ?? '@me'}/${payload.channelId}` : '';
+    const suffix = jumpLink ? `，频道：${jumpLink}` : '';
+    await user.send(`有新的口令红包需要审核${suffix}`);
+  } catch (err) {
+    console.error('[keyword-audit] dm auditor failed:', err);
+  }
+}
+
 async function publishApprovedKeywordEnvelope(client: Client, envelopeId: string) {
   const envelope = await prisma.redEnvelope.findUnique({
     where: { id: envelopeId },
@@ -1184,6 +1201,7 @@ export async function sendKeywordAuditMessage(client: Client, payload: {
   envelopeId: string;
   creatorId: string;
   keyword: string;
+  channelId?: string | null;
 }) {
   if (!KEYWORD_AUDIT_CHANNEL_ID) return;
   try {
@@ -1194,6 +1212,7 @@ export async function sendKeywordAuditMessage(client: Client, payload: {
       allowedMentions: { parse: ['users'] },
       components: buildKeywordAuditComponents(payload.envelopeId),
     });
+    await dmKeywordAuditor(client, { envelopeId: payload.envelopeId, channelId: payload.channelId });
   } catch (err) {
     console.error('[keyword-audit] send audit message failed:', err);
   }
@@ -1233,6 +1252,7 @@ export async function handleKeywordAuditInteraction(i: ButtonInteraction) {
     await publishApprovedKeywordEnvelope(i.client as Client, envelopeId);
   } else if (next === 'rejected') {
     await editPendingMessage(i.client as Client, envelopeId, PENDING_REJECTED_TEXT);
+    await expireEnvelope(envelopeId, prisma, true);
   }
 
   return true;
