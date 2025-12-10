@@ -1136,6 +1136,16 @@ async function publishApprovedKeywordEnvelope(client: Client, envelopeId: string
       { messageId: sent.id, channelId: sent.channelId },
       prisma
     );
+    rememberKeywordEnvelope(
+      {
+        id: envelope.id,
+        note: envelope.note,
+        channelId: sent.channelId,
+        pendingMessageId: null,
+        pendingChannelId: null,
+      },
+      'approved'
+    );
     try {
       await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
     } catch (err) {
