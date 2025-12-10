@@ -84,7 +84,7 @@ export async function handleKeywordRedEnvelopeSlash(
     return;
   }
 
-  await i.deferReply({ ephemeral: true });
+  await i.deferReply({ ephemeral: false });
 
   try {
     const envelope = await createRedEnvelope(
@@ -124,14 +124,14 @@ export async function handleKeywordRedEnvelopeSlash(
       'pending'
     );
 
-  await sendKeywordAuditMessage((globalThis as any).__CLIENT__ ?? i.client, {
-    envelopeId: envelope.id,
-    creatorId: i.user.id,
-    keyword,
-    channelId: channel.id,
-  });
+    await sendKeywordAuditMessage((globalThis as any).__CLIENT__ ?? i.client, {
+      envelopeId: envelope.id,
+      creatorId: i.user.id,
+      keyword,
+      channelId: channel.id,
+    });
 
-    await i.editReply('红包正在审核中~ 请稍等');
+    try { await i.deleteReply(); } catch {}
   } catch (err: any) {
     console.error('[keyword-red-envelope slash] create failed:', err);
     const message = err?.message ?? '创建口令红包失败，请稍后再试。';
