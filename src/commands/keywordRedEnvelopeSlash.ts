@@ -7,6 +7,7 @@ import {
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
   sendKeywordAuditMessage,
+  rememberKeywordEnvelope,
 } from '../services/redEnvelopeService.js';
 import prisma from '../db/prisma.js';
 
@@ -113,43 +114,23 @@ export async function handleKeywordRedEnvelopeSlash(
       await i.editReply('当前频道不支持发送红包。');
       return;
     }
-
-    const creatorDisplayName =
-      sanitizeName((i.member as any)?.displayName) ?? sanitizeName(i.user.username);
-    const payload = buildRedEnvelopeMessagePayload({
-      id: envelope.id,
-      creatorId: envelope.creatorId,
-      creatorDisplayName,
-      totalAmount: envelope.totalAmount,
-      totalCount: envelope.totalCount,
-      remainingCount: envelope.remainingCount,
-      status: envelope.status,
-      expiresAt: envelope.expiresAt,
-      note: envelope.note ?? undefined,
-      refundedAmount: envelope.refundedAmount ?? undefined,
-    });
-
-    const sent = await channel.send({
-      ...payload,
-      content: '@here',
-      allowedMentions: { parse: ['everyone'] },
-    });
-    await bindEnvelopeMessage(
-      envelope.id,
-      { messageId: sent.id, channelId: sent.channelId },
-      client
-    );
-
-    try {
-      await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
-    } catch (pingErr) {
-      console.error('[keyword-red-envelope slash] here clear failed:', pingErr);
-    }
+    const pendingMessage = await channel.send('红包正在审核中~ 请稍等');
 
     scheduleRedEnvelopeExpiration((globalThis as any).__CLIENT__, {
       id: envelope.id,
       expiresAt: envelope.expiresAt,
     });
+
+    rememberKeywordEnvelope(
+      {
+        id: envelope.id,
+        note: envelope.note,
+        channelId: channel.id,
+        pendingMessageId: pendingMessage.id,
+        pendingChannelId: channel.id,
+      },
+      'pending'
+    );
 
     await sendKeywordAuditMessage((globalThis as any).__CLIENT__ ?? i.client, {
       envelopeId: envelope.id,
@@ -157,7 +138,7 @@ export async function handleKeywordRedEnvelopeSlash(
       keyword,
     });
 
-    await i.editReply('口令红包已发出，大家快来抢！');
+    await i.editReply('红包正在审核中~ 请稍等');
   } catch (err: any) {
     console.error('[keyword-red-envelope slash] create failed:', err);
     const message = err?.message ?? '创建口令红包失败，请稍后再试。';

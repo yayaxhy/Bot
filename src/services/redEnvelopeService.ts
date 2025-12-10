@@ -47,7 +47,13 @@ const fairSharePlans = new Map<string, Prisma.Decimal[]>(); // deterministic fai
 type KeywordEnvelopeStatus = 'pending' | 'approved' | 'rejected';
 const keywordEnvelopeCache = new Map<
   string,
-  { keyword: string; channelId?: string | null; status: KeywordEnvelopeStatus }
+  {
+    keyword: string;
+    channelId?: string | null;
+    status: KeywordEnvelopeStatus;
+    pendingMessageId?: string | null;
+    pendingChannelId?: string | null;
+  }
 >();
 const KEYWORD_AUDIT_CHANNEL_ID = process.env.KEYWORD_AUDIT_CHANNEL_ID ?? '1448271094892068937';
 
@@ -103,15 +109,20 @@ const rememberKeywordEnvelope = (
     id: string;
     note?: string | null;
     channelId?: string | null;
+    pendingMessageId?: string | null;
+    pendingChannelId?: string | null;
   },
   status: KeywordEnvelopeStatus = 'approved'
 ) => {
   const meta = parseEnvelopeNote(payload.note);
   if (meta.kind === 'keyword' && meta.keyword) {
+    const prev = keywordEnvelopeCache.get(payload.id);
     keywordEnvelopeCache.set(payload.id, {
       keyword: meta.keyword,
-      channelId: payload.channelId,
-      status,
+      channelId: payload.channelId ?? prev?.channelId,
+      status: status ?? prev?.status ?? 'approved',
+      pendingMessageId: payload.pendingMessageId ?? prev?.pendingMessageId,
+      pendingChannelId: payload.pendingChannelId ?? prev?.pendingChannelId ?? payload.channelId,
     });
   }
 };
@@ -138,7 +149,13 @@ export function findKeywordEnvelopeByMessage(content: string, channelId?: string
   for (const [id, meta] of keywordEnvelopeCache.entries()) {
     if (!keywordsMatch(trimmed, meta.keyword)) continue;
     if (meta.channelId && channelId && meta.channelId !== channelId) continue;
-    return { id, keyword: meta.keyword, status: meta.status };
+    return {
+      id,
+      keyword: meta.keyword,
+      status: meta.status,
+      pendingMessageId: meta.pendingMessageId,
+      pendingChannelId: meta.pendingChannelId,
+    };
   }
   return null;
 }

@@ -1,12 +1,10 @@
 import { Client, Message } from 'discord.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
-  bindEnvelopeMessage,
-  buildRedEnvelopeMessagePayload,
   createRedEnvelope,
-  expireEnvelope,
   scheduleRedEnvelopeExpiration,
   sendKeywordAuditMessage,
+  rememberKeywordEnvelope,
 } from '../services/redEnvelopeService.js';
 
 const DEC = (v: number | string | Prisma.Decimal) =>
@@ -66,6 +64,9 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
   const parsed = parseKeywordRedEnvelopeCommand(msg.content);
   if (!parsed) return false;
 
+  try { await msg.delete(); } catch {}
+  const pendingMessage = await msg.channel.send('红包正在审核中~ 请稍等');
+
   if (!msg.guild) {
     await msg.reply('请在服务器频道里发红包哦。');
     return true;
@@ -106,57 +107,29 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
     prismaClient
   );
 
-  const channel: any = msg.channel;
-  if (!channel || typeof channel.send !== 'function') {
-    await expireEnvelope(envelope.id, prismaClient);
-    await msg.reply('当前频道不支持发送红包。');
-    return true;
-  }
-
   try {
-    const creatorDisplayName =
-      sanitizeName(msg.member?.displayName) ?? sanitizeName(msg.author.username);
-    const payload = buildRedEnvelopeMessagePayload({
-      id: envelope.id,
-      creatorId: envelope.creatorId,
-      creatorDisplayName,
-      totalAmount: envelope.totalAmount,
-      totalCount: envelope.totalCount,
-      remainingCount: envelope.remainingCount,
-      status: envelope.status,
-      expiresAt: envelope.expiresAt,
-      note: envelope.note ?? undefined,
-      refundedAmount: envelope.refundedAmount ?? undefined,
-    });
-
-    const sent = await channel.send({
-      ...payload,
-      content: '@here',
-      allowedMentions: { parse: ['everyone'] },
-    });
-    await bindEnvelopeMessage(
-      envelope.id,
-      { messageId: sent.id, channelId: sent.channelId },
-      prismaClient
-    );
-
-    try {
-      await sent.edit({ ...payload, content: '', allowedMentions: { parse: [] } });
-    } catch (pingErr) {
-      console.error('[keyword-red-envelope] here clear failed:', pingErr);
-    }
-
     scheduleRedEnvelopeExpiration(msg.client, {
       id: envelope.id,
       expiresAt: envelope.expiresAt,
     });
 
-      await sendKeywordAuditMessage(msg.client, {
-        envelopeId: envelope.id,
-        creatorId: msg.author.id,
-        keyword: parsed.keyword,
-      });
-   } catch (sendErr) {
+    rememberKeywordEnvelope(
+      {
+        id: envelope.id,
+        note: envelope.note,
+        channelId: msg.channel.id,
+        pendingMessageId: pendingMessage.id,
+        pendingChannelId: msg.channel.id,
+      },
+      'pending'
+    );
+
+    await sendKeywordAuditMessage(msg.client, {
+      envelopeId: envelope.id,
+      creatorId: msg.author.id,
+      keyword: parsed.keyword,
+    });
+  } catch (sendErr) {
     await expireEnvelope(envelope.id, prismaClient);
     throw sendErr;
   }
