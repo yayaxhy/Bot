@@ -54,6 +54,7 @@ const keywordEnvelopeCache = new Map<
     status: KeywordEnvelopeStatus;
     pendingMessageId?: string | null;
     pendingChannelId?: string | null;
+    messageId?: string | null;
   }
 >();
 const KEYWORD_AUDIT_CHANNEL_ID = process.env.KEYWORD_AUDIT_CHANNEL_ID ?? '1448271094892068937';
@@ -114,6 +115,7 @@ export const rememberKeywordEnvelope = (
     channelId?: string | null;
     pendingMessageId?: string | null;
     pendingChannelId?: string | null;
+    messageId?: string | null;
   },
   status: KeywordEnvelopeStatus = 'approved'
 ) => {
@@ -126,6 +128,7 @@ export const rememberKeywordEnvelope = (
       status: status ?? prev?.status ?? 'approved',
       pendingMessageId: payload.pendingMessageId ?? prev?.pendingMessageId,
       pendingChannelId: payload.pendingChannelId ?? prev?.pendingChannelId ?? payload.channelId,
+      messageId: payload.messageId ?? prev?.messageId,
     });
   }
 };
@@ -1090,10 +1093,13 @@ export function scheduleRedEnvelopeExpiration(
 export async function recoverRedEnvelopeSchedules(client: Client) {
   const actives = await prisma.redEnvelope.findMany({
     where: { status: RedEnvelopeStatus.ACTIVE },
-    select: { id: true, expiresAt: true, note: true, channelId: true },
+    select: { id: true, expiresAt: true, note: true, channelId: true, messageId: true },
   });
   for (const env of actives) {
-    rememberKeywordEnvelope({ id: env.id, note: env.note, channelId: env.channelId }, 'approved');
+    rememberKeywordEnvelope(
+      { id: env.id, note: env.note, channelId: env.channelId, messageId: env.messageId },
+      'approved'
+    );
     scheduleRedEnvelopeExpiration(client, env);
   }
 }
@@ -1162,6 +1168,7 @@ async function publishApprovedKeywordEnvelope(client: Client, envelopeId: string
         channelId: sent.channelId,
         pendingMessageId: null,
         pendingChannelId: null,
+        messageId: sent.id,
       },
       'approved'
     );
