@@ -964,9 +964,9 @@ export async function tryClaimKeywordEnvelopeFromMessage(
     await notify('口令红包正在审核，请稍后再试。');
     return true;
   }
-  if (match.status === 'rejected') {
-    await notify('口令红包未通过审核。');
-    return true;
+  if (match.status === 'rejected') return true;
+  if (match.status === 'approved') {
+    // proceed silently
   }
 
   const displayName =
@@ -989,7 +989,6 @@ export async function tryClaimKeywordEnvelopeFromMessage(
   }
 
   if (result.status === 'already_claimed') {
-    await notify('你已经抢过这个红包啦。');
     if (result.envelopeId) {
       await refreshRedEnvelopeMessage(message.client as Client, result.envelopeId);
     }
