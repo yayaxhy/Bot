@@ -920,6 +920,16 @@ export async function tryClaimKeywordEnvelopeFromMessage(
   message: Message,
   client: PrismaClient = prisma
 ): Promise<boolean> {
+  const notify = async (text: string) => {
+    try {
+      await message.author.send(text);
+      return;
+    } catch {}
+    try {
+      await message.reply(text);
+    } catch {}
+  };
+
   const content = message.content?.trim();
   if (!content) return false;
   const match = findKeywordEnvelopeByMessage(content, message.channelId);
@@ -940,16 +950,12 @@ export async function tryClaimKeywordEnvelopeFromMessage(
     await refreshRedEnvelopeMessage(message.client as Client, result.envelopeId);
     const grossText = Number(result.gross.toString()).toFixed(2);
     const netText = Number(result.amount.toString()).toFixed(2);
-    try {
-      await message.reply(`恭喜你抢到了口令红包 ¥${grossText}，实际到账 ¥${netText}！`);
-    } catch {}
+    await notify(`恭喜你抢到了口令红包 ¥${grossText}，实际到账 ¥${netText}！`);
     return true;
   }
 
   if (result.status === 'already_claimed') {
-    try {
-      await message.reply('你已经抢过这个红包啦。');
-    } catch {}
+    await notify('你已经抢过这个红包啦。');
     if (result.envelopeId) {
       await refreshRedEnvelopeMessage(message.client as Client, result.envelopeId);
     }
@@ -960,9 +966,7 @@ export async function tryClaimKeywordEnvelopeFromMessage(
     if (result.envelopeId) {
       await refreshRedEnvelopeMessage(message.client as Client, result.envelopeId);
     }
-    try {
-      await message.reply('红包已抢完或过期啦。');
-    } catch {}
+    await notify('红包已抢完或过期啦。');
     return true;
   }
 
