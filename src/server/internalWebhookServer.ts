@@ -159,10 +159,16 @@ async function consumeVoucher(
 async function notifyChannel(message: string) {
   try {
     const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
-    if (!client || !RENAME_NOTIFY_CHANNEL_ID) return;
+    if (!client || !RENAME_NOTIFY_CHANNEL_ID) {
+      console.warn('[internal-api] notifyChannel skipped (client missing or channel id missing)');
+      return;
+    }
     const channel = await client.channels.fetch(RENAME_NOTIFY_CHANNEL_ID).catch(() => null);
     if (channel && channel.isTextBased()) {
       await (channel as any).send({ content: message, allowedMentions: { parse: ['users'] } });
+      console.log('[internal-api] notifyChannel sent', { channelId: RENAME_NOTIFY_CHANNEL_ID });
+    } else {
+      console.warn('[internal-api] notifyChannel failed to fetch text channel', { channelId: RENAME_NOTIFY_CHANNEL_ID });
     }
   } catch (err) {
     console.error('[internal-api] notify channel failed:', err);
