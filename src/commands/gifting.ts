@@ -315,8 +315,7 @@ export async function performGift(
             id: lotteryVoucherId,
             userId: giverId,
             status: LotteryStatus.UNUSED,
-            expiresAt: { gt: now },
-            prize: { name: voucherConfig.prizeName },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
           },
           data: {
             status: LotteryStatus.USED,
