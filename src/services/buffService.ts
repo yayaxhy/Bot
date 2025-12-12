@@ -12,7 +12,7 @@ const FLOW_DURATION_MS = 30 * DAY_MS;
 export async function applyCommissionBuff(
   client: TxLike,
   userId: string
-): Promise<{ expiresAt: Date; boosted: boolean }> {
+): Promise<{ expiresAt: Date; boosted: boolean; commissionRate: Prisma.Decimal | null }> {
   const now = new Date();
   const active = await (client as any).commissionBuff.findFirst({
     where: { userId, expiresAt: { gt: now } },
@@ -27,7 +27,7 @@ export async function applyCommissionBuff(
       where: { userId },
       data: { expiresAt: newExpires, boost: COMMISSION_BOOST },
     });
-    return { expiresAt: newExpires, boosted: false };
+    return { expiresAt: newExpires, boosted: false, commissionRate: null };
   }
 
   // 没有有效 buff：增加 1% 分成并记录有效期
@@ -54,7 +54,7 @@ export async function applyCommissionBuff(
     update: { boost: COMMISSION_BOOST, expiresAt },
   });
 
-  return { expiresAt, boosted: true };
+  return { expiresAt, boosted: true, commissionRate: newRate };
 }
 
 export async function getActiveCommissionBoost(
