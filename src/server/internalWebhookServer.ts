@@ -354,7 +354,11 @@ async function handleCommissionBoost(req: IncomingMessage, res: ServerResponse) 
       );
       if (!voucher) return null;
       const boost = await applyCommissionBuff(tx, userId);
-      return { voucherId: voucher.voucherId, expiresAt: boost.expiresAt };
+      return {
+        voucherId: voucher.voucherId,
+        expiresAt: boost.expiresAt,
+        commissionRate: boost.commissionRate?.toString(),
+      };
     });
 
     if (!result) {

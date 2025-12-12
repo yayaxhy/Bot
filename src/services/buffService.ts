@@ -19,15 +19,37 @@ export async function applyCommissionBuff(
     select: { expiresAt: true, boost: true },
   });
 
-  // 如果已有未过期 buff，仅延长有效期，不再叠加比例
+  // 如果已有未过期 buff，仅延长有效期，并确保 peiwan/member 费率同步到当前值（不再叠加比例）
   if (active?.expiresAt && active.expiresAt > now) {
     const base = active.expiresAt;
     const newExpires = new Date(base.getTime() + COMMISSION_DURATION_MS);
+    const memberRateRow = await (client as any).member.findUnique({
+      where: { discordUserId: userId },
+      select: { commissionRate: true },
+    });
+    const peiwanRateRow = await (client as any).pEIWAN.findUnique({
+      where: { discordUserId: userId },
+      select: { commissionRate: true },
+    });
+    let targetRate = new Prisma.Decimal(
+      memberRateRow?.commissionRate ?? peiwanRateRow?.commissionRate ?? 0
+    );
+    if (targetRate.gt(1)) targetRate = new Prisma.Decimal(1);
+
+    await (client as any).member.updateMany({
+      where: { discordUserId: userId },
+      data: { commissionRate: targetRate },
+    });
+    await (client as any).pEIWAN.updateMany({
+      where: { discordUserId: userId },
+      data: { commissionRate: targetRate },
+    });
+
     await (client as any).commissionBuff.update({
       where: { userId },
       data: { expiresAt: newExpires, boost: COMMISSION_BOOST },
     });
-    return { expiresAt: newExpires, boosted: false, commissionRate: null };
+    return { expiresAt: newExpires, boosted: false, commissionRate: targetRate };
   }
 
   // 没有有效 buff：增加 1% 分成并记录有效期
