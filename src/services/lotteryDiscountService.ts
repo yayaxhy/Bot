@@ -1,31 +1,15 @@
-import { CouponType, LotteryStatus, OrderStatus, Prisma } from '@prisma/client';
+import { LotteryStatus, OrderStatus, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
+import type { ApplyDiscountResult } from './discountService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
 
-export type DiscountKind = 'coupon' | 'lottery';
-
-export type ApplyDiscountResult =
-  | {
-      status: 'applied';
-      kind: DiscountKind;
-      discountAmount: Prisma.Decimal;
-      couponId?: string;
-      lotteryId?: string;
-    }
-  | { status: 'order_not_found' }
-  | { status: 'not_order_host' }
-  | { status: 'order_not_ended' }
-  | { status: 'already_used' }
-  | { status: 'no_coupon' }
-  | { status: 'no_lottery' }
-  | { status: 'no_fee' }
-  | { status: 'insufficient_data' };
-
-const COUPON_RATE = new Prisma.Decimal(0.1);
-const COUPON_CAP = new Prisma.Decimal(20);
-const MAX_BILLABLE_MINUTES = 120;
+const DISCOUNT_PRIZE_CONFIG: Record<string, { rate: Prisma.Decimal; cap: Prisma.Decimal }> = {
+  [PRIZE_NAMES.DISCOUNT_80]: { rate: new Prisma.Decimal(0.2), cap: new Prisma.Decimal(100) },
+  [PRIZE_NAMES.DISCOUNT_70]: { rate: new Prisma.Decimal(0.3), cap: new Prisma.Decimal(150) },
+  [PRIZE_NAMES.DISCOUNT_90_LOTTERY]: { rate: new Prisma.Decimal(0.1), cap: new Prisma.Decimal(50) },
+};
 const FREE_MINUTES = 5;
 
 function computeDiscountAmount(params: {
@@ -37,8 +21,7 @@ function computeDiscountAmount(params: {
   const { unitPrice, totalMinutes, rate, cap } = params;
   if (totalMinutes <= FREE_MINUTES) return new Prisma.Decimal(0);
 
-  const cappedMinutes = Math.min(totalMinutes, MAX_BILLABLE_MINUTES);
-  const billableMinutes = cappedMinutes <= FREE_MINUTES ? 0 : cappedMinutes - FREE_MINUTES;
+  const billableMinutes = totalMinutes - FREE_MINUTES;
   if (billableMinutes <= 0) return new Prisma.Decimal(0);
 
   const perMinute = unitPrice.div(60);
@@ -50,9 +33,9 @@ function computeDiscountAmount(params: {
 }
 
 /**
- * Apply a discount for an ended order. Returns status codes for caller UI/API.
+ * Apply a lottery 8 折券 for an ended order. Separated from 9 折券逻辑。
  */
-export async function applyCouponDiscountForOrder(params: {
+export async function applyLotteryDiscountForOrder(params: {
   orderId: string;
   userId: string; // host id
   now?: Date;
@@ -86,7 +69,7 @@ export async function applyCouponDiscountForOrder(params: {
         userId,
         status: LotteryStatus.USED,
         requestId: orderId,
-        prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+        prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
       },
       select: { id: true },
     });
@@ -94,24 +77,32 @@ export async function applyCouponDiscountForOrder(params: {
       return { status: 'already_used' };
     }
 
-    // expire outdated vouchers
-    await tx.coupon.updateMany({
-      where: { discordId: userId, status: 'ACTIVE', expiresAt: { lte: now } },
-      data: { status: 'EXPIRED' },
-    });
-    let couponId: string | null = null;
-
-    const available = await tx.coupon.findFirst({
+    // expire outdated 8 折券
+    await tx.lotteryDraw.updateMany({
       where: {
-        discordId: userId,
-        type: CouponType.DISCOUNT_90,
-        status: 'ACTIVE',
-        expiresAt: { gt: now },
+        userId,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { lte: now },
+        prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
       },
-      orderBy: { issuedAt: 'asc' },
+      data: { status: LotteryStatus.EXPIRED },
     });
-    if (!available) return { status: 'no_coupon' };
-    couponId = available.id;
+
+    const voucher = await tx.lotteryDraw.findFirst({
+      where: {
+        userId,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { gt: now },
+        prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
+      },
+      select: { id: true, prize: { select: { name: true } } },
+      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+    });
+    if (!voucher) return { status: 'no_lottery' };
+
+    const prizeName = voucher.prize?.name ?? '';
+    const config = DISCOUNT_PRIZE_CONFIG[prizeName];
+    if (!config) return { status: 'no_lottery' };
 
     if (!order.unitPrice || order.totalMinutes == null) {
       return { status: 'insufficient_data' };
@@ -121,8 +112,8 @@ export async function applyCouponDiscountForOrder(params: {
     const discountAmount = computeDiscountAmount({
       unitPrice,
       totalMinutes: order.totalMinutes,
-      rate: COUPON_RATE,
-      cap: COUPON_CAP,
+      rate: config.rate,
+      cap: config.cap,
     });
     if (discountAmount.lte(0)) return { status: 'no_fee' };
 
@@ -134,13 +125,12 @@ export async function applyCouponDiscountForOrder(params: {
     const balanceBefore = new Prisma.Decimal(hostAccount?.totalBalance ?? 0);
     const balanceAfter = balanceBefore.add(discountAmount);
 
-    await tx.coupon.update({
-      where: { id: couponId },
+    await tx.lotteryDraw.update({
+      where: { id: voucher.id },
       data: {
-        consumedAt: now,
-        orderId: order.id,
-        discountAmount,
-        status: 'USED',
+        status: LotteryStatus.USED,
+        consumeAt: now,
+        requestId: order.id,
       },
     });
 
@@ -164,9 +154,9 @@ export async function applyCouponDiscountForOrder(params: {
 
     return {
       status: 'applied',
-      kind: 'coupon',
+      kind: 'lottery',
       discountAmount,
-      couponId: couponId ?? undefined,
+      lotteryId: voucher.id,
     };
   });
 }

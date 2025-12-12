@@ -9,6 +9,7 @@ import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
+import { getActiveCommissionBoost, consumeFlowBuff } from '../services/buffService.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -17,6 +18,19 @@ const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 const hasSend = (channel: unknown): channel is { send: Function } =>
   !!channel && typeof (channel as any).send === 'function';
 const CAKE_GIFT_NAME = '小蛋糕';
+const VOUCHER_GIFT_CONFIGS: {
+  giftName: string;
+  prizeName: string;
+  payRate: number; // fraction to be paid per item when voucher used (0 =免单；0.75=75折)
+}[] = [
+  { giftName: '小蛋糕', prizeName: PRIZE_NAMES.CAKE_VOUCHER, payRate: 0 },
+  { giftName: '棒棒糖', prizeName: PRIZE_NAMES.LOLLIPOP_VOUCHER, payRate: 0 },
+  { giftName: '香水', prizeName: PRIZE_NAMES.PERFUME_VOUCHER, payRate: 0 },
+  { giftName: '旋转木马', prizeName: PRIZE_NAMES.CAROUSEL_VOUCHER, payRate: 0 },
+  { giftName: '南瓜车', prizeName: PRIZE_NAMES.PUMPKIN_CAR_VOUCHER, payRate: 0 },
+  { giftName: '留声机', prizeName: PRIZE_NAMES.PHONOGRAPH_VOUCHER, payRate: 0 },
+  { giftName: '一日冠', prizeName: PRIZE_NAMES.CROWN_75_VOUCHER, payRate: 0.75 },
+];
 const REF_RATE = new Prisma.Decimal(0.01);
 
 /** Parse: "!打赏 3/liwu @UserB @UserC" */
@@ -269,7 +283,9 @@ export async function performGift(
     if (!giverAccount) throw new Error('付款方不存在。');
     if (!receiver) throw new Error('收款方不存在。');
 
-    const receiverRate = DEC(receiver.commissionRate ?? 0);
+    const commissionBoost = await getActiveCommissionBoost(tx, receiverId);
+    let receiverRate = DEC(receiver.commissionRate ?? 0).add(commissionBoost);
+    if (receiverRate.gt(1)) receiverRate = DEC(1);
     const feeRate = DEC(1).sub(receiverRate);
     const feeAmount = gross.mul(feeRate);
     const netAmount = gross.sub(feeAmount);
@@ -281,12 +297,20 @@ export async function performGift(
       select: { PEIWANID: true, totalEarn: true },
     });
 
-    // 小蛋糕代金券：按最早优先，1 券抵 1 个小蛋糕
-    const isCakeGift = normalizedGiftName === CAKE_GIFT_NAME;
+    // 礼物类代金券：按最早优先，每券对应 giftName，一日冠支持 75 折（payRate=0.75）
+    const voucherConfig = VOUCHER_GIFT_CONFIGS.find(
+      (cfg) => cfg.giftName === normalizedGiftName
+    );
     let voucherCount = 0;
-    if (isCakeGift) {
+    let voucherValue = DEC(0);
+    if (voucherConfig) {
       await tx.lotteryDraw.updateMany({
-        where: { userId: giverId, status: LotteryStatus.UNUSED, expiresAt: { lte: now } },
+        where: {
+          userId: giverId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { lte: now },
+          prize: { name: voucherConfig.prizeName },
+        },
         data: { status: LotteryStatus.EXPIRED },
       });
       const vouchers = await tx.lotteryDraw.findMany({
@@ -294,7 +318,7 @@ export async function performGift(
           userId: giverId,
           status: LotteryStatus.UNUSED,
           expiresAt: { gt: now },
-          prize: { name: PRIZE_NAMES.CAKE_VOUCHER },
+          prize: { name: voucherConfig.prizeName },
         },
         select: { id: true },
         orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
@@ -307,10 +331,12 @@ export async function performGift(
           where: { id: { in: ids } },
           data: { status: LotteryStatus.USED, consumeAt: now },
         });
+        const payRate = new Prisma.Decimal(voucherConfig.payRate);
+        const discountRate = new Prisma.Decimal(1).sub(payRate);
+        const discountPerGift = unitPrice.mul(discountRate);
+        voucherValue = discountPerGift.mul(voucherCount);
       }
     }
-
-    const voucherValue = unitPrice.mul(voucherCount);
     const payableRaw = gross.sub(voucherValue);
     const payable = payableRaw.lt(0) ? DEC(0) : payableRaw;
 
@@ -363,6 +389,7 @@ export async function performGift(
     const receiverIncomeBefore = new Prisma.Decimal(receiver.income ?? 0);
     const receiverRechargeBefore = new Prisma.Decimal(receiver.recharge ?? 0);
     const receiverBalanceBefore = new Prisma.Decimal(receiver.totalBalance ?? 0);
+    let extraFlow = DEC(0);
 
     await tx.member.update({
       where: { discordUserId: receiverId },
@@ -377,11 +404,15 @@ export async function performGift(
     const receiverIncomeAfter = receiverIncomeBefore.add(netAmount);
 
     if (receiverPeiwan) {
+      const flowBonus = await consumeFlowBuff(tx, receiverId, gross);
+      extraFlow = flowBonus.extra;
+      const totalEarnIncrement = gross.add(extraFlow);
+
       await tx.pEIWAN.update({
         where: { discordUserId: receiverId },
         data: {
           balance: receiverBalanceAfter,
-          totalEarn: new Prisma.Decimal(receiverPeiwan.totalEarn ?? 0).add(gross),
+          totalEarn: new Prisma.Decimal(receiverPeiwan.totalEarn ?? 0).add(totalEarnIncrement),
         },
       });
     }

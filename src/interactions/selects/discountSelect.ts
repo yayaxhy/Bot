@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { StringSelectMenuInteraction } from 'discord.js';
-import { applyDiscountForOrder, DiscountKind } from '../../services/discountService.js';
+import { applyCouponDiscountForOrder, type DiscountKind } from '../../services/discountService.js';
+import { applyLotteryDiscountForOrder } from '../../services/lotteryDiscountService.js';
 
 export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   if (!i.customId.startsWith('discount_box')) return;
@@ -23,11 +24,16 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   }
 
   await i.deferUpdate();
-  const result = await applyDiscountForOrder({
-    orderId,
-    userId: i.user.id,
-    kind,
-  });
+  const result =
+    kind === 'coupon'
+      ? await applyCouponDiscountForOrder({
+          orderId,
+          userId: i.user.id,
+        })
+      : await applyLotteryDiscountForOrder({
+          orderId,
+          userId: i.user.id,
+        });
 
   const reply = (content: string) =>
     i.followUp({

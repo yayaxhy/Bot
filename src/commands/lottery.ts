@@ -3,7 +3,7 @@ import { LotteryPool } from '@prisma/client';
 import { DRAW_COST, LotteryError, POOL_LABEL, performLotteryDraw } from '../services/lotteryService.js';
 
 const LOTTERY_CMD_PATTERN = /^!抽奖$/;
-const LOTTERY_REVEAL_DELAY_MS = 4500; // 动画结束后再揭晓，毫秒
+const LOTTERY_REVEAL_DELAY_MS = 3000; // 动画结束后再揭晓，毫秒
 const LOTTERY_ANIMATIONS: Record<LotteryPool, string | undefined> = {
   NORMAL:
     process.env.LOTTERY_ANIM_NORMAL
@@ -80,7 +80,7 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
   if (prizeImage) revealEmbed.setImage(prizeImage);
 
   try {
-    await sent.edit({ embeds: [revealEmbed] });
+    await sent.edit({ content: '抽奖结束！', embeds: [revealEmbed] });
   } catch (err) {
     console.error('[lottery] reveal edit failed:', err);
   }

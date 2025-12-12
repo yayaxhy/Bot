@@ -379,6 +379,15 @@ model Order {
   @@index([hostId, status])
 }
 
+model PeiwanDeletion {
+  peiwanId      Int      @id
+  discordUserId String
+  deletedBy     String?
+  deletedAt     DateTime @default(now())
+
+  @@index([discordUserId])
+}
+
 model WorkerLock {
   workerId  String   @unique
   orderId   String   @unique
@@ -437,6 +446,26 @@ model LotteryPrize {
   active       Boolean     @default(true)
 
   draws LotteryDraw[]
+}
+
+model CommissionBuff {
+  userId    String   @id @map("user_id")
+  boost     Decimal  @db.Decimal(10, 4)
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("commission_buff")
+}
+
+model FlowBuff {
+  userId         String   @id @map("user_id")
+  remainingExtra Decimal  @db.Decimal(19, 4) @map("remaining_extra")
+  expiresAt      DateTime @map("expires_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("flow_buff")
 }
 
 model LotteryDraw {
