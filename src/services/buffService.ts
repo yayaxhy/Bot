@@ -12,25 +12,49 @@ const FLOW_DURATION_MS = 30 * DAY_MS;
 export async function applyCommissionBuff(
   client: TxLike,
   userId: string
-): Promise<{ expiresAt: Date }> {
-  const rows = (await client.$queryRaw<
-    { expires_at: Date | string | null }[]
-  >`SELECT expires_at FROM commission_buff WHERE user_id = ${userId} LIMIT 1`) ?? [];
+): Promise<{ expiresAt: Date; boosted: boolean }> {
   const now = new Date();
-  const currentExpires = rows[0]?.expires_at ? new Date(rows[0].expires_at) : null;
-  const base = currentExpires && currentExpires > now ? currentExpires : now;
-  const newExpires = new Date(base.getTime() + COMMISSION_DURATION_MS);
+  const active = await (client as any).commissionBuff.findFirst({
+    where: { userId, expiresAt: { gt: now } },
+    select: { expiresAt: true, boost: true },
+  });
 
-  await client.$executeRaw`
-    INSERT INTO commission_buff (user_id, boost, expires_at, created_at, updated_at)
-    VALUES (${userId}, ${COMMISSION_BOOST}, ${newExpires}, now(), now())
-    ON CONFLICT (user_id) DO UPDATE
-      SET expires_at = ${newExpires},
-          boost = ${COMMISSION_BOOST},
-          updated_at = now()
-  `;
+  // 如果已有未过期 buff，仅延长有效期，不再叠加比例
+  if (active?.expiresAt && active.expiresAt > now) {
+    const base = active.expiresAt;
+    const newExpires = new Date(base.getTime() + COMMISSION_DURATION_MS);
+    await (client as any).commissionBuff.update({
+      where: { userId },
+      data: { expiresAt: newExpires, boost: COMMISSION_BOOST },
+    });
+    return { expiresAt: newExpires, boosted: false };
+  }
 
-  return { expiresAt: newExpires };
+  // 没有有效 buff：增加 1% 分成并记录有效期
+  const member = await (client as any).member.findUnique({
+    where: { discordUserId: userId },
+    select: { commissionRate: true },
+  });
+  let newRate = new Prisma.Decimal(member?.commissionRate ?? 0).add(COMMISSION_BOOST);
+  if (newRate.gt(1)) newRate = new Prisma.Decimal(1);
+
+  await (client as any).member.update({
+    where: { discordUserId: userId },
+    data: { commissionRate: newRate },
+  });
+  await (client as any).pEIWAN.updateMany({
+    where: { discordUserId: userId },
+    data: { commissionRate: newRate },
+  });
+
+  const expiresAt = new Date(now.getTime() + COMMISSION_DURATION_MS);
+  await (client as any).commissionBuff.upsert({
+    where: { userId },
+    create: { userId, boost: COMMISSION_BOOST, expiresAt },
+    update: { boost: COMMISSION_BOOST, expiresAt },
+  });
+
+  return { expiresAt, boosted: true };
 }
 
 export async function getActiveCommissionBoost(
