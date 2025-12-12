@@ -235,6 +235,8 @@ export async function performGift(
     giftRecord?: GiftRecord;
     giverUsername?: string;
     receiverUsername?: string;
+    lotteryVoucherId?: string;
+    voucherRequestId?: string;
   }
 ): Promise<GiftTransactionResult> {
   const {
@@ -246,6 +248,8 @@ export async function performGift(
     giftRecord,
     giverUsername,
     receiverUsername,
+    lotteryVoucherId,
+    voucherRequestId,
   } = params;
 
   if (giverId === receiverId) throw new Error('不能给自己打赏。');
@@ -304,37 +308,63 @@ export async function performGift(
     let voucherCount = 0;
     let voucherValue = DEC(0);
     if (voucherConfig) {
-      await tx.lotteryDraw.updateMany({
-        where: {
-          userId: giverId,
-          status: LotteryStatus.UNUSED,
-          expiresAt: { lte: now },
-          prize: { name: voucherConfig.prizeName },
-        },
-        data: { status: LotteryStatus.EXPIRED },
-      });
-      const vouchers = await tx.lotteryDraw.findMany({
-        where: {
-          userId: giverId,
-          status: LotteryStatus.UNUSED,
-          expiresAt: { gt: now },
-          prize: { name: voucherConfig.prizeName },
-        },
-        select: { id: true },
-        orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-        take: quantity,
-      });
-      voucherCount = vouchers.length;
-      if (voucherCount > 0) {
-        const ids = vouchers.map((v) => v.id);
-        await tx.lotteryDraw.updateMany({
-          where: { id: { in: ids } },
-          data: { status: LotteryStatus.USED, consumeAt: now },
+      // 如果指定了特定券（网站触发），只消耗该券
+      if (lotteryVoucherId) {
+        const updated = await tx.lotteryDraw.updateMany({
+          where: {
+            id: lotteryVoucherId,
+            userId: giverId,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { gt: now },
+            prize: { name: voucherConfig.prizeName },
+          },
+          data: {
+            status: LotteryStatus.USED,
+            consumeAt: now,
+            requestId: voucherRequestId ?? undefined,
+          },
         });
+        if (updated.count === 0) {
+          throw new Error('礼物券不可用或已过期。');
+        }
+        voucherCount = 1;
         const payRate = new Prisma.Decimal(voucherConfig.payRate);
         const discountRate = new Prisma.Decimal(1).sub(payRate);
-        const discountPerGift = unitPrice.mul(discountRate);
-        voucherValue = discountPerGift.mul(voucherCount);
+        voucherValue = unitPrice.mul(discountRate);
+      } else {
+        // 旧逻辑：按数量取最早券
+        await tx.lotteryDraw.updateMany({
+          where: {
+            userId: giverId,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { lte: now },
+            prize: { name: voucherConfig.prizeName },
+          },
+          data: { status: LotteryStatus.EXPIRED },
+        });
+        const vouchers = await tx.lotteryDraw.findMany({
+          where: {
+            userId: giverId,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { gt: now },
+            prize: { name: voucherConfig.prizeName },
+          },
+          select: { id: true },
+          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+          take: quantity,
+        });
+        voucherCount = vouchers.length;
+        if (voucherCount > 0) {
+          const ids = vouchers.map((v) => v.id);
+          await tx.lotteryDraw.updateMany({
+            where: { id: { in: ids } },
+            data: { status: LotteryStatus.USED, consumeAt: now },
+          });
+          const payRate = new Prisma.Decimal(voucherConfig.payRate);
+          const discountRate = new Prisma.Decimal(1).sub(payRate);
+          const discountPerGift = unitPrice.mul(discountRate);
+          voucherValue = discountPerGift.mul(voucherCount);
+        }
       }
     }
     const payableRaw = gross.sub(voucherValue);

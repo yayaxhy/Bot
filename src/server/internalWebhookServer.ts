@@ -238,7 +238,7 @@ async function handleGift(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  const { giverId, receiverId, giftName, quantity, anonymous } = payload ?? {};
+  const { giverId, receiverId, giftName, quantity, anonymous, lotteryId, requestId } = payload ?? {};
   if (!giverId || !receiverId || !giftName || !quantity) {
     sendJson(res, 400, { ok: false, error: 'missing_fields' });
     return;
@@ -257,6 +257,8 @@ async function handleGift(req: IncomingMessage, res: ServerResponse) {
       giftName,
       quantity: Number(quantity),
       anonymous: !!anonymous,
+      lotteryVoucherId: lotteryId,
+      voucherRequestId: requestId,
     });
     sendJson(res, 200, { ok: true, result });
   } catch (err: any) {
