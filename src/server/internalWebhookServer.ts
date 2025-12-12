@@ -286,6 +286,12 @@ async function handleCustomVoucherUse(
   notifyTextBuilder: (userId: string) => string,
   notifyUserId?: string
 ) {
+  console.log('[internal-api] custom voucher request', {
+    path: req.url,
+    prizeName,
+    ip: req.socket.remoteAddress,
+  });
+
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
@@ -301,6 +307,7 @@ async function handleCustomVoucherUse(
     });
 
     if (!result) {
+      console.warn('[internal-api] custom voucher not found or expired', { prizeName, userId });
       sendJson(res, 404, { ok: false, error: 'no_voucher' });
       return;
     }
@@ -317,6 +324,7 @@ async function handleCustomVoucherUse(
         console.error('[internal-api] custom voucher dm failed', err);
       }
     }
+    console.log('[internal-api] custom voucher consumed', { prizeName, userId, voucherId: result.voucherId });
     sendJson(res, 200, { ok: true, voucherId: result.voucherId });
   } catch (err) {
     console.error('[internal-api] custom voucher use failed', err);
