@@ -277,7 +277,8 @@ async function handleCustomVoucherUse(
   res: ServerResponse,
   prizeName: string,
   label: string,
-  notifyTextBuilder: (userId: string) => string
+  notifyTextBuilder: (userId: string) => string,
+  notifyUserId?: string
 ) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
@@ -299,6 +300,17 @@ async function handleCustomVoucherUse(
     }
 
     await notifyChannel(notifyTextBuilder(userId));
+    if (notifyUserId) {
+      try {
+        const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+        if (client) {
+          const u = await client.users.fetch(notifyUserId).catch(() => null);
+          if (u) await u.send({ content: notifyTextBuilder(userId) });
+        }
+      } catch (err) {
+        console.error('[internal-api] custom voucher dm failed', err);
+      }
+    }
     sendJson(res, 200, { ok: true, voucherId: result.voucherId });
   } catch (err) {
     console.error('[internal-api] custom voucher use failed', err);
@@ -557,7 +569,8 @@ export function startInternalWebhookServer() {
         res,
         PRIZE_NAMES.CUSTOM_GIFT_VOUCHER,
         '自定义礼物券',
-        (userId) => `<@${ADMIN_NOTIFY_USER_ID}>, 用户 <@${userId}> 使用了自定义礼物券`
+        (userId) => `<@${ADMIN_NOTIFY_USER_ID}>, 用户 <@${userId}> 使用了自定义礼物券`,
+        ADMIN_NOTIFY_USER_ID
       );
       return;
     }
@@ -567,7 +580,8 @@ export function startInternalWebhookServer() {
         res,
         PRIZE_NAMES.CUSTOM_TAG_VOUCHER,
         '自定义tag券',
-        (userId) => `<@${ADMIN_NOTIFY_USER_ID}>, 用户 <@${userId}> 使用了自定义tag券`
+        (userId) => `<@${ADMIN_NOTIFY_USER_ID}>, 用户 <@${userId}> 使用了自定义tag券`,
+        ADMIN_NOTIFY_USER_ID
       );
       return;
     }
