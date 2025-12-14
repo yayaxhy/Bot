@@ -20,7 +20,7 @@ const GRANT_ITEMS: Record<string, GrantItem> = {
   DISCOUNT_90: { kind: 'coupon', label: '9折券', couponType: CouponType.DISCOUNT_90 },
   LOTTERY_DISCOUNT_80: { kind: 'lottery', label: '8折券', prizeName: PRIZE_NAMES.DISCOUNT_80 },
   LOTTERY_DISCOUNT_70: { kind: 'lottery', label: '7折券', prizeName: PRIZE_NAMES.DISCOUNT_70 },
-  LOTTERY_DISCOUNT_90: { kind: 'lottery', label: '抽奖9折券', prizeName: PRIZE_NAMES.DISCOUNT_90_LOTTERY },
+  LOTTERY_DISCOUNT_90: { kind: 'lottery', label: '特殊九折券', prizeName: PRIZE_NAMES.DISCOUNT_90_LOTTERY },
   LOLLIPOP: { kind: 'lottery', label: '棒棒糖代金券', prizeName: PRIZE_NAMES.LOLLIPOP_VOUCHER },
   PERFUME: { kind: 'lottery', label: '香水代金券', prizeName: PRIZE_NAMES.PERFUME_VOUCHER },
   CAROUSEL: { kind: 'lottery', label: '旋转木马代金券', prizeName: PRIZE_NAMES.CAROUSEL_VOUCHER },
