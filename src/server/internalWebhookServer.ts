@@ -536,7 +536,7 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
 
   const now = new Date();
 
-  const used = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     await tx.lotteryDraw.updateMany({
       where: {
         userId,
@@ -547,42 +547,42 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
       data: { status: LotteryStatus.EXPIRED },
     });
 
-    const card = voucherId
-      ? await tx.lotteryDraw.findFirst({
-          where: {
-            id: voucherId,
-            userId,
-            status: LotteryStatus.UNUSED,
-            expiresAt: { gt: now },
-            prize: { name: { in: RENAME_CARD_NAMES } },
-          },
-          select: { id: true },
-        })
-      : await tx.lotteryDraw.findFirst({
-          where: {
-            userId,
-            status: LotteryStatus.UNUSED,
-            expiresAt: { gt: now },
-            prize: { name: { in: RENAME_CARD_NAMES } },
-          },
-          select: { id: true },
-          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-        });
-    if (!card) return false;
+      const card = voucherId
+        ? await tx.lotteryDraw.findFirst({
+            where: {
+              id: voucherId,
+              userId,
+              status: LotteryStatus.UNUSED,
+              expiresAt: { gt: now },
+              prize: { name: { in: RENAME_CARD_NAMES } },
+            },
+            select: { id: true, prize: { select: { name: true } } },
+          })
+        : await tx.lotteryDraw.findFirst({
+            where: {
+              userId,
+              status: LotteryStatus.UNUSED,
+              expiresAt: { gt: now },
+              prize: { name: { in: RENAME_CARD_NAMES } },
+            },
+            select: { id: true, prize: { select: { name: true } } },
+            orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+          });
+    if (!card) return { used: false };
 
     await tx.lotteryDraw.update({
       where: { id: card.id },
       data: { status: LotteryStatus.USED, consumeAt: now },
     });
-    return true;
+    return { used: true, prizeName: card.prize?.name ?? '改名卡' };
   });
 
-  if (!used) {
+  if (!result.used) {
     sendJson(res, 404, { ok: false, error: 'no_card' });
     return;
   }
 
-  const notifyText = `老板 <@${userId}> 使用了${card.prize.name}，请联系老板。`;
+  const notifyText = `老板 <@${userId}> 使用了${result.prizeName ?? '改名卡'}，请联系老板。`;
   try {
     const channel = await client.channels.fetch(RENAME_NOTIFY_CHANNEL_ID).catch(() => null);
     if (channel && channel.isTextBased()) {
