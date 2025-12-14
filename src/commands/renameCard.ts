@@ -1,7 +1,7 @@
 import { LotteryStatus } from '@prisma/client';
 import { Message } from 'discord.js';
 import prisma from '../db/prisma.js';
-import { PRIZE_NAMES } from '../services/lotteryService.js';
+import { RENAME_CARD_NAMES } from '../services/lotteryService.js';
 
 const RENAME_NOTIFY_CHANNEL_ID = '1446819752692416542';
 const RENAME_NOTIFY_USER_ID = '1421651539247894549';
@@ -19,7 +19,7 @@ export async function handleRenameCardCommand(message: Message): Promise<boolean
         userId,
         status: LotteryStatus.UNUSED,
         expiresAt: { lte: now },
-        prize: { name: PRIZE_NAMES.RENAME_CARD },
+        prize: { name: { in: RENAME_CARD_NAMES } },
       },
       data: { status: LotteryStatus.EXPIRED },
     });
@@ -29,7 +29,7 @@ export async function handleRenameCardCommand(message: Message): Promise<boolean
         userId,
         status: LotteryStatus.UNUSED,
         expiresAt: { gt: now },
-        prize: { name: PRIZE_NAMES.RENAME_CARD },
+        prize: { name: { in: RENAME_CARD_NAMES } },
       },
       select: { id: true },
       orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],

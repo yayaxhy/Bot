@@ -7,7 +7,7 @@ import prisma from '../db/prisma.js';
 import { applyCouponDiscountForOrder, type DiscountKind } from '../services/discountService.js';
 import { applyLotteryDiscountForOrder } from '../services/lotteryDiscountService.js';
 import { LotteryStatus } from '@prisma/client';
-import { PRIZE_NAMES } from '../services/lotteryService.js';
+import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff } from '../services/buffService.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
@@ -500,7 +500,7 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
         userId,
         status: LotteryStatus.UNUSED,
         expiresAt: { lte: now },
-        prize: { name: PRIZE_NAMES.RENAME_CARD },
+        prize: { name: { in: RENAME_CARD_NAMES } },
       },
       data: { status: LotteryStatus.EXPIRED },
     });
@@ -510,7 +510,7 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
         userId,
         status: LotteryStatus.UNUSED,
         expiresAt: { gt: now },
-        prize: { name: PRIZE_NAMES.RENAME_CARD },
+        prize: { name: { in: RENAME_CARD_NAMES } },
       },
       select: { id: true },
       orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
