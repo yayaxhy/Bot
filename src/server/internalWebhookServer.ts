@@ -582,7 +582,7 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
     return;
   }
 
-  const notifyText = `老板 <@${userId}> 使用了改名卡，请联系老板。`;
+  const notifyText = `老板 <@${userId}> 使用了${card.prize.name}，请联系老板。`;
   try {
     const channel = await client.channels.fetch(RENAME_NOTIFY_CHANNEL_ID).catch(() => null);
     if (channel && channel.isTextBased()) {
