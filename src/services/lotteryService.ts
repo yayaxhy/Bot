@@ -2,6 +2,7 @@ import { LotteryPool, LotteryStatus, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import crypto from 'crypto';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
+import { recordIndividualTransaction } from './individualTransactionService.js';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -341,6 +342,17 @@ export async function performLotteryDraw(params: {
           totalBalance: { decrement: DRAW_COST },
           totalSpent: { increment: DRAW_COST },
         },
+      });
+      const balanceBefore = total;
+      const balanceAfter = total.sub(DRAW_COST);
+      await recordIndividualTransaction(tx, {
+        discordId: userId,
+        thirdPartydiscordId: 'SYSTEM',
+        balanceBefore,
+        amountChange: DRAW_COST,
+        balanceAfter,
+        typeOfTransaction: '抽奖消费',
+        timeCreatedAt: now,
       });
     }
 
