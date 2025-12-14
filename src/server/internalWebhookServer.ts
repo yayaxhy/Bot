@@ -121,10 +121,11 @@ async function consumeVoucher(
     userId: string;
     prizeName: string;
     requestId?: string;
+    voucherId?: string;
   },
   tx: import('@prisma/client').Prisma.TransactionClient
 ): Promise<{ voucherId: string } | null> {
-  const { userId, prizeName, requestId } = params;
+  const { userId, prizeName, requestId, voucherId } = params;
   const now = new Date();
   await tx.lotteryDraw.updateMany({
     where: {
@@ -136,16 +137,27 @@ async function consumeVoucher(
     data: { status: LotteryStatus.EXPIRED },
   });
 
-  const voucher = await tx.lotteryDraw.findFirst({
-    where: {
-      userId,
-      status: LotteryStatus.UNUSED,
-      expiresAt: { gt: now },
-      prize: { name: prizeName },
-    },
-    select: { id: true },
-    orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-  });
+  const voucher = voucherId
+    ? await tx.lotteryDraw.findFirst({
+        where: {
+          id: voucherId,
+          userId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { gt: now },
+          prize: { name: prizeName },
+        },
+        select: { id: true },
+      })
+    : await tx.lotteryDraw.findFirst({
+        where: {
+          userId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { gt: now },
+          prize: { name: prizeName },
+        },
+        select: { id: true },
+        orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+      });
   if (!voucher) return null;
 
   await tx.lotteryDraw.update({
@@ -295,7 +307,7 @@ async function handleCustomVoucherUse(
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  const { userId } = payload ?? {};
+  const { userId, voucherId } = payload ?? {};
   if (!userId) {
     sendJson(res, 400, { ok: false, error: 'missing_user' });
     return;
@@ -303,7 +315,7 @@ async function handleCustomVoucherUse(
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      return consumeVoucher({ userId, prizeName }, tx);
+      return consumeVoucher({ userId, prizeName, voucherId }, tx);
     });
 
     if (!result) {
@@ -349,7 +361,11 @@ async function handleCommissionBoost(req: IncomingMessage, res: ServerResponse) 
   try {
     const result = await prisma.$transaction(async (tx) => {
       const voucher = await consumeVoucher(
-        { userId: payload?.userId ?? userId, prizeName: PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER },
+        {
+          userId: payload?.userId ?? userId,
+          prizeName: PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER,
+          voucherId: payload?.voucherId,
+        },
         tx
       );
       if (!voucher) return null;
@@ -395,7 +411,11 @@ async function handleDoubleFlow(req: IncomingMessage, res: ServerResponse) {
   try {
     const result = await prisma.$transaction(async (tx) => {
       const voucher = await consumeVoucher(
-        { userId: payload?.userId ?? userId, prizeName: PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER },
+        {
+          userId: payload?.userId ?? userId,
+          prizeName: PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER,
+          voucherId: payload?.voucherId,
+        },
         tx
       );
       if (!voucher) return null;
@@ -482,7 +502,7 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  const { userId } = payload ?? {};
+  const { userId, voucherId } = payload ?? {};
   if (!userId) {
     sendJson(res, 400, { ok: false, error: 'missing_fields' });
     return;
@@ -507,16 +527,27 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
       data: { status: LotteryStatus.EXPIRED },
     });
 
-    const card = await tx.lotteryDraw.findFirst({
-      where: {
-        userId,
-        status: LotteryStatus.UNUSED,
-        expiresAt: { gt: now },
-        prize: { name: { in: RENAME_CARD_NAMES } },
-      },
-      select: { id: true },
-      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-    });
+    const card = voucherId
+      ? await tx.lotteryDraw.findFirst({
+          where: {
+            id: voucherId,
+            userId,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { gt: now },
+            prize: { name: { in: RENAME_CARD_NAMES } },
+          },
+          select: { id: true },
+        })
+      : await tx.lotteryDraw.findFirst({
+          where: {
+            userId,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { gt: now },
+            prize: { name: { in: RENAME_CARD_NAMES } },
+          },
+          select: { id: true },
+          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+        });
     if (!card) return false;
 
     await tx.lotteryDraw.update({
