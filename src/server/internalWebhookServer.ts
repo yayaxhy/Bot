@@ -168,6 +168,16 @@ async function consumeVoucher(
   return { voucherId: voucher.id };
 }
 
+const normalizeVoucherId = (payload: any): string | undefined => {
+  return (
+    payload?.voucherId ??
+    payload?.lotteryId ??
+    payload?.lotteryVoucherId ??
+    payload?.id ??
+    undefined
+  );
+};
+
 async function notifyChannel(message: string) {
   try {
     const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
@@ -308,7 +318,7 @@ async function handleCustomVoucherUse(
   if (!payload) return;
 
   const { userId } = payload ?? {};
-  const voucherId = payload?.voucherId ?? payload?.lotteryId;
+  const voucherId = normalizeVoucherId(payload);
   if (!userId) {
     sendJson(res, 400, { ok: false, error: 'missing_user' });
     return;
@@ -358,7 +368,7 @@ async function handleCommissionBoost(req: IncomingMessage, res: ServerResponse) 
     sendJson(res, 400, { ok: false, error: 'missing_target' });
     return;
   }
-  const voucherId = payload?.voucherId ?? payload?.lotteryId;
+  const voucherId = normalizeVoucherId(payload);
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -409,7 +419,7 @@ async function handleDoubleFlow(req: IncomingMessage, res: ServerResponse) {
     sendJson(res, 400, { ok: false, error: 'missing_target' });
     return;
   }
-  const voucherId = payload?.voucherId ?? payload?.lotteryId;
+  const voucherId = normalizeVoucherId(payload);
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -506,7 +516,7 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
   if (!payload) return;
 
   const { userId } = payload ?? {};
-  const voucherId = payload?.voucherId ?? payload?.lotteryId;
+  const voucherId = normalizeVoucherId(payload);
   if (!userId) {
     sendJson(res, 400, { ok: false, error: 'missing_fields' });
     return;
