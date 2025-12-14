@@ -307,7 +307,8 @@ async function handleCustomVoucherUse(
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  const { userId, voucherId } = payload ?? {};
+  const { userId } = payload ?? {};
+  const voucherId = payload?.voucherId ?? payload?.lotteryId;
   if (!userId) {
     sendJson(res, 400, { ok: false, error: 'missing_user' });
     return;
@@ -357,6 +358,7 @@ async function handleCommissionBoost(req: IncomingMessage, res: ServerResponse) 
     sendJson(res, 400, { ok: false, error: 'missing_target' });
     return;
   }
+  const voucherId = payload?.voucherId ?? payload?.lotteryId;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -364,7 +366,7 @@ async function handleCommissionBoost(req: IncomingMessage, res: ServerResponse) 
         {
           userId: payload?.userId ?? userId,
           prizeName: PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER,
-          voucherId: payload?.voucherId,
+          voucherId,
         },
         tx
       );
@@ -407,6 +409,7 @@ async function handleDoubleFlow(req: IncomingMessage, res: ServerResponse) {
     sendJson(res, 400, { ok: false, error: 'missing_target' });
     return;
   }
+  const voucherId = payload?.voucherId ?? payload?.lotteryId;
 
   try {
     const result = await prisma.$transaction(async (tx) => {
@@ -414,7 +417,7 @@ async function handleDoubleFlow(req: IncomingMessage, res: ServerResponse) {
         {
           userId: payload?.userId ?? userId,
           prizeName: PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER,
-          voucherId: payload?.voucherId,
+          voucherId,
         },
         tx
       );
@@ -502,7 +505,8 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  const { userId, voucherId } = payload ?? {};
+  const { userId } = payload ?? {};
+  const voucherId = payload?.voucherId ?? payload?.lotteryId;
   if (!userId) {
     sendJson(res, 400, { ok: false, error: 'missing_fields' });
     return;
