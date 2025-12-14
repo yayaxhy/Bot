@@ -425,7 +425,7 @@ async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  const { orderId, userId, kind } = payload ?? {};
+  const { orderId, userId, kind, couponId, lotteryId } = payload ?? {};
   if (!orderId || !userId || !kind) {
     sendJson(res, 400, { ok: false, error: 'missing_fields' });
     return;
@@ -443,10 +443,12 @@ async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
         ? await applyCouponDiscountForOrder({
             orderId,
             userId,
+            couponId,
           })
         : await applyLotteryDiscountForOrder({
             orderId,
             userId,
+            lotteryId,
           });
 
     if (result.status !== 'applied') {

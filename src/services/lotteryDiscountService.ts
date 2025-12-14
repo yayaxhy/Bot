@@ -38,9 +38,10 @@ function computeDiscountAmount(params: {
 export async function applyLotteryDiscountForOrder(params: {
   orderId: string;
   userId: string; // host id
+  lotteryId?: string;
   now?: Date;
 }): Promise<ApplyDiscountResult> {
-  const { orderId, userId } = params;
+  const { orderId, userId, lotteryId } = params;
   const now = params.now ?? new Date();
 
   return prisma.$transaction(async (tx) => {
@@ -88,16 +89,27 @@ export async function applyLotteryDiscountForOrder(params: {
       data: { status: LotteryStatus.EXPIRED },
     });
 
-    const voucher = await tx.lotteryDraw.findFirst({
-      where: {
-        userId,
-        status: LotteryStatus.UNUSED,
-        expiresAt: { gt: now },
-        prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
-      },
-      select: { id: true, prize: { select: { name: true } } },
-      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-    });
+    const voucher = lotteryId
+      ? await tx.lotteryDraw.findFirst({
+          where: {
+            id: lotteryId,
+            userId,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { gt: now },
+            prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
+          },
+          select: { id: true, prize: { select: { name: true } } },
+        })
+      : await tx.lotteryDraw.findFirst({
+          where: {
+            userId,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { gt: now },
+            prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
+          },
+          select: { id: true, prize: { select: { name: true } } },
+          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+        });
     if (!voucher) return { status: 'no_lottery' };
 
     const prizeName = voucher.prize?.name ?? '';

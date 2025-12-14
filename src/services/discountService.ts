@@ -55,9 +55,10 @@ function computeDiscountAmount(params: {
 export async function applyCouponDiscountForOrder(params: {
   orderId: string;
   userId: string; // host id
+  couponId?: string;
   now?: Date;
 }): Promise<ApplyDiscountResult> {
-  const { orderId, userId } = params;
+  const { orderId, userId, couponId } = params;
   const now = params.now ?? new Date();
 
   return prisma.$transaction(async (tx) => {
@@ -101,15 +102,25 @@ export async function applyCouponDiscountForOrder(params: {
     });
     let couponId: string | null = null;
 
-    const available = await tx.coupon.findFirst({
-      where: {
-        discordId: userId,
-        type: CouponType.DISCOUNT_90,
-        status: 'ACTIVE',
-        expiresAt: { gt: now },
-      },
-      orderBy: { issuedAt: 'asc' },
-    });
+    const available = couponId
+      ? await tx.coupon.findFirst({
+          where: {
+            id: couponId,
+            discordId: userId,
+            type: CouponType.DISCOUNT_90,
+            status: 'ACTIVE',
+            expiresAt: { gt: now },
+          },
+        })
+      : await tx.coupon.findFirst({
+          where: {
+            discordId: userId,
+            type: CouponType.DISCOUNT_90,
+            status: 'ACTIVE',
+            expiresAt: { gt: now },
+          },
+          orderBy: { issuedAt: 'asc' },
+        });
     if (!available) return { status: 'no_coupon' };
     couponId = available.id;
 
