@@ -30,6 +30,7 @@ const GRANT_ITEMS: Record<string, GrantItem> = {
   RENAME_CARD_3: { kind: 'lottery', label: '3位数靓号卡', prizeName: PRIZE_NAMES.RENAME_CARD_3 },
   RENAME_CARD_4: { kind: 'lottery', label: '4位数靓号卡', prizeName: PRIZE_NAMES.RENAME_CARD },
   RENAME_CARD_5: { kind: 'lottery', label: '5位数靓号卡', prizeName: PRIZE_NAMES.RENAME_CARD_5 },
+  LOTTERY_VOUCHER: { kind: 'lottery', label: '抽奖代金券', prizeName: PRIZE_NAMES.LOTTERY_VOUCHER },
   CUSTOM_GIFT: { kind: 'lottery', label: '自定义礼物券', prizeName: PRIZE_NAMES.CUSTOM_GIFT_VOUCHER },
   CUSTOM_TAG: { kind: 'lottery', label: '自定义tag券', prizeName: PRIZE_NAMES.CUSTOM_TAG_VOUCHER },
   COMMISSION_MINUS1: { kind: 'lottery', label: '抽成降1%券', prizeName: PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER },
