@@ -169,13 +169,19 @@ async function consumeVoucher(
 }
 
 const normalizeVoucherId = (payload: any): string | undefined => {
-  return (
-    payload?.voucherId ??
-    payload?.lotteryId ??
-    payload?.lotteryVoucherId ??
-    payload?.id ??
-    undefined
-  );
+  if (!payload || typeof payload !== 'object') return undefined;
+  if (payload.voucherId) return payload.voucherId;
+  if (payload.lotteryId) return payload.lotteryId;
+  if (payload.lotteryVoucherId) return payload.lotteryVoucherId;
+  if (payload.id) return payload.id;
+  // case-insensitive fallback
+  for (const [k, v] of Object.entries(payload)) {
+    const key = k.toLowerCase();
+    if (key === 'voucherid' || key === 'lotteryid' || key === 'lotteryvoucherid') {
+      return v as string;
+    }
+  }
+  return undefined;
 };
 
 async function notifyChannel(message: string) {
