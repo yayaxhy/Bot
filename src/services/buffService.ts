@@ -9,6 +9,10 @@ const COMMISSION_DURATION_MS = 30 * DAY_MS;
 const FLOW_EXTRA_CAP = new Prisma.Decimal(5000);
 const FLOW_DURATION_MS = 30 * DAY_MS;
 
+const COMMISSION_WATCH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const COMMISSION_CLEANUP_BATCH = 50;
+let commissionCleanupRunning = false;
+
 export async function applyCommissionBuff(
   client: TxLike,
   userId: string
@@ -77,6 +81,61 @@ export async function applyCommissionBuff(
   });
 
   return { expiresAt, boosted: true, commissionRate: newRate };
+}
+
+async function cleanupExpiredCommissionBuffs(batchSize: number): Promise<number> {
+  const now = new Date();
+  const expired = await prisma.commissionBuff.findMany({
+    where: { expiresAt: { lte: now } },
+    select: { userId: true, boost: true },
+    take: batchSize,
+  });
+  if (!expired.length) return 0;
+
+  for (const row of expired) {
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.member.findUnique({
+        where: { discordUserId: row.userId },
+        select: { commissionRate: true },
+      });
+      const baseRate = new Prisma.Decimal(current?.commissionRate ?? 0).sub(row.boost ?? 0);
+      const newRate = baseRate.lt(0) ? new Prisma.Decimal(0) : baseRate;
+
+      await tx.member.updateMany({
+        where: { discordUserId: row.userId },
+        data: { commissionRate: newRate },
+      });
+      await tx.pEIWAN.updateMany({
+        where: { discordUserId: row.userId },
+        data: { commissionRate: newRate },
+      });
+      await tx.commissionBuff.delete({ where: { userId: row.userId } });
+    });
+  }
+
+  return expired.length;
+}
+
+export function startCommissionBuffWatcher() {
+  const run = async () => {
+    if (commissionCleanupRunning) return;
+    commissionCleanupRunning = true;
+    try {
+      // 逐批处理直到没有过期记录
+      while (true) {
+        const processed = await cleanupExpiredCommissionBuffs(COMMISSION_CLEANUP_BATCH);
+        if (processed === 0) break;
+      }
+    } catch (err) {
+      console.error('[commission-buff] cleanup failed', err);
+    } finally {
+      commissionCleanupRunning = false;
+    }
+  };
+
+  // 立即跑一次，然后周期性清理
+  run().catch(() => {});
+  setInterval(run, COMMISSION_WATCH_INTERVAL_MS);
 }
 
 export async function getActiveCommissionBoost(

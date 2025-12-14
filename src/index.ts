@@ -25,6 +25,7 @@ import { registerTechTagSync } from './services/techTagService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
 import { registerInviteReward } from './services/inviteRewardService.js';
 import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
+import { startCommissionBuffWatcher } from './services/buffService.js';
 import {
   CLAIM_EMOJI_REACTION,
   claimRedEnvelope,
@@ -222,6 +223,7 @@ client.once(Events.ClientReady, async () => {
   startWithdrawWatcher().catch((err) => console.error('[withdraw.watch] init failed', err));
   startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));
   startRechargeWatcher().catch((err) => console.error('[recharge.watch] init failed', err));
+  startCommissionBuffWatcher();
 });
 
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));

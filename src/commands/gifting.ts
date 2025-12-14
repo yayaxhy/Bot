@@ -9,7 +9,7 @@ import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
-import { getActiveCommissionBoost, consumeFlowBuff } from '../services/buffService.js';
+import { consumeFlowBuff } from '../services/buffService.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -287,8 +287,7 @@ export async function performGift(
     if (!giverAccount) throw new Error('付款方不存在。');
     if (!receiver) throw new Error('收款方不存在。');
 
-    const commissionBoost = await getActiveCommissionBoost(tx, receiverId);
-    let receiverRate = DEC(receiver.commissionRate ?? 0).add(commissionBoost);
+    let receiverRate = DEC(receiver.commissionRate ?? 0);
     if (receiverRate.gt(1)) receiverRate = DEC(1);
     const feeRate = DEC(1).sub(receiverRate);
     const feeAmount = gross.mul(feeRate);
