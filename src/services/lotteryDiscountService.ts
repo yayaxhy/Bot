@@ -42,7 +42,7 @@ export async function applyLotteryDiscountForOrder(params: {
   prizeName?: string;
   now?: Date;
 }): Promise<ApplyDiscountResult> {
-  const { orderId, userId, lotteryId, prizeName } = params;
+  const { orderId, userId, lotteryId, prizeName: requestedPrizeName } = params;
   const now = params.now ?? new Date();
 
   return prisma.$transaction(async (tx) => {
@@ -90,7 +90,9 @@ export async function applyLotteryDiscountForOrder(params: {
       data: { status: LotteryStatus.EXPIRED },
     });
 
-    const prizeFilter = prizeName ? { name: prizeName } : { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } };
+    const prizeFilter: { name: string } | { name: { in: string[] } } = requestedPrizeName
+      ? { name: requestedPrizeName }
+      : { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } };
 
     const voucher = lotteryId
       ? await tx.lotteryDraw.findFirst({
@@ -115,8 +117,8 @@ export async function applyLotteryDiscountForOrder(params: {
         });
     if (!voucher) return { status: 'no_lottery' };
 
-    const prizeName = voucher.prize?.name ?? '';
-    const config = DISCOUNT_PRIZE_CONFIG[prizeName];
+    const prizeNameUsed = voucher.prize?.name ?? '';
+    const config = DISCOUNT_PRIZE_CONFIG[prizeNameUsed];
     if (!config) return { status: 'no_lottery' };
 
     if (!order.unitPrice || order.totalMinutes == null) {

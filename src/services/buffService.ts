@@ -85,7 +85,7 @@ export async function applyCommissionBuff(
 
 async function cleanupExpiredCommissionBuffs(batchSize: number): Promise<number> {
   const now = new Date();
-  const expired = await prisma.commissionBuff.findMany({
+  const expired = await (prisma as any).commissionBuff.findMany({
     where: { expiresAt: { lte: now } },
     select: { userId: true, boost: true },
     take: batchSize,
@@ -109,7 +109,7 @@ async function cleanupExpiredCommissionBuffs(batchSize: number): Promise<number>
         where: { discordUserId: row.userId },
         data: { commissionRate: newRate },
       });
-      await tx.commissionBuff.delete({ where: { userId: row.userId } });
+      await (tx as any).commissionBuff.delete({ where: { userId: row.userId } });
     });
   }
 

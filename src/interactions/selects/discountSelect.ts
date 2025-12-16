@@ -15,18 +15,15 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
     return;
   }
 
-  const discountChoice = {
-    jiuzhe: { kind: 'coupon' as DiscountKind, label: '9折券' },
-    bazhe: { kind: 'lottery' as DiscountKind, label: '8折券', prizeName: PRIZE_NAMES.DISCOUNT_80 },
-    qizhe: { kind: 'lottery' as DiscountKind, label: '7折券', prizeName: PRIZE_NAMES.DISCOUNT_70 },
-    specialjiuzhe: {
-      kind: 'lottery' as DiscountKind,
-      label: '特殊9折券',
-      prizeName: PRIZE_NAMES.DISCOUNT_90_LOTTERY,
-    },
-  } as const;
+  type DiscountChoice = { kind: DiscountKind; label: string; prizeName?: string };
+  const discountChoice: Record<string, DiscountChoice> = {
+    jiuzhe: { kind: 'coupon', label: '9折券' },
+    bazhe: { kind: 'lottery', label: '8折券', prizeName: PRIZE_NAMES.DISCOUNT_80 },
+    qizhe: { kind: 'lottery', label: '7折券', prizeName: PRIZE_NAMES.DISCOUNT_70 },
+    specialjiuzhe: { kind: 'lottery', label: '特殊9折券', prizeName: PRIZE_NAMES.DISCOUNT_90_LOTTERY },
+  };
 
-  const selected = discountChoice[choice as keyof typeof discountChoice];
+  const selected = discountChoice[choice];
   const kind: DiscountKind | null = selected?.kind ?? null;
   const label = selected?.label ?? '该优惠券';
 
