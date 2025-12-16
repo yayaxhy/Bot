@@ -361,7 +361,9 @@ export function discount_prompt_embed(
   orderLabel: string,
   orderId: string,
   jiuzheCount: number,
-  bazheCount: number
+  bazheCount: number,
+  qizheCount: number,
+  specialJiuzheCount: number
 ): { embed: APIEmbed; components: any[] } | null {
   const description = [
     '检测到您有可以使用的优惠，如若使用可以点击下面列表进行选择（每个单子只能使用一次优惠券）',
@@ -390,6 +392,24 @@ export function discount_prompt_embed(
         .setLabel(`8折券（剩余 ${bazheCount} 张）`)
         .setValue('bazhe')
         .setDescription('最高抵扣 2 小时，单张封顶 ¥200')
+    );
+    hasOption = true;
+  }
+  if (qizheCount > 0) {
+    menu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`7折券（剩余 ${qizheCount} 张）`)
+        .setValue('qizhe')
+        .setDescription('最高抵扣 2 小时，单张封顶 ¥150')
+    );
+    hasOption = true;
+  }
+  if (specialJiuzheCount > 0) {
+    menu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(`特殊9折券（剩余 ${specialJiuzheCount} 张）`)
+        .setValue('specialjiuzhe')
+        .setDescription('最高抵扣 2 小时，单张封顶 ¥50')
     );
     hasOption = true;
   }
@@ -586,5 +606,4 @@ export function anon_invite_successfully_inDiscord_embed(workerTag: string): Mes
 
   return { embeds: [embed], files: [attachment] };
 }
-
 

@@ -87,7 +87,7 @@ export async function applyCouponDiscountForOrder(params: {
         userId,
         status: LotteryStatus.USED,
         requestId: orderId,
-        prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+        prize: { name: { in: [PRIZE_NAMES.DISCOUNT_80, PRIZE_NAMES.DISCOUNT_70, PRIZE_NAMES.DISCOUNT_90_LOTTERY] } },
       },
       select: { id: true },
     });

@@ -54,12 +54,17 @@ export async function notifyOrderEnded(orderId: string) {
     select: { id: true },
   });
 
+  const lotteryDiscountNames = [
+    PRIZE_NAMES.DISCOUNT_80,
+    PRIZE_NAMES.DISCOUNT_70,
+    PRIZE_NAMES.DISCOUNT_90_LOTTERY,
+  ];
   await prisma.lotteryDraw.updateMany({
     where: {
       userId: order.hostId,
       status: LotteryStatus.UNUSED,
       expiresAt: { lte: now },
-      prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+      prize: { name: { in: lotteryDiscountNames } },
     },
     data: { status: LotteryStatus.EXPIRED },
   });
@@ -69,6 +74,22 @@ export async function notifyOrderEnded(orderId: string) {
       status: LotteryStatus.UNUSED,
       expiresAt: { gt: now },
       prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+    },
+  });
+  const qizheCount = await prisma.lotteryDraw.count({
+    where: {
+      userId: order.hostId,
+      status: LotteryStatus.UNUSED,
+      expiresAt: { gt: now },
+      prize: { name: PRIZE_NAMES.DISCOUNT_70 },
+    },
+  });
+  const specialJiuzheCount = await prisma.lotteryDraw.count({
+    where: {
+      userId: order.hostId,
+      status: LotteryStatus.UNUSED,
+      expiresAt: { gt: now },
+      prize: { name: PRIZE_NAMES.DISCOUNT_90_LOTTERY },
     },
   });
 
@@ -106,9 +127,16 @@ export async function notifyOrderEnded(orderId: string) {
     ];
     let components: any[] = [];
 
-    const totalCoupons = availableCoupons + bazheCount;
+    const totalCoupons = availableCoupons + bazheCount + qizheCount + specialJiuzheCount;
     if (totalCoupons > 0 && !existingUsage) {
-      const prompt = discount_prompt_embed(orderLabel, order.id, availableCoupons, bazheCount);
+      const prompt = discount_prompt_embed(
+        orderLabel,
+        order.id,
+        availableCoupons,
+        bazheCount,
+        qizheCount,
+        specialJiuzheCount
+      );
       if (prompt) {
         embeds.push(prompt.embed);
         components = prompt.components;
@@ -117,6 +145,8 @@ export async function notifyOrderEnded(orderId: string) {
           hostId: order.hostId,
           availableCoupons,
           bazheCount,
+          qizheCount,
+          specialJiuzheCount,
           destination: 'boss_dm',
         });
       } else {
@@ -125,6 +155,8 @@ export async function notifyOrderEnded(orderId: string) {
           hostId: order.hostId,
           availableCoupons,
           bazheCount,
+          qizheCount,
+          specialJiuzheCount,
         });
       }
     } else {
@@ -133,6 +165,8 @@ export async function notifyOrderEnded(orderId: string) {
         hostId: order.hostId,
         availableCoupons,
         bazheCount,
+        qizheCount,
+        specialJiuzheCount,
         existingUsage,
       });
     }

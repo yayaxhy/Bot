@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { StringSelectMenuInteraction } from 'discord.js';
 import { applyCouponDiscountForOrder, type DiscountKind } from '../../services/discountService.js';
 import { applyLotteryDiscountForOrder } from '../../services/lotteryDiscountService.js';
+import { PRIZE_NAMES } from '../../services/lotteryService.js';
 
 export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
   if (!i.customId.startsWith('discount_box')) return;
@@ -14,9 +15,20 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
     return;
   }
 
-  const kind: DiscountKind | null =
-    choice === 'jiuzhe' ? 'coupon' : choice === 'bazhe' ? 'lottery' : null;
-  const label = kind === 'coupon' ? '9折券' : kind === 'lottery' ? '8折券' : '';
+  const discountChoice = {
+    jiuzhe: { kind: 'coupon' as DiscountKind, label: '9折券' },
+    bazhe: { kind: 'lottery' as DiscountKind, label: '8折券', prizeName: PRIZE_NAMES.DISCOUNT_80 },
+    qizhe: { kind: 'lottery' as DiscountKind, label: '7折券', prizeName: PRIZE_NAMES.DISCOUNT_70 },
+    specialjiuzhe: {
+      kind: 'lottery' as DiscountKind,
+      label: '特殊9折券',
+      prizeName: PRIZE_NAMES.DISCOUNT_90_LOTTERY,
+    },
+  } as const;
+
+  const selected = discountChoice[choice as keyof typeof discountChoice];
+  const kind: DiscountKind | null = selected?.kind ?? null;
+  const label = selected?.label ?? '该优惠券';
 
   if (!kind) {
     await i.reply({ content: '当前暂不支持该优惠券。' });
@@ -33,6 +45,7 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
       : await applyLotteryDiscountForOrder({
           orderId,
           userId: i.user.id,
+          prizeName: selected?.prizeName,
         });
 
   const reply = (content: string) =>
@@ -58,7 +71,7 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
         await reply('没有可用的九折券。');
         break;
       case 'no_lottery':
-        await reply('没有可用的 8 折券。');
+        await reply(`没有可用的 ${label}。`);
         break;
       case 'no_fee':
       case 'insufficient_data':
