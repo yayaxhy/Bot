@@ -47,7 +47,7 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
   if (pingFemale) { roleMentions.push(`<@&${ROLE_FEMALE}>`); allowedRoleIds.push(ROLE_FEMALE); }
   if (pingTech) { roleMentions.push(`<@&${ROLE_TECH}>`); allowedRoleIds.push(ROLE_TECH); }
 
-  const mentionLine = [...roleMentions, userMention(boss.id)].join(' ').trim();
+  const mentionLine = roleMentions.join(' ').trim();
   const messageText = [mentionLine, content].filter(Boolean).join(' ').trim();
 
   const channel = await i.client.channels.fetch(ORDER_CHANNEL_ID).catch(() => null);
@@ -74,7 +74,7 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
     const posted = await channel.send({
       ...embedPayload,
       content: messageText,
-      allowedMentions: { users: [boss.id], roles: allowedRoleIds, parse: [] },
+      allowedMentions: { users: [], roles: allowedRoleIds, parse: [] },
     });
     scheduleOrderRequestClosure(posted);
 
