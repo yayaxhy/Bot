@@ -806,6 +806,27 @@ export async function claimRedEnvelope(
       });
     }
 
+    const feeAmount = share.sub(netAmount);
+    const safeFee = feeAmount.lt(0) ? new Prisma.Decimal(0) : feeAmount;
+    const transaction = await tx.transaction.create({
+      data: {
+        fromId: envelope.creatorId,
+        toId: claimerId,
+        amount: share,
+        feeAmount: safeFee,
+        netAmount,
+      },
+    });
+    await tx.commission.create({
+      data: {
+        transactionId: transaction.Transid,
+        orderID: transaction.orderID,
+        fromId: envelope.creatorId,
+        toId: claimerId,
+        feeAmount: safeFee,
+      },
+    });
+
     await recordIndividualTransaction(tx, {
       discordId: claimerId,
       thirdPartydiscordId: envelope.creatorId,
