@@ -1,7 +1,14 @@
 // src/ui/orderEmbeds.ts
 import {
-  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
-  StringSelectMenuOptionBuilder, APIEmbed, EmbedBuilder, MessageCreateOptions
+  ActionRowBuilder,
+  AttachmentBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  APIEmbed,
+  EmbedBuilder,
+  MessageCreateOptions,
 } from 'discord.js';
 import { QuotationCode, Gift } from '@prisma/client';
 
