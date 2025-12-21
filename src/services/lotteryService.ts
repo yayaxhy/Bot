@@ -30,7 +30,7 @@ export const PRIZE_NAMES = {
   COMMISSION_MINUS1_VOUCHER: '抽成降1%券',
   DOUBLE_FLOW_5000_VOUCHER: '双倍流水5000券',
   DISCOUNT_70: '7折券',
-  DISCOUNT_90_LOTTERY: '特殊九折券',
+  DISCOUNT_90_LOTTERY: '特殊9折券',
 } as const;
 
 export const RENAME_CARD_NAMES: string[] = [
