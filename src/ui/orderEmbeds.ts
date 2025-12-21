@@ -1,6 +1,6 @@
 // src/ui/orderEmbeds.ts
 import {
-  ActionRowBuilder, AttachmentBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder, APIEmbed, EmbedBuilder, MessageCreateOptions
 } from 'discord.js';
 import { QuotationCode, Gift } from '@prisma/client';
@@ -8,7 +8,8 @@ import { QuotationCode, Gift } from '@prisma/client';
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const THANK_BOSS_GIF_PATH = 'src/img/thankBoss.gif';
-const ORDER_PIC_PATH = 'src/img/orderPic.gif';
+const ORDER_PIC_URL =
+  'https://cdn.discordapp.com/attachments/1445864521343439019/1452213172567146538/orderPic.gif?ex=6948fe69&is=6947ace9&hm=86e5fb4ce0246eca34e8a78dbb400c4411dee87ee0375019cfafe428b80076cd';
 const DEFAULT_EMBED_COLOR = 0xf5a623;
 const PEIPEI_CALL_EMOJI = '<:11:1422321930043789343>';
 
@@ -122,7 +123,7 @@ export function ongoing_order_request_embed(
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
     .setDescription(lines.join('\n'))
-    .setImage('attachment://orderPic.gif');
+    .setImage(ORDER_PIC_URL);
 
   const button = new ButtonBuilder()
     .setCustomId(`requestOrder:${orderId}:${ownerId}`)
@@ -131,9 +132,7 @@ export function ongoing_order_request_embed(
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
 
-  const attachment = new AttachmentBuilder(ORDER_PIC_PATH).setName('orderPic.gif');
-
-  return { embeds: [embed], components: [row], files: [attachment] };
+  return { embeds: [embed], components: [row] };
 }
 
 /* ================== 派单（匿名老板） ================== */
@@ -158,7 +157,7 @@ export function anonymous_ongoing_order_request_embed(
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
     .setDescription(lines.join('\n'))
-    .setImage('attachment://orderPic.gif');
+    .setImage(ORDER_PIC_URL);
 
   const button = new ButtonBuilder()
     .setCustomId(`requestOrder:${orderId}:${ownerId}`)
@@ -167,9 +166,7 @@ export function anonymous_ongoing_order_request_embed(
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
 
-  const attachment = new AttachmentBuilder(ORDER_PIC_PATH).setName('orderPic.gif');
-
-  return { embeds: [embed], components: [row], files: [attachment] };
+  return { embeds: [embed], components: [row] };
 }
 
 /* ================== 订单创建成功（DM 给老板） ================== */
@@ -391,7 +388,7 @@ export function discount_prompt_embed(
       new StringSelectMenuOptionBuilder()
         .setLabel(`8折券（剩余 ${bazheCount} 张）`)
         .setValue('bazhe')
-        .setDescription('最高抵扣 2 小时，单张封顶 ¥200')
+        .setDescription('\u200b')
     );
     hasOption = true;
   }
@@ -400,7 +397,7 @@ export function discount_prompt_embed(
       new StringSelectMenuOptionBuilder()
         .setLabel(`7折券（剩余 ${qizheCount} 张）`)
         .setValue('qizhe')
-        .setDescription('最高抵扣 2 小时，单张封顶 ¥150')
+        .setDescription('\u200b')
     );
     hasOption = true;
   }
@@ -409,7 +406,7 @@ export function discount_prompt_embed(
       new StringSelectMenuOptionBuilder()
         .setLabel(`特殊9折券（剩余 ${specialJiuzheCount} 张）`)
         .setValue('specialjiuzhe')
-        .setDescription('最高抵扣 2 小时，单张封顶 ¥50')
+        .setDescription('\u200b')
     );
     hasOption = true;
   }
