@@ -14,6 +14,8 @@ type SnapshotRow = {
   totalSpent: Prisma.Decimal;
 };
 
+type CurrentRow = SnapshotRow;
+
 type LeaderboardEntry = {
   discordUserId: string;
   displayName: string;
@@ -86,7 +88,18 @@ const toMap = (rows: SnapshotRow[]) => {
   return map;
 };
 
-async function loadSnapshotsForDay(targetDayStart: Date) {
+async function loadSnapshotForDay(targetDayStart: Date) {
+  await ensureSnapshot(targetDayStart);
+
+  const startRows = await prisma.dailySnapshot.findMany({
+    where: { date: targetDayStart },
+    select: { discordUserId: true, totalEarn: true, totalSpent: true },
+  });
+
+  return startRows;
+}
+
+async function loadSnapshotsForDayRange(targetDayStart: Date) {
   const nextDayStart = addDaysUtc(targetDayStart, 1);
 
   await Promise.all([ensureSnapshot(targetDayStart), ensureSnapshot(nextDayStart)]);
@@ -107,7 +120,7 @@ async function loadSnapshotsForDay(targetDayStart: Date) {
 
 function buildEntries(
   startRows: SnapshotRow[],
-  endRows: SnapshotRow[],
+  endRows: CurrentRow[],
   displayMap: Map<string, string>
 ): LeaderboardEntry[] {
   const startMap = toMap(startRows);
@@ -129,26 +142,26 @@ function buildEntries(
   return entries;
 }
 
-const formatSpendEmbed = (dateLabel: string, entries: LeaderboardEntry[]) => {
+const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
   const lines =
     entries.length > 0
       ? entries.map((entry, idx) => `#${idx + 1} ${entry.displayName}`).join('\n')
       : '暂无消费数据';
 
   return new EmbedBuilder()
-    .setTitle(`日消费榜（${dateLabel}，罗马时间）`)
+    .setTitle(title)
     .setDescription(lines)
     .setTimestamp(new Date());
 };
 
-const formatIncomeEmbed = (dateLabel: string, entries: LeaderboardEntry[]) => {
+const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
   const lines =
     entries.length > 0
       ? entries.map((entry, idx) => `#${idx + 1} ${entry.displayName}`).join('\n')
       : '暂无收入数据';
 
   return new EmbedBuilder()
-    .setTitle(`日收入榜（${dateLabel}，罗马时间）`)
+    .setTitle(title)
     .setDescription(lines)
     .setTimestamp(new Date());
 };
@@ -161,19 +174,69 @@ async function sendLeaderboard(
   try {
     const channel = await client.channels.fetch(channelId);
     if (!channel || !channel.isTextBased()) return;
-    await (channel as TextChannel).send({ content: '@everyone', embeds: [embed] });
+    await (channel as TextChannel).send({ embeds: [embed] });
   } catch (err) {
     console.error('[leaderboard] send failed', { channelId, err });
   }
 }
 
-async function generateAndPost(client: Client) {
+async function generateDailyAndPost(client: Client) {
   const now = new Date();
   const todayStart = romeDateStart(now);
   const targetDayStart = addDaysUtc(todayStart, -1);
   const dateLabel = romeDateLabel(targetDayStart);
 
-  const { startRows, endRows } = await loadSnapshotsForDay(targetDayStart);
+  const { startRows, endRows } = await loadSnapshotsForDayRange(targetDayStart);
+
+  const userIds = Array.from(
+    new Set([...startRows, ...endRows].map((row) => row.discordUserId))
+  );
+  const members = await prisma.member.findMany({
+    where: { discordUserId: { in: userIds } },
+    select: { discordUserId: true, serverDisplayName: true },
+  });
+  const displayMap = new Map(
+    members.map((m) => [m.discordUserId, m.serverDisplayName ?? m.discordUserId])
+  );
+
+  const entries = buildEntries(startRows, endRows, displayMap);
+  const spendTop = entries
+    .filter((e) => e.deltaSpent.gt(0))
+    .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
+    .slice(0, RANK_LIMIT);
+  const incomeTop = entries
+    .filter((e) => e.deltaEarn.gt(0))
+    .sort((a, b) => b.deltaEarn.cmp(a.deltaEarn))
+    .slice(0, RANK_LIMIT);
+
+  const spendEmbed = formatSpendEmbed(`日消费榜（${dateLabel}，罗马时间结算）`, spendTop);
+  const incomeEmbed = formatIncomeEmbed(`日收入榜（${dateLabel}，罗马时间结算）`, incomeTop);
+
+  await Promise.all([
+    sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
+    sendLeaderboard(client, INCOME_CHANNEL_ID, incomeEmbed),
+  ]);
+}
+
+async function generateRealtimeAndPost(client: Client) {
+  const now = new Date();
+  const todayStart = romeDateStart(now);
+  const dateLabel = romeDateLabel(todayStart);
+
+  const startRows = await loadSnapshotForDay(todayStart);
+  const endRows: CurrentRow[] = await prisma.member.findMany({
+    select: {
+      discordUserId: true,
+      totalSpent: true,
+      peiwan: { select: { totalEarn: true } },
+    },
+  }).then((rows) =>
+    rows.map((row) => ({
+      discordUserId: row.discordUserId,
+      totalSpent: row.totalSpent,
+      totalEarn: row.peiwan?.totalEarn ?? new Prisma.Decimal(0),
+    }))
+  );
 
   const userIds = Array.from(
     new Set([...startRows, ...endRows].map((row) => row.discordUserId))
@@ -197,7 +260,7 @@ async function generateAndPost(client: Client) {
     .slice(0, RANK_LIMIT);
 
   const spendEmbed = formatSpendEmbed(dateLabel, spendTop);
-  const incomeEmbed = formatIncomeEmbed(dateLabel, incomeTop);
+  const incomeEmbed = formatIncomeEmbed(`实时收入榜（${dateLabel}，罗马时间）`, incomeTop);
 
   await Promise.all([
     sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
@@ -208,11 +271,11 @@ async function generateAndPost(client: Client) {
 let running = false;
 
 export function startLeaderboardScheduler(client: Client) {
-  const run = async () => {
+  const runRealtime = async () => {
     if (running) return;
     running = true;
     try {
-      await generateAndPost(client);
+      await generateRealtimeAndPost(client);
     } catch (err) {
       console.error('[leaderboard] generate failed', err);
     } finally {
@@ -220,6 +283,23 @@ export function startLeaderboardScheduler(client: Client) {
     }
   };
 
-  setInterval(run, POLL_INTERVAL_MS);
-  run().catch((err) => console.error('[leaderboard] initial run failed', err));
+  setInterval(runRealtime, POLL_INTERVAL_MS);
+  runRealtime().catch((err) => console.error('[leaderboard] initial run failed', err));
+
+  const scheduleDaily = () => {
+    const now = new Date();
+    const todayStart = romeDateStart(now);
+    const nextDayStart = addDaysUtc(todayStart, 1);
+    const delay = nextDayStart.getTime() - now.getTime();
+    setTimeout(() => {
+      generateDailyAndPost(client).catch((err) => console.error('[leaderboard] daily failed', err));
+      setInterval(() => {
+        generateDailyAndPost(client).catch((err) =>
+          console.error('[leaderboard] daily failed', err)
+        );
+      }, 24 * 60 * 60 * 1000);
+    }, Math.max(1000, delay));
+  };
+
+  scheduleDaily();
 }
