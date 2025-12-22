@@ -150,8 +150,7 @@ const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
 
   return new EmbedBuilder()
     .setTitle(title)
-    .setDescription(lines)
-    .setTimestamp(new Date());
+    .setDescription(lines);
 };
 
 const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
@@ -162,8 +161,7 @@ const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
 
   return new EmbedBuilder()
     .setTitle(title)
-    .setDescription(lines)
-    .setTimestamp(new Date());
+    .setDescription(lines);
 };
 
 async function sendLeaderboard(
