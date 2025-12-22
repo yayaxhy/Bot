@@ -5,11 +5,15 @@ import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import type { ApplyDiscountResult } from './discountService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
 
+const LEGACY_DISCOUNT_90_NAME = '特殊九折券';
 const DISCOUNT_PRIZE_CONFIG: Record<string, { rate: Prisma.Decimal; cap: Prisma.Decimal }> = {
   [PRIZE_NAMES.DISCOUNT_80]: { rate: new Prisma.Decimal(0.2), cap: new Prisma.Decimal(100) },
   [PRIZE_NAMES.DISCOUNT_70]: { rate: new Prisma.Decimal(0.3), cap: new Prisma.Decimal(150) },
   [PRIZE_NAMES.DISCOUNT_90_LOTTERY]: { rate: new Prisma.Decimal(0.1), cap: new Prisma.Decimal(50) },
+  // Legacy name compatibility
+  [LEGACY_DISCOUNT_90_NAME]: { rate: new Prisma.Decimal(0.1), cap: new Prisma.Decimal(50) },
 };
+const DISCOUNT_PRIZE_NAMES = Object.keys(DISCOUNT_PRIZE_CONFIG);
 const FREE_MINUTES = 5;
 
 function computeDiscountAmount(params: {
@@ -85,14 +89,18 @@ export async function applyLotteryDiscountForOrder(params: {
         userId,
         status: LotteryStatus.UNUSED,
         expiresAt: { lte: now },
-        prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
+        prize: { name: { in: DISCOUNT_PRIZE_NAMES } },
       },
       data: { status: LotteryStatus.EXPIRED },
     });
 
-    const prizeFilter: { name: string } | { name: { in: string[] } } = requestedPrizeName
-      ? { name: requestedPrizeName }
-      : { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } };
+    const namesFilter = requestedPrizeName
+      ? [
+          requestedPrizeName,
+          ...(requestedPrizeName === PRIZE_NAMES.DISCOUNT_90_LOTTERY ? [LEGACY_DISCOUNT_90_NAME] : []),
+        ]
+      : DISCOUNT_PRIZE_NAMES;
+    const prizeFilter: { name: { in: string[] } } = { name: { in: namesFilter } };
 
     const voucher = lotteryId
       ? await tx.lotteryDraw.findFirst({

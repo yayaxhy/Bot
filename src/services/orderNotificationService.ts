@@ -58,6 +58,7 @@ export async function notifyOrderEnded(orderId: string) {
     PRIZE_NAMES.DISCOUNT_80,
     PRIZE_NAMES.DISCOUNT_70,
     PRIZE_NAMES.DISCOUNT_90_LOTTERY,
+    '特殊九折券',
   ];
   await prisma.lotteryDraw.updateMany({
     where: {
@@ -89,7 +90,7 @@ export async function notifyOrderEnded(orderId: string) {
       userId: order.hostId,
       status: LotteryStatus.UNUSED,
       expiresAt: { gt: now },
-      prize: { name: PRIZE_NAMES.DISCOUNT_90_LOTTERY },
+      prize: { name: { in: [PRIZE_NAMES.DISCOUNT_90_LOTTERY, '特殊九折券'] } },
     },
   });
 

@@ -27,6 +27,13 @@ const COUPON_RATE = new Prisma.Decimal(0.1);
 const COUPON_CAP = new Prisma.Decimal(20);
 const MAX_BILLABLE_MINUTES = 120;
 const FREE_MINUTES = 5;
+const LEGACY_DISCOUNT_90_NAME = '特殊九折券';
+const DISCOUNT_PRIZE_NAMES = [
+  PRIZE_NAMES.DISCOUNT_80,
+  PRIZE_NAMES.DISCOUNT_70,
+  PRIZE_NAMES.DISCOUNT_90_LOTTERY,
+  LEGACY_DISCOUNT_90_NAME,
+];
 
 function computeDiscountAmount(params: {
   unitPrice: Prisma.Decimal;
@@ -87,7 +94,7 @@ export async function applyCouponDiscountForOrder(params: {
         userId,
         status: LotteryStatus.USED,
         requestId: orderId,
-        prize: { name: { in: [PRIZE_NAMES.DISCOUNT_80, PRIZE_NAMES.DISCOUNT_70, PRIZE_NAMES.DISCOUNT_90_LOTTERY] } },
+        prize: { name: { in: DISCOUNT_PRIZE_NAMES } },
       },
       select: { id: true },
     });
