@@ -117,6 +117,7 @@ model Member {
   // Relations
   commissionFrom Commission[] @relation("CommissionFrom")
   commissionTo   Commission[] @relation("CommissionTo")
+  dailySnapshots DailySnapshot[]
 
   sentTransactions     Transaction[] @relation("FromMember")
   receivedTransactions Transaction[] @relation("ToMember")
@@ -214,6 +215,19 @@ model Coupon {
   consumedAt DateTime?
   orderId   String?
   discountAmount Decimal? @db.Decimal(19, 4)
+}
+
+model DailySnapshot {
+  date          DateTime @db.Date
+  discordUserId String
+  totalEarn     Decimal  @db.Decimal(19, 4)
+  totalSpent    Decimal  @db.Decimal(19, 4)
+  createdAt     DateTime @default(now())
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@id([date, discordUserId])
+  @@index([date])
 }
 
 model Commission {

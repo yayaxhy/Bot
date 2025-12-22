@@ -168,7 +168,7 @@ async function connectListener() {
     scheduleReconnect();
   };
 
-  client.on('error', (err) => {
+  client.on('error', (err: unknown) => {
     console.error('[peiwan.watch] listener error', err);
     handleDisconnect(err);
   });
@@ -184,7 +184,7 @@ async function connectListener() {
     await client.connect();
     await client.query(`LISTEN ${CHANNEL}`);
     console.log('[peiwan.watch] listening on channel', CHANNEL);
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('[peiwan.watch] connect failed', err);
     cleanup();
     scheduleReconnect();

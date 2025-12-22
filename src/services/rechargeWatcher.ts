@@ -189,7 +189,7 @@ async function connectListener() {
     scheduleReconnect();
   };
 
-  client.on('error', (err) => {
+  client.on('error', (err: unknown) => {
     console.error('[recharge.watch] listener error', err);
     handleDisconnect(err);
   });
@@ -205,7 +205,7 @@ async function connectListener() {
     await client.connect();
     await client.query(`LISTEN ${CHANNEL}`);
     console.log('[recharge.watch] listening on channel', CHANNEL);
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('[recharge.watch] connect failed', err);
     cleanupListener();
     scheduleReconnect();

@@ -100,7 +100,7 @@ async function connectListener() {
     return;
   }
 
-  await ensureTrigger().catch((err) => {
+  await ensureTrigger().catch((err: unknown) => {
     console.error('[withdraw.watch] ensure trigger failed', err);
   });
 
@@ -135,7 +135,7 @@ async function connectListener() {
     await client.connect();
     await client.query(`LISTEN ${CHANNEL}`);
     console.log('[withdraw.watch] listening on channel', CHANNEL);
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('[withdraw.watch] connect failed', err);
     cleanupListener();
     scheduleReconnect();
@@ -152,10 +152,12 @@ function cleanupListener() {
 
 function scheduleReconnect(delayMs = 5000) {
   if (reconnectTimer) return;
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    connectListener().catch((err) => console.error('[withdraw.watch] reconnect failed', err));
-  }, delayMs);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connectListener().catch((err: unknown) =>
+        console.error('[withdraw.watch] reconnect failed', err)
+      );
+    }, delayMs);
 }
 
 export async function startWithdrawWatcher() {
