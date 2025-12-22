@@ -259,8 +259,8 @@ async function generateRealtimeAndPost(client: Client) {
     .sort((a, b) => b.deltaEarn.cmp(a.deltaEarn))
     .slice(0, RANK_LIMIT);
 
-  const spendEmbed = formatSpendEmbed(dateLabel, spendTop);
-  const incomeEmbed = formatIncomeEmbed(`实时收入榜（${dateLabel}，罗马时间）`, incomeTop);
+  const spendEmbed = formatSpendEmbed(`测试消费榜（${dateLabel}）`, spendTop);
+  const incomeEmbed = formatIncomeEmbed(`测试收入榜（${dateLabel}）`, incomeTop)
 
   await Promise.all([
     sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
