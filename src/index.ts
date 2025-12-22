@@ -14,6 +14,7 @@ import { handleEndOrderButton } from './interactions/buttons/endOrder.js';
 import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
 import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
+import { registerTotalSpentCommand } from './commands/totalSpent.js';
 import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
 import { handleRegisterPeiwanSlash, registerPeiwanCommand } from './commands/registerPeiwanSlash.js';
 import { handleRedEnvelopeSlash, redEnvelopeSlashCommand } from './commands/redEnvelopeSlash.js';
@@ -214,6 +215,7 @@ client.once(Events.ClientReady, async () => {
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerTotalEarnCommand(client, prisma);
+  registerTotalSpentCommand(client, prisma);
   try {
         if (client.application) {
             await client.application.commands.create(grantCouponCommand);
