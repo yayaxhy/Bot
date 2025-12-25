@@ -1,6 +1,19 @@
 // src/events/messageCreate.ts
 import {
-  Client, GatewayIntentBits, Partials, Message, TextChannel, DMChannel, Guild, User, ThreadChannel, userMention, type TextBasedChannel,
+  ActionRowBuilder,
+  Client,
+  DMChannel,
+  EmbedBuilder,
+  GatewayIntentBits,
+  Message,
+  MessageFlags,
+  Partials,
+  StringSelectMenuBuilder,
+  TextChannel,
+  Guild,
+  ThreadChannel,
+  userMention,
+  type TextBasedChannel,
 } from 'discord.js';
 import dotenv from 'dotenv';
 import {
@@ -9,7 +22,7 @@ import {
   order_request_sent_successfully_embed,
   order_end_boss_embed,
   order_end_pw_embed,
-  invitation_embed,
+  buildQuotationSelect,
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
@@ -17,7 +30,6 @@ import { OrderStatus, OrderMode, QuotationCode } from '@prisma/client';
 import { endOrder } from '../services/orderService.js';
 import { cancelOrderTimers } from '../services/timerService.js';
 import {
-  registerInvitationMessage,
   scheduleOrderRequestClosure,
   isInvitationExpired,
   markInvitationHandled,
@@ -54,6 +66,7 @@ const orderBroadcastChannelIds = (process.env.ORDER_BROADCAST_CHANNEL_ID ?? '')
   .filter(Boolean);
 const orderAnonChannelId = process.env.ORDER_ANON_CHANNEL_ID;
 const anonNotifyChannelId = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
+const DEFAULT_EMBED_COLOR = 0xf5a623;
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const END_ORDER_PATTERN = /^!(?:陪玩|老板)结单(?:\s+(\S+))?$/;
@@ -437,23 +450,24 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
   const mode = isDm ? OrderMode.ANONYMOUS : OrderMode.REALNAME;
 
   try {
-    let orderContentForInvite = '';
+    const orderContentRaw = content.replace(/^!点单\s+\S+\s*/, '').trim();
+    const orderContent = stripRoleMentions(orderContentRaw).slice(0, 1024);
 
     const peiwan = await prisma.pEIWAN.findUnique({
       where: { PEIWANID: peiwanIdNum },
       select: {
         PEIWANID: true,
-      discordUserId: true,
-      defaultQuotationCode: true,
-      quotation_Q1: true,
-      lolPrice: true,
-      valPrice: true,
-      deltaPrice: true,
-      csgoPrice: true,
-      narakaPrice: true,
-      apexPrice: true,
-    },
-  });
+        discordUserId: true,
+        defaultQuotationCode: true,
+        quotation_Q1: true,
+        lolPrice: true,
+        valPrice: true,
+        deltaPrice: true,
+        csgoPrice: true,
+        narakaPrice: true,
+        apexPrice: true,
+      },
+    });
     if (!peiwan) {
       await message.reply(`未找到编号为 ${peiwanIdNum} 的陪玩。`);
       return true;
@@ -477,60 +491,59 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
       return true;
     }
 
-    const defaultCode = peiwan.defaultQuotationCode as QuotationCode;
-    const unitPrice = priceFromPeiwan(peiwan, defaultCode);
-    if (unitPrice == null || unitPrice <= 0) {
-      await message.reply('该陪玩的默认价格未设置，请联系工作人员。');
+    const prices: Partial<Record<QuotationCode, number | null>> = {};
+    for (const code of Object.keys(PRICE_FIELD_BY_CODE) as Array<QuotationCode>) {
+      prices[code] = priceFromPeiwan(peiwan, code);
+    }
+    const priceSelect = buildQuotationSelect(mode === OrderMode.REALNAME ? 'REALNAME' : 'ANON', prices);
+    if (!priceSelect) {
+      await message.reply('该陪玩暂未配置可用价格，请联系工作人员。');
       return true;
     }
 
-    const order = await prisma.order.create({
-      data: {
-        hostId: message.author.id,
-        workerId: peiwan.discordUserId,
-        peiwanId: peiwan.PEIWANID,
-        mode,
-        status: OrderStatus.PENDING,
-        quotationCode: defaultCode,
-        unitPrice,
-      },
-      select: { id: true, displayNo: true },
-    });
+    const embed = new EmbedBuilder()
+      .setTitle('请选择价格档位')
+      .setColor(DEFAULT_EMBED_COLOR)
+      .setDescription('选择价格后，机器人会向陪玩发送邀请。')
+      .addFields({
+        name: '陪玩ID',
+        value: `${peiwan.PEIWANID}${peiwan.discordUserId ? ` ${userMention(peiwan.discordUserId)}` : ''}`.trim(),
+        inline: true,
+      })
+      .addFields({
+        name: '点单模式',
+        value: mode === OrderMode.REALNAME ? '实名点单' : '匿名点单',
+        inline: true,
+      });
 
-    let workerUser: User | null = null;
-    try {
-      workerUser = await message.client.users.fetch(peiwan.discordUserId);
-      const orderContentForInviteRaw = content.replace(/^!点单\s+\S+\s*/, '').trim();
-      orderContentForInvite = stripRoleMentions(orderContentForInviteRaw);
-      const invitationContent = orderContentForInvite || '请与老板取得联系并开始服务';
-      const { embed, components } = invitation_embed(
-        order.id,
-        order.displayNo,
-        message.author.id,
-        invitationContent
-      );
-      const inviteMessage = await workerUser.send({ embeds: [embed], components });
-      registerInvitationMessage(order.id, inviteMessage);
-    } catch (err) {
-      console.error('[quickOrder] send invitation failed:', err);
-      await message.reply('无法向陪玩发送邀请，请稍后重试或联系工作人员。');
-      return true;
+    if (orderContent) {
+      embed.addFields({ name: '订单内容', value: orderContent, inline: false });
     }
 
-    const orderLabel = `${ORDER_ID_PREFIX}${order.displayNo ?? order.id}`;
-    await message.reply(`已向陪玩发送邀请，订单号：${orderLabel}。`);
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(priceSelect);
+    const payload = {
+      content: '请选择价格后下单：',
+      embeds: [embed],
+      components: [row],
+      allowedMentions: { parse: [] },
+    };
 
-    if (mode === OrderMode.ANONYMOUS) {
-      const balanceLabel = Number.isFinite(hostBalance) ? hostBalance.toFixed(2) : '未知';
-      const logContent = [
-        '【匿名点单】',
-        `点单人：${userMention(message.author.id)} (${message.author.id})`,
-        `陪玩：${userMention(peiwan.discordUserId)} (${peiwan.discordUserId})`,
-        `订单号：${orderLabel}`,
-        `点单内容：${orderContentForInvite || '（无）'}`,
-        `点单人余额：${balanceLabel}`,
-      ].join('\n');
-      await sendAnonLogMessage(message.client, logContent);
+    if (message.guild) {
+      try {
+        const ephemeralPayload = { ...payload, flags: MessageFlags.Ephemeral } as any;
+        await message.reply(ephemeralPayload);
+      } catch (err) {
+        console.error('[quickOrder] ephemeral reply failed, fallback to DM:', err);
+        try {
+          await message.author.send(payload);
+          await message.reply('已将价格选择发送到你的私信，请在私信中完成下单。');
+        } catch (dmErr) {
+          console.error('[quickOrder] DM price select failed:', dmErr);
+          await message.reply('无法发送价格选择，请检查私信设置或稍后再试。');
+        }
+      }
+    } else {
+      await message.reply(payload);
     }
 
     return true;
