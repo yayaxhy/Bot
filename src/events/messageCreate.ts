@@ -6,7 +6,6 @@ import {
   EmbedBuilder,
   GatewayIntentBits,
   Message,
-  MessageFlags,
   Partials,
   StringSelectMenuBuilder,
   TextChannel,
@@ -530,17 +529,14 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
 
     if (message.guild) {
       try {
-        const ephemeralPayload = { ...payload, flags: MessageFlags.Ephemeral } as any;
-        await message.reply(ephemeralPayload);
+        await message.author.send(payload);
+        await message.reply({
+          content: '邀请成功！请查看机器人私信',
+          allowedMentions: { parse: [] },
+        });
       } catch (err) {
-        console.error('[quickOrder] ephemeral reply failed, fallback to DM:', err);
-        try {
-          await message.author.send(payload);
-          await message.reply('已将价格选择发送到你的私信，请在私信中完成下单。');
-        } catch (dmErr) {
-          console.error('[quickOrder] DM price select failed:', dmErr);
-          await message.reply('无法发送价格选择，请检查私信设置或稍后再试。');
-        }
+        console.error('[quickOrder] DM price select failed:', err);
+        await message.reply('无法发送私信，请开启机器人私信后再试。');
       }
     } else {
       await message.reply(payload);
