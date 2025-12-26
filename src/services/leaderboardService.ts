@@ -7,6 +7,10 @@ const CONSUME_CHANNEL_ID = '1451405411424141372';
 const INCOME_CHANNEL_ID = '1451405489635065866';
 const POLL_INTERVAL_MS = 60 * 1000; // every minute for testing
 const RANK_LIMIT = 10;
+const EXCLUDED_USER_IDS = new Set<string>([
+  '1421651539247894549',
+  '525770714574225408',
+]);
 
 type SnapshotRow = {
   discordUserId: string;
@@ -88,6 +92,9 @@ const toMap = (rows: SnapshotRow[]) => {
   return map;
 };
 
+const stripExcluded = <T extends { discordUserId: string }>(rows: T[]): T[] =>
+  rows.filter((row) => !EXCLUDED_USER_IDS.has(row.discordUserId));
+
 async function loadSnapshotForDay(targetDayStart: Date) {
   await ensureSnapshot(targetDayStart);
 
@@ -96,7 +103,7 @@ async function loadSnapshotForDay(targetDayStart: Date) {
     select: { discordUserId: true, totalEarn: true, totalSpent: true },
   });
 
-  return startRows;
+  return stripExcluded(startRows);
 }
 
 async function loadSnapshotsForDayRange(targetDayStart: Date) {
@@ -115,7 +122,7 @@ async function loadSnapshotsForDayRange(targetDayStart: Date) {
     }),
   ]);
 
-  return { startRows, endRows };
+  return { startRows: stripExcluded(startRows), endRows: stripExcluded(endRows) };
 }
 
 function buildEntries(
@@ -235,9 +242,10 @@ async function generateRealtimeAndPost(client: Client) {
       totalEarn: row.peiwan?.totalEarn ?? new Prisma.Decimal(0),
     }))
   );
+  const filteredEndRows = stripExcluded(endRows);
 
   const userIds = Array.from(
-    new Set([...startRows, ...endRows].map((row) => row.discordUserId))
+    new Set([...startRows, ...filteredEndRows].map((row) => row.discordUserId))
   );
   const members = await prisma.member.findMany({
     where: { discordUserId: { in: userIds } },
@@ -247,7 +255,7 @@ async function generateRealtimeAndPost(client: Client) {
     members.map((m) => [m.discordUserId, m.serverDisplayName ?? m.discordUserId])
   );
 
-  const entries = buildEntries(startRows, endRows, displayMap);
+  const entries = buildEntries(startRows, filteredEndRows, displayMap);
   const spendTop = entries
     .filter((e) => e.deltaSpent.gt(0))
     .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
