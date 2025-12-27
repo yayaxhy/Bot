@@ -6,6 +6,7 @@ import { addHeart } from './heartService.js';
 import { notifyOrderEnded } from './orderNotificationService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
+import { consumeSpendBuff } from './buffService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 
 /** Accept an existing PENDING order and lock the peiwan busy */
@@ -307,6 +308,8 @@ async function settle(
   const hostRecharge = new Prisma.Decimal(hostAccount.recharge ?? 0);
   const hostBalanceBefore = new Prisma.Decimal(hostAccount.totalBalance ?? 0);
   let hostBalanceAfter = hostBalanceBefore;
+  const spendBonus = await consumeSpendBuff(tx, order.hostId, gross);
+  const totalSpentIncrement = gross.add(spendBonus.extra);
 
   if (gross.gt(0)) {
     let hostSplit;
@@ -327,7 +330,7 @@ async function settle(
         income: { decrement: hostSplit.fromIncome },
         recharge: { decrement: hostSplit.fromRecharge },
         totalBalance: { decrement: gross },
-        totalSpent: { increment: gross },
+        totalSpent: { increment: totalSpentIncrement },
       },
     });
 
@@ -343,7 +346,7 @@ async function settle(
     await tx.member.update({
       where: { discordUserId: order.hostId },
       data: {
-        totalSpent: { increment: gross },
+        totalSpent: { increment: totalSpentIncrement },
       },
     });
   }

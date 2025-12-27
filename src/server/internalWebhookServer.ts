@@ -8,7 +8,7 @@ import { applyCouponDiscountForOrder, type DiscountKind } from '../services/disc
 import { applyLotteryDiscountForOrder } from '../services/lotteryDiscountService.js';
 import { LotteryStatus } from '@prisma/client';
 import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
-import { applyCommissionBuff, applyFlowBuff } from '../services/buffService.js';
+import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -460,6 +460,54 @@ async function handleDoubleFlow(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+async function handleDoubleSpend(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const targetDiscordId = await resolveDiscordId({
+    discordId: payload?.targetDiscordId,
+    peiwanId: payload?.peiwanId,
+  });
+  const userId = targetDiscordId;
+  if (!userId) {
+    sendJson(res, 400, { ok: false, error: 'missing_target' });
+    return;
+  }
+  const voucherId = normalizeVoucherId(payload);
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const voucher = await consumeVoucher(
+        {
+          userId: payload?.userId ?? userId,
+          prizeName: PRIZE_NAMES.DOUBLE_SPEND_5000_VOUCHER,
+          voucherId,
+        },
+        tx
+      );
+      if (!voucher) return null;
+      const boost = await applySpendBuff(tx, userId);
+      return { voucherId: voucher.voucherId, expiresAt: boost.expiresAt, remaining: boost.remaining };
+    });
+
+    if (!result) {
+      sendJson(res, 404, { ok: false, error: 'no_voucher' });
+      return;
+    }
+
+    await notifyChannel(`<@${ADMIN_NOTIFY_USER_ID}>, 用户 <@${userId}> 使用了双倍消费5000券`);
+    sendJson(res, 200, {
+      ok: true,
+      voucherId: result.voucherId,
+      expiresAt: result.expiresAt.toISOString(),
+      remaining: result.remaining.toString(),
+    });
+  } catch (err) {
+    console.error('[internal-api] double spend boost failed', err);
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+  }
+}
+
 async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
@@ -663,6 +711,10 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/voucher/double-flow-5000') {
       await handleDoubleFlow(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/voucher/double-spend-5000') {
+      await handleDoubleSpend(req, res);
       return;
     }
     if (req.method === 'POST' && url.pathname === '/internal/discount') {

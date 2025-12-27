@@ -3,6 +3,7 @@ import prisma from '../db/prisma.js';
 import crypto from 'crypto';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
+import { consumeSpendBuff } from './buffService.js';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -29,6 +30,7 @@ export const PRIZE_NAMES = {
   CUSTOM_TAG_VOUCHER: '自定义tag券',
   COMMISSION_MINUS1_VOUCHER: '抽成降1%券',
   DOUBLE_FLOW_5000_VOUCHER: '双倍流水5000券',
+  DOUBLE_SPEND_5000_VOUCHER: '双倍消费5000券',
   DISCOUNT_70: '7折券',
   DISCOUNT_90_LOTTERY: '特殊9折券',
 } as const;
@@ -56,6 +58,7 @@ const PRIZE_NAME_BY_KIND: Record<PrizeKind, string | null> = {
   CUSTOM_TAG_VOUCHER: PRIZE_NAMES.CUSTOM_TAG_VOUCHER,
   COMMISSION_MINUS1_VOUCHER: PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER,
   DOUBLE_FLOW_5000_VOUCHER: PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER,
+  DOUBLE_SPEND_5000_VOUCHER: PRIZE_NAMES.DOUBLE_SPEND_5000_VOUCHER,
   DISCOUNT_70: PRIZE_NAMES.DISCOUNT_70,
   DISCOUNT_90_LOTTERY: PRIZE_NAMES.DISCOUNT_90_LOTTERY,
   OTHER: null,
@@ -78,6 +81,7 @@ export type PrizeKind =
   | 'CUSTOM_TAG_VOUCHER'
   | 'COMMISSION_MINUS1_VOUCHER'
   | 'DOUBLE_FLOW_5000_VOUCHER'
+  | 'DOUBLE_SPEND_5000_VOUCHER'
   | 'DISCOUNT_70'
   | 'DISCOUNT_90_LOTTERY'
   | 'OTHER';
@@ -148,6 +152,8 @@ export function classifyPrize(prizeName?: string | null): PrizeKind {
       return 'COMMISSION_MINUS1_VOUCHER';
     case PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER:
       return 'DOUBLE_FLOW_5000_VOUCHER';
+    case PRIZE_NAMES.DOUBLE_SPEND_5000_VOUCHER:
+      return 'DOUBLE_SPEND_5000_VOUCHER';
     case PRIZE_NAMES.DISCOUNT_70:
       return 'DISCOUNT_70';
     case PRIZE_NAMES.DISCOUNT_90_LOTTERY:
@@ -175,6 +181,7 @@ const generateCode = (kind: PrizeKind): string => {
     CUSTOM_TAG_VOUCHER: 'CTAG',
     COMMISSION_MINUS1_VOUCHER: 'FEE1',
     DOUBLE_FLOW_5000_VOUCHER: 'FLOW2',
+    DOUBLE_SPEND_5000_VOUCHER: 'SPEND2',
     DISCOUNT_70: 'D70',
     DISCOUNT_90_LOTTERY: 'D90',
     OTHER: 'PRIZE',
@@ -334,13 +341,15 @@ export async function performLotteryDraw(params: {
         throw new LotteryError('INSUFFICIENT_BALANCE');
       }
       const split = splitIncomeRecharge(income, recharge, DRAW_COST);
+      const spendBonus = await consumeSpendBuff(tx, userId, DRAW_COST);
+      const totalSpentIncrement = DRAW_COST.add(spendBonus.extra);
       await tx.member.update({
         where: { discordUserId: userId },
         data: {
           income: { decrement: split.fromIncome },
           recharge: { decrement: split.fromRecharge },
           totalBalance: { decrement: DRAW_COST },
-          totalSpent: { increment: DRAW_COST },
+          totalSpent: { increment: totalSpentIncrement },
         },
       });
       const balanceBefore = total;

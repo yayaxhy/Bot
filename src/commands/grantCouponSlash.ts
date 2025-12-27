@@ -35,6 +35,7 @@ const GRANT_ITEMS: Record<string, GrantItem> = {
   CUSTOM_TAG: { kind: 'lottery', label: '自定义tag券', prizeName: PRIZE_NAMES.CUSTOM_TAG_VOUCHER },
   COMMISSION_MINUS1: { kind: 'lottery', label: '抽成降1%券', prizeName: PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER },
   DOUBLE_FLOW_5000: { kind: 'lottery', label: '双倍流水5000券', prizeName: PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER },
+  DOUBLE_SPEND_5000: { kind: 'lottery', label: '双倍消费5000券', prizeName: PRIZE_NAMES.DOUBLE_SPEND_5000_VOUCHER },
 };
 
 const CHOICES = Object.entries(GRANT_ITEMS).map(([value, item]) => ({

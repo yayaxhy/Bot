@@ -9,7 +9,7 @@ import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
-import { consumeFlowBuff } from '../services/buffService.js';
+import { consumeFlowBuff, consumeSpendBuff } from '../services/buffService.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -395,13 +395,16 @@ export async function performGift(
       }
     }
 
+    const spendBonus = await consumeSpendBuff(tx, giverId, payable);
+    const totalSpentIncrement = payable.add(spendBonus.extra);
+
     await tx.member.update({
       where: { discordUserId: giverId },
       data: {
         income: { decrement: giverSplit.fromIncome },
         recharge: { decrement: giverSplit.fromRecharge },
         totalBalance: { decrement: payable },
-        totalSpent: { increment: payable },
+        totalSpent: { increment: totalSpentIncrement },
       },
     });
 

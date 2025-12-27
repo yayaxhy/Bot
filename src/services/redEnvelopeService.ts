@@ -12,6 +12,7 @@ import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
+import { consumeSpendBuff } from './buffService.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -587,6 +588,8 @@ export async function createRedEnvelope(
     const incomeAfter = incomePool.sub(split.fromIncome);
     const rechargeAfter = rechargePool.sub(split.fromRecharge);
     const totalBalanceAfter = incomeAfter.add(rechargeAfter);
+    const spendBonus = await consumeSpendBuff(tx, params.creatorId, totalAmount);
+    const totalSpentIncrement = totalAmount.add(spendBonus.extra);
 
     const updatedMember = await tx.member.update({
       where: { discordUserId: params.creatorId },
@@ -594,7 +597,7 @@ export async function createRedEnvelope(
         income: incomeAfter,
         recharge: rechargeAfter,
         totalBalance: totalBalanceAfter,
-        totalSpent: { increment: totalAmount },
+        totalSpent: { increment: totalSpentIncrement },
       },
       select: { totalBalance: true },
     });

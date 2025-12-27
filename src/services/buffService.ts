@@ -8,6 +8,8 @@ const COMMISSION_BOOST = new Prisma.Decimal(0.01); // +1%
 const COMMISSION_DURATION_MS = 30 * DAY_MS;
 const FLOW_EXTRA_CAP = new Prisma.Decimal(5000);
 const FLOW_DURATION_MS = 30 * DAY_MS;
+const SPEND_EXTRA_CAP = new Prisma.Decimal(5000);
+const SPEND_DURATION_MS = 30 * DAY_MS;
 
 const COMMISSION_WATCH_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const COMMISSION_CLEANUP_BATCH = 50;
@@ -177,6 +179,32 @@ export async function applyFlowBuff(
   return { expiresAt: newExpires, remaining: newRemaining };
 }
 
+export async function applySpendBuff(
+  client: TxLike,
+  userId: string
+): Promise<{ expiresAt: Date; remaining: Prisma.Decimal }> {
+  const rows = (await client.$queryRaw<
+    { remaining_extra: Prisma.Decimal; expires_at: Date | string | null }[]
+  >`SELECT remaining_extra, expires_at FROM spend_buff WHERE user_id = ${userId} LIMIT 1`) ?? [];
+  const now = new Date();
+  const currentExpires = rows[0]?.expires_at ? new Date(rows[0].expires_at) : null;
+  const base = currentExpires && currentExpires > now ? currentExpires : now;
+  const newExpires = new Date(base.getTime() + SPEND_DURATION_MS);
+  const existingRemaining = new Prisma.Decimal(rows[0]?.remaining_extra ?? 0);
+  const newRemaining = existingRemaining.add(SPEND_EXTRA_CAP);
+
+  await client.$executeRaw`
+    INSERT INTO spend_buff (user_id, remaining_extra, expires_at, created_at, updated_at)
+    VALUES (${userId}, ${newRemaining}, ${newExpires}, now(), now())
+    ON CONFLICT (user_id) DO UPDATE
+      SET remaining_extra = ${newRemaining},
+          expires_at = ${newExpires},
+          updated_at = now()
+  `;
+
+  return { expiresAt: newExpires, remaining: newRemaining };
+}
+
 export async function consumeFlowBuff(
   client: TxLike,
   userId: string,
@@ -194,6 +222,30 @@ export async function consumeFlowBuff(
 
   await client.$executeRaw`
     UPDATE flow_buff
+    SET remaining_extra = ${remainingAfter}, updated_at = now()
+    WHERE user_id = ${userId}
+  `;
+
+  return { extra, remaining: remainingAfter };
+}
+
+export async function consumeSpendBuff(
+  client: TxLike,
+  userId: string,
+  amount: Prisma.Decimal
+): Promise<{ extra: Prisma.Decimal; remaining: Prisma.Decimal }> {
+  const rows = (await client.$queryRaw<
+    { remaining_extra: Prisma.Decimal; expires_at: Date | string | null }[]
+  >`SELECT remaining_extra, expires_at FROM spend_buff WHERE user_id = ${userId} AND expires_at > now() LIMIT 1`) ?? [];
+  if (!rows.length) return { extra: new Prisma.Decimal(0), remaining: new Prisma.Decimal(0) };
+  const remaining = new Prisma.Decimal(rows[0].remaining_extra ?? 0);
+  if (remaining.lte(0)) return { extra: new Prisma.Decimal(0), remaining };
+
+  const extra = remaining.lt(amount) ? remaining : amount;
+  const remainingAfter = remaining.sub(extra);
+
+  await client.$executeRaw`
+    UPDATE spend_buff
     SET remaining_extra = ${remainingAfter}, updated_at = now()
     WHERE user_id = ${userId}
   `;
