@@ -122,10 +122,7 @@ const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
   return lines.join('\n');
 };
 
-const formatSpendRankingText = (entries: LeaderboardEntry[]) =>
-  entries.length > 0
-    ? entries.map((entry, idx) => `#${idx + 1} ${entry.displayName}`).join('\n')
-    : '暂无数据';
+const formatSpendRankingText = (entries: LeaderboardEntry[]) => formatIncomeRankingText(entries);
 
 async function loadSnapshotForDay(targetDayStart: Date) {
   await ensureSnapshot(targetDayStart);
@@ -237,7 +234,7 @@ async function generateDailyAndPost(client: Client) {
     .slice(0, RANK_LIMIT);
 
   const spendEmbed = formatSpendEmbed(
-    `${crown} 陪玩人气日榜（${dateLabel}） ${crown}`,
+    `${crown} 老板消费榜单（${dateLabel}） ${crown}`,
     spendTop
   );
   const incomeEmbed = formatIncomeEmbed(
@@ -294,7 +291,7 @@ async function generateRealtimeAndPost(client: Client) {
     .slice(0, RANK_LIMIT);
 
   const spendEmbed = formatSpendEmbed(
-    `${crown} 陪玩人气日榜（${dateLabel}） ${crown}`,
+    `${crown} 老板消费榜单（${dateLabel}） ${crown}`,
     spendTop
   );
   const incomeEmbed = formatIncomeEmbed(
