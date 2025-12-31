@@ -110,7 +110,9 @@ const formatRankingText = (entries: LeaderboardEntry[]) => {
     const rankLabel = ordinal[idx] ?? `第${idx + 1}名`;
     const prefix = idx <= 2 ? moon : star;
     const mention = idx <= 2 ? ` ${userMention(entry.discordUserId)}` : '';
-    let line = `${prefix} ${rankLabel}：${entry.displayName}${mention}`;
+    const label = idx <= 2 ? '' : `${rankLabel}：`;
+    const parts = [prefix, label, `${entry.displayName}${mention}`].filter(Boolean);
+    let line = parts.join(' ');
     if (idx === 0) line = `**${line}**`; // 最大强调（去除下划线）
     else if (idx === 1 || idx === 2) line = `**${line}**`; // 中号
     // 第四、第五名及之后保持小号
