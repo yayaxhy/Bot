@@ -1,4 +1,4 @@
-import { Client, EmbedBuilder, TextChannel } from 'discord.js';
+import { Client, EmbedBuilder, TextChannel, userMention } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 
@@ -103,19 +103,20 @@ const formatRankingText = (entries: LeaderboardEntry[]) => {
   const star = '<a:36:1422326912327618775>';
   const lines: string[] = [];
 
-  lines.push(`${crown} __**陪玩人气日榜**__ ${crown}`);
+  lines.push(`${crown} **陪玩人气日榜** ${crown}`);
   lines.push('');
 
   entries.forEach((entry, idx) => {
     const rankLabel = ordinal[idx] ?? `第${idx + 1}名`;
     const prefix = idx <= 2 ? moon : star;
-    let line = `${prefix} ${rankLabel}：${entry.displayName}`;
-    if (idx === 0) line = `__**${line}**__`; // 最大强调
+    const mention = idx <= 2 ? ` ${userMention(entry.discordUserId)}` : '';
+    let line = `${prefix} ${rankLabel}：${entry.displayName}${mention}`;
+    if (idx === 0) line = `**${line}**`; // 最大强调（去除下划线）
     else if (idx === 1 || idx === 2) line = `**${line}**`; // 中号
     // 第四、第五名及之后保持小号
 
     lines.push(line);
-    if (idx < 2) lines.push(''); // 前三名之间空一行
+    if (idx <= 2) lines.push(''); // 前三名之间空一行，第三名与第四名之间也空一行
   });
 
   return lines.join('\n');
