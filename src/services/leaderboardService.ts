@@ -95,6 +95,32 @@ const toMap = (rows: SnapshotRow[]) => {
 const stripExcluded = <T extends { discordUserId: string }>(rows: T[]): T[] =>
   rows.filter((row) => !EXCLUDED_USER_IDS.has(row.discordUserId));
 
+const formatRankingText = (entries: LeaderboardEntry[]) => {
+  if (!entries.length) return '暂无数据';
+  const ordinal = ['第一名', '第二名', '第三名', '第四名', '第五名'];
+  const crown = '<a:55:1422336379966324847>';
+  const moon = '<a:779626:1455781398924230787>';
+  const star = '<a:36:1422326912327618775>';
+  const lines: string[] = [];
+
+  lines.push(`${crown} __**陪玩人气日榜**__ ${crown}`);
+  lines.push('');
+
+  entries.forEach((entry, idx) => {
+    const rankLabel = ordinal[idx] ?? `第${idx + 1}名`;
+    const prefix = idx <= 2 ? moon : star;
+    let line = `${prefix} ${rankLabel}：${entry.displayName}`;
+    if (idx === 0) line = `__**${line}**__`; // 最大强调
+    else if (idx === 1 || idx === 2) line = `**${line}**`; // 中号
+    // 第四、第五名及之后保持小号
+
+    lines.push(line);
+    if (idx < 2) lines.push(''); // 前三名之间空一行
+  });
+
+  return lines.join('\n');
+};
+
 async function loadSnapshotForDay(targetDayStart: Date) {
   await ensureSnapshot(targetDayStart);
 
@@ -150,11 +176,7 @@ function buildEntries(
 }
 
 const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
-  const lines =
-    entries.length > 0
-      ? entries.map((entry, idx) => `#${idx + 1} ${entry.displayName}`).join('\n')
-      : '暂无消费数据';
-
+  const lines = formatRankingText(entries);
   return new EmbedBuilder()
     .setTitle(title)
     .setDescription(lines);
@@ -163,11 +185,7 @@ const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
 const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
   const bannerUrl =
     'https://cdn.discordapp.com/attachments/1445864521343439019/1455763863550038106/21.gif?ex=6955e93f&is=695497bf&hm=3efd1693fdae89e1e6d0e2d493b69171cf66f1dd337f15aceb4b3ea0d328fc4b';
-  const lines =
-    entries.length > 0
-      ? entries.map((entry, idx) => `#${idx + 1} ${entry.displayName}`).join('\n')
-      : '暂无收入数据';
-
+  const lines = formatRankingText(entries);
   return new EmbedBuilder()
     .setTitle(title)
     .setDescription(lines)
@@ -217,8 +235,8 @@ async function generateDailyAndPost(client: Client) {
     .sort((a, b) => b.deltaEarn.cmp(a.deltaEarn))
     .slice(0, RANK_LIMIT);
 
-  const spendEmbed = formatSpendEmbed(`日消费榜（${dateLabel}，罗马时间结算）`, spendTop);
-  const incomeEmbed = formatIncomeEmbed(`日收入榜（${dateLabel}，罗马时间结算）`, incomeTop);
+  const spendEmbed = formatSpendEmbed(`陪玩人气日榜（${dateLabel}）`, spendTop);
+  const incomeEmbed = formatIncomeEmbed(`陪玩人气日榜（${dateLabel}）`, incomeTop);
 
   await Promise.all([
     sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
@@ -268,8 +286,8 @@ async function generateRealtimeAndPost(client: Client) {
     .sort((a, b) => b.deltaEarn.cmp(a.deltaEarn))
     .slice(0, RANK_LIMIT);
 
-  const spendEmbed = formatSpendEmbed(`测试消费榜（${dateLabel}）`, spendTop);
-  const incomeEmbed = formatIncomeEmbed(`测试收入榜（${dateLabel}）`, incomeTop)
+  const spendEmbed = formatSpendEmbed(`陪玩人气日榜（${dateLabel}）`, spendTop);
+  const incomeEmbed = formatIncomeEmbed(`陪玩人气日榜（${dateLabel}）`, incomeTop)
 
   await Promise.all([
     sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
