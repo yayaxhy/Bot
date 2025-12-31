@@ -7,8 +7,6 @@ const CONSUME_CHANNEL_ID = '1451405411424141372';
 const INCOME_CHANNEL_ID = '1451405489635065866';
 const POLL_INTERVAL_MS = 60 * 1000; // every minute for testing
 const RANK_LIMIT = 10;
-const LEADERBOARD_BANNER_URL =
-  'https://cdn.discordapp.com/attachments/1445864521343439019/1455763863550038106/21.gif?ex=6955e93f&is=695497bf&hm=3efd1693fdae89e1e6d0e2d493b69171cf66f1dd337f15aceb4b3ea0d328fc4b';
 const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
   '525770714574225408',
@@ -159,11 +157,12 @@ const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
 
   return new EmbedBuilder()
     .setTitle(title)
-    .setDescription(lines)
-    .setImage(LEADERBOARD_BANNER_URL);
+    .setDescription(lines);
 };
 
 const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
+  const bannerUrl =
+    'https://cdn.discordapp.com/attachments/1445864521343439019/1455763863550038106/21.gif?ex=6955e93f&is=695497bf&hm=3efd1693fdae89e1e6d0e2d493b69171cf66f1dd337f15aceb4b3ea0d328fc4b';
   const lines =
     entries.length > 0
       ? entries.map((entry, idx) => `#${idx + 1} ${entry.displayName}`).join('\n')
@@ -172,7 +171,7 @@ const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
   return new EmbedBuilder()
     .setTitle(title)
     .setDescription(lines)
-    .setImage(LEADERBOARD_BANNER_URL);
+    .setImage(bannerUrl);
 };
 
 async function sendLeaderboard(
