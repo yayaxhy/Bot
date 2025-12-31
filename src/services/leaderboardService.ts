@@ -108,7 +108,7 @@ const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
     const rankLabel = ordinal[idx] ?? `第${idx + 1}名`;
     const prefix = idx <= 2 ? moon : star;
     const mention = idx <= 2 ? ` ${userMention(entry.discordUserId)}` : '';
-    const label = idx <= 2 ? '' : `${rankLabel}：`;
+    const label = `${rankLabel}：`;
     const parts = [prefix, label, `${entry.displayName}${mention}`].filter(Boolean);
     let line = parts.join(' ');
     if (idx === 0) line = `**${line}**`; // 最大强调（去除下划线）
