@@ -101,7 +101,7 @@ const star = '<a:36:1422326912327618775>';
 
 const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
   if (!entries.length) return '暂无数据';
-  const ordinal = ['第一名', '第二名', '第三名', '第四名', '第五名'];
+  const ordinal = ['第1名', '第2名', '第3名', '第4名', '第5名'];
   const lines: string[] = [];
 
   entries.forEach((entry, idx) => {
