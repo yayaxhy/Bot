@@ -6,7 +6,7 @@ import {
 } from '../ui/orderEmbeds.js';
 import { scheduleOrderRequestClosure } from '../services/orderInteractionManager.js';
 
-const SUPPORT_USER_ID = '1421651539247894549';
+const SUPPORT_USER_IDS = new Set(['1421651539247894549', '525770714574225408', '794340158991237121']);
 const ORDER_CHANNEL_ID = '1421495114928492604';
 const ROLE_MALE = '1430923554852962406';
 const ROLE_FEMALE = '1430923008045744211';
@@ -37,7 +37,7 @@ export const customerGangCommand = new SlashCommandBuilder()
 export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
   if (i.commandName !== '客服帮派') return;
 
-  if (i.user.id !== SUPPORT_USER_ID) {
+  if (!SUPPORT_USER_IDS.has(i.user.id)) {
     await i.reply({ content: '❌ 仅客服可用。', ephemeral: true });
     return;
   }
