@@ -9,6 +9,11 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { consumeSpendBuff } from './buffService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 
+// Prevent double settlement when multiple end requests land at once.
+async function lockOrderForUpdate(tx: Prisma.TransactionClient, orderId: string) {
+  await tx.$executeRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+}
+
 /** Accept an existing PENDING order and lock the peiwan busy */
 export async function acceptOrder(orderId: string) {
   return prisma.$transaction(async (tx) => {
@@ -156,6 +161,8 @@ type RecalcResult = { order: any | null; ended: boolean };
 /** Recompute remaining minutes; auto-end if balance can’t cover next minute */
 export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
   return prisma.$transaction(async (tx) => {
+    await lockOrderForUpdate(tx, orderId);
+
     const order = await tx.order.findUnique({
       where: { id: orderId },
       include: { host: true, worker: true, peiwan: true },
@@ -232,6 +239,8 @@ export async function recalcAllOrdersForHost(hostId: string) {
 /** End an order (host or worker) */
 export async function endOrder(orderId: string, byDiscordId: string) {
   return prisma.$transaction(async (tx) => {
+    await lockOrderForUpdate(tx, orderId);
+
     const order = await tx.order.findUnique({
       where: { id: orderId },
       include: { host: true, worker: true, peiwan: true },
