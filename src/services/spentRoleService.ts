@@ -34,6 +34,7 @@ const HEART_ROLE_TIERS: Tier[] = [
   { threshold: 334400, roles: ['1432092303777857687'] },
   { threshold: 999999, roles: ['1432092370803097853'] },
 ];
+const HEART_ROLE_IDS = HEART_ROLE_TIERS.flatMap((tier) => tier.roles);
 
 function computeRoleSet(totalSpent: number): string[] {
   const roleSet = new Set<string>();
@@ -107,21 +108,46 @@ export async function syncSpentRolesForMember(
   const heartValue = Math.max(maxSent, maxReceived);
   const heartRoles = computeHeartRoleSet(heartValue);
 
-  const desiredRoles = Array.from(new Set([...spendRoles, ...heartRoles]));
-  if (desiredRoles.length === 0) return;
+  const desiredHeartRoles = heartRoles;
+  const desiredRoles = Array.from(new Set([...spendRoles, ...desiredHeartRoles]));
 
   try {
     const guild = await client.guilds.fetch(SPENT_ROLE_GUILD_ID);
     const member = await guild.members.fetch(discordId);
 
+    const heartRolesToRemove = HEART_ROLE_IDS.filter(
+      (roleId) => member.roles.cache.has(roleId) && !desiredHeartRoles.includes(roleId)
+    );
     const missingRoles = desiredRoles.filter((roleId) => !member.roles.cache.has(roleId));
-    if (missingRoles.length === 0) {
-      return;
-    }
 
-    await member.roles.add(missingRoles);
-    console.log('[spent-role] assigned roles', { discordId, missingRoles });
+    if (heartRolesToRemove.length > 0) {
+      await member.roles.remove(heartRolesToRemove);
+      console.log('[spent-role] removed heart roles', { discordId, heartRolesToRemove });
+    }
+    if (missingRoles.length > 0) {
+      await member.roles.add(missingRoles);
+      console.log('[spent-role] assigned roles', { discordId, missingRoles });
+    }
   } catch (err) {
     console.error('[spent-role] failed to assign roles', { discordId, err });
+  }
+}
+
+/** Re-sync all members’ heart roles under the latest single-object logic */
+export async function resyncAllHeartRoles() {
+  const client = (globalThis as any).__CLIENT__ as Client | undefined;
+  if (!client) {
+    console.warn('[spent-role] no discord client, skip resync');
+    return;
+  }
+  const members = await prisma.member.findMany({
+    select: { discordUserId: true },
+  });
+  for (const m of members) {
+    try {
+      await syncSpentRolesForMember(m.discordUserId);
+    } catch (err) {
+      console.error('[spent-role] resync member failed', { discordId: m.discordUserId, err });
+    }
   }
 }
