@@ -17,6 +17,8 @@ async function lockOrderForUpdate(tx: Prisma.TransactionClient, orderId: string)
 /** Accept an existing PENDING order and lock the peiwan busy */
 export async function acceptOrder(orderId: string) {
   return prisma.$transaction(async (tx) => {
+    await lockOrderForUpdate(tx, orderId);
+
     const order = await tx.order.findUnique({
       where: { id: orderId },
       include: { peiwan: true, worker: true, host: true },

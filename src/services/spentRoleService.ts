@@ -93,18 +93,18 @@ export async function syncSpentRolesForMember(
 
   const [heartSent, heartReceived] = await Promise.all([
     prisma.heartCounter.aggregate({
-      _sum: { total: true },
+      _max: { total: true }, // highest heart sent to any single member
       where: { fromMemberId: discordId },
     }),
     prisma.heartCounter.aggregate({
-      _sum: { total: true },
+      _max: { total: true }, // highest heart received from any single member
       where: { toMemberId: discordId },
     }),
   ]);
 
-  const sentTotal = Number(heartSent._sum?.total ?? 0);
-  const receivedTotal = Number(heartReceived._sum?.total ?? 0);
-  const heartValue = Math.max(sentTotal, receivedTotal);
+  const maxSent = Number(heartSent._max?.total ?? 0);
+  const maxReceived = Number(heartReceived._max?.total ?? 0);
+  const heartValue = Math.max(maxSent, maxReceived);
   const heartRoles = computeHeartRoleSet(heartValue);
 
   const desiredRoles = Array.from(new Set([...spendRoles, ...heartRoles]));

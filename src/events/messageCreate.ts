@@ -330,7 +330,18 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
     await endOrder(order.id, userId);
     cancelOrderTimers(order.id);
   } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
     console.error('[messageCreate:endOrder] endOrder error:', err);
+    if (msg?.includes('Order not running')) {
+      const latest = await prisma.order.findUnique({
+        where: { id: order.id },
+        select: { status: true },
+      });
+      if (latest?.status === OrderStatus.ENDED) {
+        await message.reply(`订单 ${orderLabel} 已结单。`);
+        return true;
+      }
+    }
     await message.reply('结单失败，请稍后重试或联系工作人员。');
     return true;
   }

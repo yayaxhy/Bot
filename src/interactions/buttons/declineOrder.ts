@@ -43,6 +43,8 @@ export async function runOrderDeclineFlow(client: Client, orderId: string, worke
   if (order.status !== OrderStatus.PENDING) throw new Error('ORDER_NOT_PENDING');
 
   const updated = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+
     const current = await tx.order.findUnique({ where: { id: orderId } });
     if (!current) throw new Error('ORDER_NOT_FOUND');
 
