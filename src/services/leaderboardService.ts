@@ -325,16 +325,19 @@ export function startLeaderboardScheduler(client: Client) {
 
   const scheduleDaily = () => {
     const now = new Date();
-    const todayStart = romeDateStart(now);
-    const nextDayStart = addDaysUtc(todayStart, 1);
-    const delay = nextDayStart.getTime() - now.getTime();
+    const todayRomeStart = romeDateStart(now);
+    const nextRomeMidnight = addDaysUtc(todayRomeStart, 1); // 00:00 Rome next day
+    const delay = nextRomeMidnight.getTime() - now.getTime();
+
+    const tick = () => {
+      generateDailyAndPost(client).catch((err) =>
+        console.error('[leaderboard] daily failed', err)
+      );
+    };
+
     setTimeout(() => {
-      generateDailyAndPost(client).catch((err) => console.error('[leaderboard] daily failed', err));
-      setInterval(() => {
-        generateDailyAndPost(client).catch((err) =>
-          console.error('[leaderboard] daily failed', err)
-        );
-      }, 24 * 60 * 60 * 1000);
+      tick();
+      setInterval(tick, 24 * 60 * 60 * 1000);
     }, Math.max(1000, delay));
   };
 
