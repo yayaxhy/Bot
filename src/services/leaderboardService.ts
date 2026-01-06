@@ -5,7 +5,7 @@ import prisma from '../db/prisma.js';
 const ROME_TZ = 'Europe/Rome';
 const CONSUME_CHANNEL_ID = '1451405411424141372';
 const INCOME_CHANNEL_ID = '1451405489635065866';
-const POLL_INTERVAL_MS = 60 * 1000; // every minute for testing
+const POLL_INTERVAL_MS = 60 * 1000; // unused; realtime posting disabled
 const RANK_LIMIT = 10;
 const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
@@ -180,12 +180,14 @@ function buildEntries(
 
 const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
   const lines = formatSpendRankingText(entries);
-  return new EmbedBuilder().setTitle(title).setDescription(lines);
+  const bannerUrl =
+    'https://cdn.discordapp.com/attachments/1445864521343439019/1456874910474571838/1-_.gif?ex=695de87e&is=695c96fe&hm=aba3f5f92935f16f0d795b9fdb5c59a0d353f7791b184df3ca27e37948bb2b36';
+  return new EmbedBuilder().setTitle(title).setDescription(lines).setImage(bannerUrl);
 };
 
 const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
   const bannerUrl =
-    'https://cdn.discordapp.com/attachments/1445864521343439019/1455763863550038106/21.gif?ex=6955e93f&is=695497bf&hm=3efd1693fdae89e1e6d0e2d493b69171cf66f1dd337f15aceb4b3ea0d328fc4b';
+    'https://cdn.discordapp.com/attachments/1445864521343439019/1456874937234096159/2-_.gif?ex=695de884&is=695c9704&hm=47a66d65f47bd30df197958616a2e792a90f05c427a3c2d259efd8bbce9cb75d';
   const lines = formatIncomeRankingText(entries);
   return new EmbedBuilder().setTitle(title).setDescription(lines).setImage(bannerUrl);
 };
@@ -305,24 +307,7 @@ async function generateRealtimeAndPost(client: Client) {
   ]);
 }
 
-let running = false;
-
 export function startLeaderboardScheduler(client: Client) {
-  const runRealtime = async () => {
-    if (running) return;
-    running = true;
-    try {
-      await generateRealtimeAndPost(client);
-    } catch (err) {
-      console.error('[leaderboard] generate failed', err);
-    } finally {
-      running = false;
-    }
-  };
-
-  setInterval(runRealtime, POLL_INTERVAL_MS);
-  runRealtime().catch((err) => console.error('[leaderboard] initial run failed', err));
-
   const scheduleDaily = () => {
     const now = new Date();
     const todayRomeStart = romeDateStart(now);
