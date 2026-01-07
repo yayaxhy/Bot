@@ -37,6 +37,7 @@ import { runOrderAcceptanceFlow } from '../interactions/buttons/acceptOrder.js';
 import { runOrderDeclineFlow } from '../interactions/buttons/declineOrder.js';
 import { handleLotteryMessage } from '../commands/lottery.js';
 import { handleRenameCardCommand } from '../commands/renameCard.js';
+import { clickStore } from '../services/clickStore.js';
 
 dotenv.config();
 
@@ -708,6 +709,7 @@ export async function execute(message: Message) {
   const originalMsg = content;
   const orderId = message.id;       // 用消息 ID 作为 orderId
   const ownerId = userA.id;         // 🔴 显式传给按钮
+  clickStore.init(orderId, ownerId);
   const defaultCallEmoji = '<:11:1422321930043789343>';
 
   try {
@@ -724,6 +726,7 @@ export async function execute(message: Message) {
       if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
         await message.channel.send('老板派单啦，快来抢单');
         const posted = await message.channel.send(embedResponse);
+        clickStore.registerMessage(orderId, posted.channelId, ownerId);
         scheduleOrderRequestClosure(posted);
       }
 
@@ -740,6 +743,7 @@ export async function execute(message: Message) {
         if (generalChannel instanceof TextChannel) {
           await generalChannel.send('老板派单啦，快来抢单');
           const postedCopy = await generalChannel.send(embedResponse);
+          clickStore.registerMessage(orderId, postedCopy.channelId, ownerId);
           scheduleOrderRequestClosure(postedCopy);
         }
       }
@@ -764,6 +768,7 @@ export async function execute(message: Message) {
             content, content, orderId, ownerId, callEmoji
           );
           const posted = await channelB.send(embedResponse);
+          clickStore.registerMessage(orderId, posted.channelId, ownerId);
           scheduleOrderRequestClosure(posted);
         }
 

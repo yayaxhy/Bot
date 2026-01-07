@@ -258,8 +258,30 @@ export async function handlePlayButton(i: ButtonInteraction) {
     if (res) {
       try {
         const row = makePlayRow(res.count, orderId, ownerId);
+        const targets = res.messages ?? [];
+        const updatedIds = new Set<string>();
+
+        // update the message where the click happened
         if (i.message.editable) {
           await i.message.edit({ components: [row] });
+          updatedIds.add(`${i.channelId ?? ''}:${i.message.id}`);
+        }
+
+        // update other posted copies for the same order
+        for (const m of targets) {
+          const key = `${m.channelId}:${m.messageId}`;
+          if (updatedIds.has(key)) continue;
+          try {
+            const ch = await i.client.channels.fetch(m.channelId).catch(() => null);
+            if (ch && ch.isTextBased() && 'messages' in ch) {
+              const msg = await (ch as TextChannel).messages.fetch(m.messageId).catch(() => null);
+              if (msg?.editable) {
+                await msg.edit({ components: [row] });
+              }
+            }
+          } catch (err) {
+            console.error('[handlePlayButton] sync label failed', { channelId: m.channelId, messageId: m.messageId, err });
+          }
         }
       } catch (e) {
         console.error('[handlePlayButton] edit components failed:', e);
