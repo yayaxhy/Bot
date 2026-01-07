@@ -58,8 +58,16 @@ const DEFAULT_ALLOWED_ROLE_IDS = [
 const DEFAULT_BROADCAST_CHANNEL_IDS = [
   '1458089933863387207',
   '1458149629223768136',
-  '1458303076082520215'
+  '1458303076082520215',
+  '1445226263139582072',
 ];
+const GENERAL_BROADCAST_CHANNEL_ID = '1421495114928492604';
+const CHANNEL_OWNER_MAP: Record<string, string> = {
+  '1458089933863387207': '1349899133728587786',
+  '1458149629223768136': '7196217753522669322',
+  '1458303076082520215': '539545415687733294',
+  '1445226263139582072': '525770714574225408',
+};
 const configuredRoleIds = process.env.ALLOWED_ROLE_IDS
   ? process.env.ALLOWED_ROLE_IDS.split(',').map((id) => id.trim()).filter(Boolean)
   : [];
@@ -71,6 +79,7 @@ const orderBroadcastChannelIds = Array.from(
       .map((id) => id.trim())
       .filter(Boolean),
     ...DEFAULT_BROADCAST_CHANNEL_IDS,
+    GENERAL_BROADCAST_CHANNEL_ID,
   ])
 );
 const orderAnonChannelId = process.env.ORDER_ANON_CHANNEL_ID;
@@ -688,6 +697,14 @@ export async function execute(message: Message) {
 
   const hasAllowedRole = await messageMentionsAllowedRole(message);
 
+  // 专属派单区：仅允许指定老板发单
+    if (message.guild && CHANNEL_OWNER_MAP[message.channel.id]) {
+      const expectedOwnerId = CHANNEL_OWNER_MAP[message.channel.id];
+      if (userA.id !== expectedOwnerId) {
+        return;
+      }
+  }
+
   const originalMsg = content;
   const orderId = message.id;       // 用消息 ID 作为 orderId
   const ownerId = userA.id;         // 🔴 显式传给按钮
@@ -708,6 +725,23 @@ export async function execute(message: Message) {
         await message.channel.send('老板派单啦，快来抢单');
         const posted = await message.channel.send(embedResponse);
         scheduleOrderRequestClosure(posted);
+      }
+
+      // 专属派单区同步到综合派单区
+      if (
+        GENERAL_BROADCAST_CHANNEL_ID &&
+        message.guild &&
+        CHANNEL_OWNER_MAP[message.channel.id] &&
+        message.channel.id !== GENERAL_BROADCAST_CHANNEL_ID
+      ) {
+        const generalChannel = await message.client.channels
+          .fetch(GENERAL_BROADCAST_CHANNEL_ID)
+          .catch(() => null);
+        if (generalChannel instanceof TextChannel) {
+          await generalChannel.send('老板派单啦，快来抢单');
+          const postedCopy = await generalChannel.send(embedResponse);
+          scheduleOrderRequestClosure(postedCopy);
+        }
       }
 
       const { embed: successEmbed } = order_request_sent_successfully_embed(message.id);
