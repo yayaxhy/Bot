@@ -47,7 +47,12 @@ const formatRomeParts = (date: Date) => {
 
 const romeDateStart = (date: Date) => {
   const { year, month, day } = formatRomeParts(date);
-  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  // Start with midnight UTC for that Rome calendar day…
+  const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  // …then adjust by the Rome offset for that date (handles DST).
+  const romeGuess = new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: ROME_TZ }));
+  const offsetMs = utcGuess - romeGuess.getTime();
+  return new Date(utcGuess + offsetMs);
 };
 
 const romeDateLabel = (date: Date) => {
