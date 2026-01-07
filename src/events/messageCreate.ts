@@ -55,14 +55,24 @@ const DEFAULT_ALLOWED_ROLE_IDS = [
   '1430923554852962406', // 男陪陪
   '1430923746830581841', // 技术陪陪
 ];
+const DEFAULT_BROADCAST_CHANNEL_IDS = [
+  '1458089933863387207',
+  '1458149629223768136',
+  '1458303076082520215'
+];
 const configuredRoleIds = process.env.ALLOWED_ROLE_IDS
   ? process.env.ALLOWED_ROLE_IDS.split(',').map((id) => id.trim()).filter(Boolean)
   : [];
 const allowedRoleIds = Array.from(new Set([...configuredRoleIds, ...DEFAULT_ALLOWED_ROLE_IDS]));
-const orderBroadcastChannelIds = (process.env.ORDER_BROADCAST_CHANNEL_ID ?? '')
-  .split(',')
-  .map((id) => id.trim())
-  .filter(Boolean);
+const orderBroadcastChannelIds = Array.from(
+  new Set([
+    ...(process.env.ORDER_BROADCAST_CHANNEL_ID ?? '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean),
+    ...DEFAULT_BROADCAST_CHANNEL_IDS,
+  ])
+);
 const orderAnonChannelId = process.env.ORDER_ANON_CHANNEL_ID;
 const anonNotifyChannelId = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
 const DEFAULT_EMBED_COLOR = 0xf5a623;
