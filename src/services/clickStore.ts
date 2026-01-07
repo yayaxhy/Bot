@@ -16,9 +16,9 @@ class ClickStore {
     }
   }
 
-  registerMessage(messageId: string, channelId: string, ownerId: string) {
-    this.init(messageId, ownerId);
-    const state = this.map.get(messageId);
+  registerMessage(orderId: string, messageId: string, channelId: string, ownerId: string) {
+    this.init(orderId, ownerId);
+    const state = this.map.get(orderId);
     if (!state) return;
     const exists = state.messages.some(
       (m) => m.channelId === channelId && m.messageId === messageId

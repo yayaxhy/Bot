@@ -726,7 +726,7 @@ export async function execute(message: Message) {
       if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
         await message.channel.send('老板派单啦，快来抢单');
         const posted = await message.channel.send(embedResponse);
-        clickStore.registerMessage(orderId, posted.channelId, ownerId);
+        clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
         scheduleOrderRequestClosure(posted);
       }
 
@@ -743,7 +743,7 @@ export async function execute(message: Message) {
         if (generalChannel instanceof TextChannel) {
           await generalChannel.send('老板派单啦，快来抢单');
           const postedCopy = await generalChannel.send(embedResponse);
-          clickStore.registerMessage(orderId, postedCopy.channelId, ownerId);
+          clickStore.registerMessage(orderId, postedCopy.id, postedCopy.channelId, ownerId);
           scheduleOrderRequestClosure(postedCopy);
         }
       }
@@ -768,7 +768,7 @@ export async function execute(message: Message) {
             content, content, orderId, ownerId, callEmoji
           );
           const posted = await channelB.send(embedResponse);
-          clickStore.registerMessage(orderId, posted.channelId, ownerId);
+          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
           scheduleOrderRequestClosure(posted);
         }
 
