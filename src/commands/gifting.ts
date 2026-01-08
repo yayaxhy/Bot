@@ -9,7 +9,7 @@ import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
-import { consumeFlowBuff, consumeSpendBuff } from '../services/buffService.js';
+import { consumeFlowBuff, consumeSpendBuff, getFlowBuffRemaining, getSpendBuffRemaining } from '../services/buffService.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -112,7 +112,7 @@ async function grantReferralForGift(
     txOrderId: number;
     at: Date;
   }
-) {
+): Promise<{ boss?: { inviterId: string; amount: Prisma.Decimal } | null; worker?: { inviterId: string; amount: Prisma.Decimal } | null }> {
   const { giverId, receiverId, gross, netToReceiver, txOrderId, at } = params;
 
   const payReferral = async ({
@@ -123,8 +123,8 @@ async function grantReferralForGift(
     referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN' };
     amount: Prisma.Decimal;
     label: string;
-  }) => {
-    if (amount.lte(0)) return;
+  }): Promise<{ inviterId: string; amount: Prisma.Decimal } | null> => {
+    if (amount.lte(0)) return null;
     try {
       await tx.referralPayout.create({
         data: {
@@ -135,7 +135,7 @@ async function grantReferralForGift(
       });
     } catch (err) {
       if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') {
-        return; // already paid for this tx
+        return null; // already paid for this tx
       }
       throw err;
     }
@@ -167,6 +167,7 @@ async function grantReferralForGift(
       typeOfTransaction: `邀请提成`,
       timeCreatedAt: at,
     });
+    return { inviterId: referral.inviterId, amount };
   };
 
   // Boss inviter: giver consumes, type=LAOBAN earns 1% of gross
@@ -174,8 +175,9 @@ async function grantReferralForGift(
     where: { inviteeId: giverId },
     select: { inviterId: true, inviteeId: true, type: true },
   });
+  let bossPayout: { inviterId: string; amount: Prisma.Decimal } | null = null;
   if (bossRef?.type === 'LAOBAN') {
-    await payReferral({
+    bossPayout = await payReferral({
       referral: { inviterId: bossRef.inviterId, inviteeId: bossRef.inviteeId, type: 'LAOBAN' },
       amount: gross.mul(REF_RATE),
       label: '打赏老板1%',
@@ -187,13 +189,15 @@ async function grantReferralForGift(
     where: { inviteeId: receiverId },
     select: { inviterId: true, inviteeId: true, type: true },
   });
+  let workerPayout: { inviterId: string; amount: Prisma.Decimal } | null = null;
   if (pwRef?.type === 'PEIWAN') {
-    await payReferral({
+    workerPayout = await payReferral({
       referral: { inviterId: pwRef.inviterId, inviteeId: pwRef.inviteeId, type: 'PEIWAN' },
       amount: netToReceiver.mul(REF_RATE),
       label: '打赏陪玩1%',
     });
   }
+  return { boss: bossPayout ?? undefined, worker: workerPayout ?? undefined };
 }
 
 function buildPublicGiftSuccessMessage(result: GiftTransactionResult): MessageCreateOptions {
@@ -306,6 +310,7 @@ export async function performGift(
     const voucherConfigs = VOUCHER_GIFT_CONFIGS[normalizedGiftName] ?? [];
     let voucherCount = 0;
     let voucherValue = DEC(0);
+    const consumedVoucherIds: string[] = [];
     if (voucherConfigs.length) {
       const allowedPrizeNames = voucherConfigs.map((v) => v.prizeName);
       // 如果指定了特定券（网站触发），只消耗该券
@@ -332,6 +337,7 @@ export async function performGift(
           },
         });
         voucherCount = 1;
+        consumedVoucherIds.push(voucher.id);
         const cfg = voucherConfigs.find((c) => c.prizeName === voucher.prize?.name);
         const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
         const discountRate = new Prisma.Decimal(1).sub(payRate);
@@ -365,6 +371,7 @@ export async function performGift(
             where: { id: { in: ids } },
             data: { status: LotteryStatus.USED, consumeAt: now },
           });
+          consumedVoucherIds.push(...ids);
           for (const v of vouchers) {
             const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
             const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
@@ -404,6 +411,7 @@ export async function performGift(
       }
     }
 
+    const spendRemainingBefore = await getSpendBuffRemaining(tx, giverId);
     const spendBonus = await consumeSpendBuff(tx, giverId, payable);
     const totalSpentIncrement = payable.add(spendBonus.extra);
 
@@ -430,6 +438,7 @@ export async function performGift(
     const receiverRechargeBefore = new Prisma.Decimal(receiver.recharge ?? 0);
     const receiverBalanceBefore = new Prisma.Decimal(receiver.totalBalance ?? 0);
     let extraFlow = DEC(0);
+    const flowRemainingBefore = receiverPeiwan ? await getFlowBuffRemaining(tx, receiverId) : DEC(0);
 
     await tx.member.update({
       where: { discordUserId: receiverId },
@@ -487,13 +496,44 @@ export async function performGift(
       },
     });
 
-    await grantReferralForGift(tx, {
+    const referralResult = await grantReferralForGift(tx, {
       giverId,
       receiverId,
       gross,
       netToReceiver: netAmount,
       txOrderId: txRow.orderID,
       at: now,
+    });
+
+    const heartGainInt = Math.round(Number(heartGain.toString()));
+
+    await tx.giftAudit.create({
+      data: {
+        transactionId: txRow.Transid,
+        orderId: txRow.orderID,
+        giftName: gift.GiftName,
+        quantity: qtyDecimal,
+        unitPrice,
+        gross,
+        payable,
+        feeAmount,
+        netAmount,
+        receiverRate,
+        heartGain: heartGainInt,
+        giverId,
+        receiverId,
+        giverFromIncome: giverSplit.fromIncome,
+        giverFromRecharge: giverSplit.fromRecharge,
+        spendBonusExtra: spendBonus.extra,
+        spendRemainingBefore,
+        flowBonusExtra: extraFlow,
+        flowRemainingBefore,
+        voucherIds: consumedVoucherIds,
+        bossReferralInviterId: referralResult.boss?.inviterId ?? null,
+        bossReferralAmount: referralResult.boss?.amount ?? null,
+        workerReferralInviterId: referralResult.worker?.inviterId ?? null,
+        workerReferralAmount: referralResult.worker?.amount ?? null,
+      },
     });
 
     return {

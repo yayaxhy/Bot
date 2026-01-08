@@ -560,6 +560,47 @@ model ReferralPayout {
   @@unique([referralId, orderId])
 }
 
+model GiftAudit {
+  id                    String   @id @default(cuid())
+  transactionId         String   @unique
+  orderId               Int
+  giftName              String
+  quantity              Decimal  @db.Decimal(19, 4)
+  unitPrice             Decimal  @db.Decimal(19, 4)
+  gross                 Decimal  @db.Decimal(19, 4)
+  payable               Decimal  @db.Decimal(19, 4)
+  feeAmount             Decimal  @db.Decimal(19, 4)
+  netAmount             Decimal  @db.Decimal(19, 4)
+  receiverRate          Decimal  @db.Decimal(19, 4)
+  heartGain             Int
+  giverId               String
+  receiverId            String
+  giverFromIncome       Decimal  @db.Decimal(19, 4)
+  giverFromRecharge     Decimal  @db.Decimal(19, 4)
+  spendBonusExtra       Decimal  @db.Decimal(19, 4)
+  spendRemainingBefore  Decimal  @db.Decimal(19, 4)
+  flowBonusExtra        Decimal  @db.Decimal(19, 4)
+  flowRemainingBefore   Decimal  @db.Decimal(19, 4)
+  voucherIds            Json
+  bossReferralInviterId String?
+  bossReferralAmount    Decimal? @db.Decimal(19, 4)
+  workerReferralInviterId String?
+  workerReferralAmount  Decimal? @db.Decimal(19, 4)
+  createdAt             DateTime @default(now())
+}
+
+model Revert {
+  id                   String   @id @default(cuid())
+  originalTransactionId String   @unique
+  operatorId           String
+  reason               String
+  createdAt            DateTime @default(now())
+  status               String
+  details              Json
+
+  @@map("revert")
+}
+
 /// 记录用户是否曾经进入过目标 Guild（只插入一次，用于防止重复邀请奖励）
 model GuildJoinRecord {
   userId       String   @id
