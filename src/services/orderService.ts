@@ -6,7 +6,7 @@ import { addHeart } from './heartService.js';
 import { notifyOrderEnded } from './orderNotificationService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
-import { consumeSpendBuff } from './buffService.js';
+import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 
 // Prevent double settlement when multiple end requests land at once.
@@ -265,7 +265,10 @@ async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTim
   const billableMinutes = Math.max(0, minutesBetweenCeil(billableStart, endTime));
 
   const gross = round2(unitPrice.mul(billableMinutes).div(60));
-  const payoutShare = new Prisma.Decimal(order.commissionRate ?? order.worker.commissionRate ?? 0.75);
+  let payoutShare = new Prisma.Decimal(order.commissionRate ?? order.worker.commissionRate ?? 0.75);
+  const commissionBoost = await getActiveCommissionBoost(tx, order.workerId);
+  payoutShare = payoutShare.add(commissionBoost);
+  if (payoutShare.gt(1)) payoutShare = new Prisma.Decimal(1);
   const netToWorker = round2(gross.mul(payoutShare));
   const feeToPlatform = round2(gross.sub(netToWorker));
 
