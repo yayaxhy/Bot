@@ -30,7 +30,7 @@ export const DEFAULT_GIFTS: Array<{ GiftName: string; price: number }> = [
   { GiftName: '留声机', price: 300 },
   { GiftName: '一日冠', price: 888 },
   { GiftName: '三日冠', price: 2388 },
-  { GiftName: '一周冠', price: 4688 },
+  { GiftName: '一周冠', price: 5688 },
   { GiftName: '月冠名', price: 15888 },
   { GiftName: '季冠名', price: 42888 },
   { GiftName: '年冠名', price: 168888 },

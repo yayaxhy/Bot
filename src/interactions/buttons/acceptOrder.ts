@@ -1,5 +1,9 @@
 import {
-  ButtonInteraction, ChannelType, Client, TextChannel, User,
+  ButtonInteraction,
+  ChannelType,
+  Client,
+  TextChannel,
+  User,
 } from 'discord.js';
 import { acceptOrder as acceptOrderService } from '../../services/orderService.js';
 import { scheduleForOrder } from '../../services/timerService.js';
@@ -9,18 +13,64 @@ import {
   invite_successfully_inDiscord_embed,
   anon_invite_successfully_inDiscord_embed,
 } from '../../ui/orderEmbeds.js';
-import { OrderMode } from '@prisma/client';
+import { OrderMode, OrderStatus } from '@prisma/client';
 import { markInvitationHandled, isInvitationExpired } from '../../services/orderInteractionManager.js';
+import prisma from '../../db/prisma.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const ORDER_PUBLIC_ACCEPT_CHANNEL_IDS = (process.env.ORDER_PUBLIC_ACCEPT_CHANNEL_ID ?? '')
   .split(',')
   .map((id) => id.trim())
   .filter(Boolean);
+const BUSY_NOTIFY_TEXT = (display: string) =>
+  `陪玩 ${display} 正在忙，无法接单。可以邀请其他陪玩进行游玩哦～`;
+
+async function cancelPendingOrder(orderId: string) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { id: true, status: true, hostId: true, workerId: true },
+  });
+  if (!order) return null;
+  if (order.status === OrderStatus.PENDING) {
+    await prisma.order.update({
+      where: { id: orderId },
+      data: { status: OrderStatus.CANCELED, endedAt: new Date() },
+    });
+  }
+  return order;
+}
+
+async function notifyBossBusy(client: Client, hostId: string, workerId: string) {
+  try {
+    const workerUser = await client.users.fetch(workerId);
+    const displayName = workerUser.username || workerUser.tag || workerUser.id;
+    const bossUser = await client.users.fetch(hostId);
+    await bossUser.send(BUSY_NOTIFY_TEXT(displayName));
+  } catch (err) {
+    console.error('[acceptOrder] notify boss busy failed', { hostId, err });
+  }
+}
+
+async function cancelOtherPendingOrdersForWorker(client: Client, workerId: string, keepOrderId: string) {
+  const pending = await prisma.order.findMany({
+    where: { workerId, status: OrderStatus.PENDING, NOT: { id: keepOrderId } },
+    select: { id: true, hostId: true },
+  });
+  if (!pending.length) return;
+  const ids = pending.map((o) => o.id);
+  await prisma.order.updateMany({
+    where: { id: { in: ids }, status: OrderStatus.PENDING },
+    data: { status: OrderStatus.CANCELED, endedAt: new Date() },
+  });
+  for (const o of pending) {
+    await notifyBossBusy(client, o.hostId, workerId);
+  }
+}
 
 export async function runOrderAcceptanceFlow(client: Client, orderId: string) {
   const order = await acceptOrderService(orderId);
   await scheduleForOrder(orderId);
+  await cancelOtherPendingOrdersForWorker(client, order.workerId, order.id);
 
   let workerUser: User | null = null;
   try {
@@ -134,7 +184,20 @@ export async function handleAcceptOrder(i: ButtonInteraction) {
 
   } catch (err) {
     console.error('[handleAcceptOrder] error:', err);
-    const errorPayload = { content: '接单失败，不能重复接单', ephemeral: true };
+    const isBusy = err instanceof Error && err.message.includes('陪玩繁忙');
+    const msg = isBusy ? '您已经接单，不可重复接单。' : '接单失败，不能重复接单';
+    const errorPayload = { content: msg, ephemeral: true };
+
+    if (isBusy) {
+      const order = await cancelPendingOrder(orderId);
+      if (order?.hostId && order?.workerId) {
+        await notifyBossBusy(i.client, order.hostId, order.workerId);
+      }
+      try {
+        await i.message.edit({ components: [] });
+      } catch {}
+    }
+
     try {
       if (i.deferred || i.replied) {
         await i.followUp(errorPayload);

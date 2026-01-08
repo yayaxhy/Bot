@@ -18,19 +18,21 @@ const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 const hasSend = (channel: unknown): channel is { send: Function } =>
   !!channel && typeof (channel as any).send === 'function';
 const CAKE_GIFT_NAME = '小蛋糕';
-const VOUCHER_GIFT_CONFIGS: {
-  giftName: string;
-  prizeName: string;
-  payRate: number; // fraction to be paid per item when voucher used (0 =免单；0.75=75折)
-}[] = [
-  { giftName: '小蛋糕', prizeName: PRIZE_NAMES.CAKE_VOUCHER, payRate: 0 },
-  { giftName: '棒棒糖', prizeName: PRIZE_NAMES.LOLLIPOP_VOUCHER, payRate: 0 },
-  { giftName: '香水', prizeName: PRIZE_NAMES.PERFUME_VOUCHER, payRate: 0 },
-  { giftName: '旋转木马', prizeName: PRIZE_NAMES.CAROUSEL_VOUCHER, payRate: 0 },
-  { giftName: '南瓜车', prizeName: PRIZE_NAMES.PUMPKIN_CAR_VOUCHER, payRate: 0 },
-  { giftName: '留声机', prizeName: PRIZE_NAMES.PHONOGRAPH_VOUCHER, payRate: 0 },
-  { giftName: '一日冠', prizeName: PRIZE_NAMES.CROWN_75_VOUCHER, payRate: 0.75 },
-];
+const VOUCHER_GIFT_CONFIGS: Record<string, Array<{ prizeName: string; payRate: number }>> = {
+  小蛋糕: [{ prizeName: PRIZE_NAMES.CAKE_VOUCHER, payRate: 0 }],
+  棒棒糖: [{ prizeName: PRIZE_NAMES.LOLLIPOP_VOUCHER, payRate: 0 }],
+  香水: [{ prizeName: PRIZE_NAMES.PERFUME_VOUCHER, payRate: 0 }],
+  旋转木马: [{ prizeName: PRIZE_NAMES.CAROUSEL_VOUCHER, payRate: 0 }],
+  南瓜车: [{ prizeName: PRIZE_NAMES.PUMPKIN_CAR_VOUCHER, payRate: 0 }],
+  留声机: [{ prizeName: PRIZE_NAMES.PHONOGRAPH_VOUCHER, payRate: 0 }],
+  一日冠: [
+    { prizeName: PRIZE_NAMES.CROWN_DAY_90_VOUCHER, payRate: 0.9 },
+    { prizeName: PRIZE_NAMES.CROWN_75_VOUCHER, payRate: 0.75 },
+  ],
+  三日冠: [{ prizeName: PRIZE_NAMES.CROWN_3DAY_90_VOUCHER, payRate: 0.9 }],
+  一周冠: [{ prizeName: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER, payRate: 0.9 }],
+  月冠名: [{ prizeName: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER, payRate: 0.9 }],
+};
 const REF_RATE = new Prisma.Decimal(0.01);
 
 /** Parse: "!打赏 3/liwu @UserB @UserC" */
@@ -300,35 +302,40 @@ export async function performGift(
       select: { PEIWANID: true, totalEarn: true },
     });
 
-    // 礼物类代金券：按最早优先，每券对应 giftName，一日冠支持 75 折（payRate=0.75）
-    const voucherConfig = VOUCHER_GIFT_CONFIGS.find(
-      (cfg) => cfg.giftName === normalizedGiftName
-    );
+    // 礼物类代金券：按最早优先，每券对应 giftName，可有多种折扣
+    const voucherConfigs = VOUCHER_GIFT_CONFIGS[normalizedGiftName] ?? [];
     let voucherCount = 0;
     let voucherValue = DEC(0);
-    if (voucherConfig) {
+    if (voucherConfigs.length) {
+      const allowedPrizeNames = voucherConfigs.map((v) => v.prizeName);
       // 如果指定了特定券（网站触发），只消耗该券
       if (lotteryVoucherId) {
-        const updated = await tx.lotteryDraw.updateMany({
+        const voucher = await tx.lotteryDraw.findFirst({
           where: {
             id: lotteryVoucherId,
             userId: giverId,
             status: LotteryStatus.UNUSED,
             OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            prize: { name: { in: allowedPrizeNames } },
           },
+          select: { id: true, prize: { select: { name: true } } },
+        });
+        if (!voucher) {
+          throw new Error('礼物券不可用或已过期。');
+        }
+        await tx.lotteryDraw.update({
+          where: { id: voucher.id },
           data: {
             status: LotteryStatus.USED,
             consumeAt: now,
             requestId: voucherRequestId ?? undefined,
           },
         });
-        if (updated.count === 0) {
-          throw new Error('礼物券不可用或已过期。');
-        }
         voucherCount = 1;
-        const payRate = new Prisma.Decimal(voucherConfig.payRate);
+        const cfg = voucherConfigs.find((c) => c.prizeName === voucher.prize?.name);
+        const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
         const discountRate = new Prisma.Decimal(1).sub(payRate);
-        voucherValue = unitPrice.mul(discountRate);
+        voucherValue = voucherValue.add(unitPrice.mul(discountRate));
       } else {
         // 旧逻辑：按数量取最早券
         await tx.lotteryDraw.updateMany({
@@ -336,7 +343,7 @@ export async function performGift(
             userId: giverId,
             status: LotteryStatus.UNUSED,
             expiresAt: { lte: now },
-            prize: { name: voucherConfig.prizeName },
+            prize: { name: { in: allowedPrizeNames } },
           },
           data: { status: LotteryStatus.EXPIRED },
         });
@@ -345,9 +352,9 @@ export async function performGift(
             userId: giverId,
             status: LotteryStatus.UNUSED,
             expiresAt: { gt: now },
-            prize: { name: voucherConfig.prizeName },
+            prize: { name: { in: allowedPrizeNames } },
           },
-          select: { id: true },
+          select: { id: true, prize: { select: { name: true } } },
           orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
           take: quantity,
         });
@@ -358,10 +365,12 @@ export async function performGift(
             where: { id: { in: ids } },
             data: { status: LotteryStatus.USED, consumeAt: now },
           });
-          const payRate = new Prisma.Decimal(voucherConfig.payRate);
-          const discountRate = new Prisma.Decimal(1).sub(payRate);
-          const discountPerGift = unitPrice.mul(discountRate);
-          voucherValue = discountPerGift.mul(voucherCount);
+          for (const v of vouchers) {
+            const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
+            const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+            const discountRate = new Prisma.Decimal(1).sub(payRate);
+            voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+          }
         }
       }
     }

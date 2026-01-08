@@ -649,10 +649,28 @@ async function tryHandleInviteResponseCommand(message: Message): Promise<boolean
       await message.reply(`已接受订单 ${orderLabel}，系统将在 5 分钟后开始计费。`);
     } catch (err: any) {
       console.error('[tryHandleInviteResponseCommand] accept via command failed:', err);
+      const isBusy = err?.message?.includes?.('陪玩繁忙');
+      if (isBusy) {
+        const canceled = await prisma.order.updateMany({
+          where: { id: order.id, status: OrderStatus.PENDING },
+          data: { status: OrderStatus.CANCELED, endedAt: new Date() },
+        });
+        if (canceled.count > 0 && order.hostId) {
+          const bossMsg = `陪玩 <@${order.workerId}> 正在忙，无法接单。可以邀请其他陪玩进行游玩哦～`;
+          try {
+            const bossUser = await message.client.users.fetch(order.hostId);
+            await bossUser.send(bossMsg);
+          } catch (notifyErr) {
+            console.error('[inviteResponse] notify boss busy failed', notifyErr);
+          }
+        }
+      }
       const msg =
-        err?.message === 'ORDER_ALREADY_RUNNING'
-          ? '该订单已被接单。'
-          : '接单失败，请稍后重试。';
+        isBusy
+          ? '您已经接单，不可重复接单。'
+          : err?.message === 'ORDER_ALREADY_RUNNING'
+            ? '该订单已被接单。'
+            : '接单失败，请稍后重试。';
       await message.reply(msg);
     }
     return true;

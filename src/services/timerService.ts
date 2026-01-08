@@ -44,16 +44,32 @@ export async function scheduleForOrder(orderId: string) {
         const elapsed = o.stopwatchStartAt ? Math.ceil((now.getTime() - o.stopwatchStartAt.getTime())/60000) : 0;
         const est = o.unitPrice ? Number(o.unitPrice.toString()) * (elapsed / 60) : 0;
 
-        const reminder = `总点单时长 **${elapsed}** 分钟，预计金额 **¥${est.toFixed(2)}**。\n余额不足时会自动结单。`;
+        let hostUser: any = null;
+        let workerUser: any = null;
+        try {
+          hostUser = await (globalThis as any).__CLIENT__.users.fetch(o.hostId);
+        } catch {}
+        try {
+          workerUser = await (globalThis as any).__CLIENT__.users.fetch(o.workerId);
+        } catch {}
+
+        const workerName = workerUser?.username ?? workerUser?.tag ?? o.workerId;
+        const hostName = hostUser?.username ?? hostUser?.tag ?? o.hostId;
 
         try {
-          const hostUser = await (globalThis as any).__CLIENT__.users.fetch(o.hostId);
-          await hostUser.send(reminder);
+          if (hostUser) {
+            await hostUser.send(
+              `您与陪玩 ${workerName} 总点单时长 **${elapsed}** 分钟，预计金额 **¥${est.toFixed(2)}**。余额不足时会自动结单。`
+            );
+          }
         } catch {}
 
         try {
-          const workerUser = await (globalThis as any).__CLIENT__.users.fetch(o.workerId);
-          await workerUser.send(reminder);
+          if (workerUser) {
+            await workerUser.send(
+              `您与老板 ${hostName} 总点单时长 **${elapsed}** 分钟，预计金额 **¥${est.toFixed(2)}**。老板余额不足时会自动结单。`
+            );
+          }
         } catch {}
       } catch {}
       scheduleHourly();
