@@ -417,7 +417,7 @@ export async function performGift(
       },
     });
 
-    await recordIndividualTransaction(tx, {
+    const giverIndTx = await recordIndividualTransaction(tx, {
       discordId: giverId,
       thirdPartydiscordId: receiverId,
       balanceBefore: giverSplit.totalBefore,
@@ -457,7 +457,7 @@ export async function performGift(
       });
     }
 
-    await recordIndividualTransaction(tx, {
+    const receiverIndTx = await recordIndividualTransaction(tx, {
       discordId: receiverId,
       thirdPartydiscordId: giverId,
       balanceBefore: receiverBalanceBefore,
@@ -496,6 +496,41 @@ export async function performGift(
       at: now,
     });
 
+<<<<<<< Updated upstream
+=======
+    const heartGainInt = Math.round(Number(heartGain.toString()));
+
+    await tx.giftAudit.create({
+      data: {
+        paymentTransactionId: txRow.Transid,
+        individualTransactionId: giverIndTx.transactionId,
+        orderId: txRow.orderID,
+        giftName: gift.GiftName,
+        quantity: qtyDecimal,
+        unitPrice,
+        gross,
+        payable,
+        feeAmount,
+        netAmount,
+        receiverRate,
+        heartGain: heartGainInt,
+        giverId,
+        receiverId,
+        giverFromIncome: giverSplit.fromIncome,
+        giverFromRecharge: giverSplit.fromRecharge,
+        spendBonusExtra: spendBonus.extra,
+        spendRemainingBefore,
+        flowBonusExtra: extraFlow,
+        flowRemainingBefore,
+        voucherIds: consumedVoucherIds,
+        bossReferralInviterId: referralResult.boss?.inviterId ?? null,
+        bossReferralAmount: referralResult.boss?.amount ?? null,
+        workerReferralInviterId: referralResult.worker?.inviterId ?? null,
+        workerReferralAmount: referralResult.worker?.amount ?? null,
+      },
+    });
+
+>>>>>>> Stashed changes
     return {
       txId: txRow.Transid,
       giftName: gift.GiftName,

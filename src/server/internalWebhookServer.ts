@@ -9,6 +9,7 @@ import { applyLotteryDiscountForOrder } from '../services/lotteryDiscountService
 import { LotteryStatus } from '@prisma/client';
 import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
+import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -651,6 +652,28 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
   sendJson(res, 200, { ok: true });
 }
 
+async function handleRevertGift(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const txId = (payload?.transactionId ?? payload?.individualTransactionId)?.toString?.();
+  if (!txId) {
+    sendJson(res, 400, { ok: false, error: 'missing_transaction_id' });
+    return;
+  }
+
+  const operatorId = payload?.operatorId?.toString?.() ?? ADMIN_NOTIFY_USER_ID;
+  const reason = payload?.reason?.toString?.();
+
+  try {
+    await revertGiftByIndividualTx({ transactionId: txId, operatorId, reason });
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    console.error('[internal-api] revert gift failed', err);
+    sendJson(res, 500, { ok: false, error: 'revert_failed' });
+  }
+}
+
 export function startInternalWebhookServer() {
   if (serverInstance) {
     return serverInstance;
@@ -723,6 +746,10 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/rename-card') {
       await handleRenameCard(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/revert-gift') {
+      await handleRevertGift(req, res);
       return;
     }
 

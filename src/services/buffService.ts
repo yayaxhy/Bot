@@ -252,3 +252,28 @@ export async function consumeSpendBuff(
 
   return { extra, remaining: remainingAfter };
 }
+<<<<<<< Updated upstream
+=======
+
+export async function getFlowBuffRemaining(
+  client: TxLike,
+  userId: string
+): Promise<Prisma.Decimal> {
+  const rows = (await client.$queryRaw<
+    { remaining_extra: Prisma.Decimal; expires_at: Date | string | null }[]
+  >`SELECT remaining_extra, expires_at FROM flow_buff WHERE user_id = ${userId} AND expires_at > now() LIMIT 1`) ?? [];
+  if (!rows.length) return new Prisma.Decimal(0);
+  return new Prisma.Decimal(rows[0].remaining_extra ?? 0);
+}
+
+export async function getSpendBuffRemaining(
+  client: TxLike,
+  userId: string
+): Promise<Prisma.Decimal> {
+  const rows = (await client.$queryRaw<
+    { remaining_extra: Prisma.Decimal; expires_at: Date | string | null }[]
+  >`SELECT remaining_extra, expires_at FROM spend_buff WHERE user_id = ${userId} AND expires_at > now() LIMIT 1`) ?? [];
+  if (!rows.length) return new Prisma.Decimal(0);
+  return new Prisma.Decimal(rows[0].remaining_extra ?? 0);
+}
+>>>>>>> Stashed changes
