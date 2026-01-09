@@ -311,9 +311,14 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
       const voucherUsed =
         Array.isArray(result.audit.voucherIds) && result.audit.voucherIds.length > 0;
       if (giver) {
-        const giverMsg = voucherUsed
-          ? `你的一笔打赏已撤销，消耗的券已返还。`
-          : `你的一笔打赏已撤销，金额 ¥${refundText} 已返还。`;
+        let giverMsg: string;
+        if (voucherUsed && refundText === '0.00') {
+          giverMsg = `你的一笔打赏已撤销，消耗的券已返还。`;
+        } else if (voucherUsed) {
+          giverMsg = `你的一笔打赏已撤销，消耗的券和金额 ¥${refundText} 已返还。`;
+        } else {
+          giverMsg = `你的一笔打赏已撤销，金额 ¥${refundText} 已返还。`;
+        }
         await giver.send(giverMsg).catch(() => {});
       }
       if (receiver) {
