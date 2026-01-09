@@ -16,6 +16,7 @@ import {
   getFlowBuffRemaining,
   getSpendBuffRemaining,
 } from '../services/buffService.js';
+import { suppressRechargeNotifications } from '../services/rechargeNotifyConfig.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -288,6 +289,9 @@ export async function performGift(
   if (gross.lte(0)) throw new Error('金额必须大于 0。');
 
   const result = await prisma.$transaction(async (tx) => {
+    // 避免触发充值类通知
+    await suppressRechargeNotifications(tx);
+
     const now = new Date();
     const [giverAccount, receiver] = await Promise.all([
       tx.member.findUnique({

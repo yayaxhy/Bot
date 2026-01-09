@@ -3,6 +3,7 @@ import prisma from '../db/prisma.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { syncSpentRolesForMember } from './spentRoleService.js';
 import { getFlowBuffRemaining, getSpendBuffRemaining } from './buffService.js';
+import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 
 type TxLike = PrismaClient | Prisma.TransactionClient;
 
@@ -57,6 +58,9 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
   const { transactionId, operatorId, reason } = params;
 
   const result = await prisma.$transaction(async (tx) => {
+    // 撤销过程中不触发充值通知
+    await suppressRechargeNotifications(tx);
+
     const existing = await tx.revert.findUnique({ where: { originalTransactionId: transactionId } });
     if (existing) {
       throw new Error('already_reverted');
@@ -300,13 +304,16 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
     if (client) {
       const giver = await client.users.fetch(result.audit.giverId).catch(() => null);
       const receiver = await client.users.fetch(result.audit.receiverId).catch(() => null);
-      const amountText = Number(result.payable.toString()).toFixed(2);
+      const refundText = Number(result.payable.toString()).toFixed(2);
+      const workerNetText = Number(result.netAmount.toString()).toFixed(2);
+      const giverName =
+        giver?.username || (giver as any)?.displayName || result.audit.giverId;
       if (giver) {
-        await giver.send(`你的一笔打赏（流水号 ${params.transactionId}）已撤销，金额 ¥${amountText} 已返还。`).catch(() => {});
+        await giver.send(`你的一笔打赏已撤销，金额 ¥${refundText} 已返还。`).catch(() => {});
       }
       if (receiver) {
         await receiver
-          .send(`有一笔打赏（流水号 ${params.transactionId}）已被撤销，金额 ¥${amountText} 已扣回。`)
+          .send(`有一笔打赏（老板 ${giverName}）已被撤销，金额 ¥${workerNetText} 已扣回。`)
           .catch(() => {});
       }
     }
