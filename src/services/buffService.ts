@@ -252,8 +252,6 @@ export async function consumeSpendBuff(
 
   return { extra, remaining: remainingAfter };
 }
-<<<<<<< Updated upstream
-=======
 
 export async function getFlowBuffRemaining(
   client: TxLike,
@@ -276,4 +274,3 @@ export async function getSpendBuffRemaining(
   if (!rows.length) return new Prisma.Decimal(0);
   return new Prisma.Decimal(rows[0].remaining_extra ?? 0);
 }
->>>>>>> Stashed changes

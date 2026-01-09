@@ -9,7 +9,13 @@ import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
-import { consumeFlowBuff, consumeSpendBuff } from '../services/buffService.js';
+import {
+  consumeFlowBuff,
+  consumeSpendBuff,
+  getActiveCommissionBoost,
+  getFlowBuffRemaining,
+  getSpendBuffRemaining,
+} from '../services/buffService.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -123,8 +129,8 @@ async function grantReferralForGift(
     referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN' };
     amount: Prisma.Decimal;
     label: string;
-  }) => {
-    if (amount.lte(0)) return;
+  }): Promise<{ inviterId: string; amount: Prisma.Decimal } | null> => {
+    if (amount.lte(0)) return null;
     try {
       await tx.referralPayout.create({
         data: {
@@ -135,7 +141,7 @@ async function grantReferralForGift(
       });
     } catch (err) {
       if (err instanceof PrismaClientKnownRequestError && err.code === 'P2002') {
-        return; // already paid for this tx
+        return null; // already paid for this tx
       }
       throw err;
     }
@@ -167,7 +173,12 @@ async function grantReferralForGift(
       typeOfTransaction: `邀请提成`,
       timeCreatedAt: at,
     });
+
+    return { inviterId: referral.inviterId, amount };
   };
+
+  let bossResult: { inviterId: string; amount: Prisma.Decimal } | null = null;
+  let workerResult: { inviterId: string; amount: Prisma.Decimal } | null = null;
 
   // Boss inviter: giver consumes, type=LAOBAN earns 1% of gross
   const bossRef = await tx.referral.findUnique({
@@ -175,7 +186,7 @@ async function grantReferralForGift(
     select: { inviterId: true, inviteeId: true, type: true },
   });
   if (bossRef?.type === 'LAOBAN') {
-    await payReferral({
+    bossResult = await payReferral({
       referral: { inviterId: bossRef.inviterId, inviteeId: bossRef.inviteeId, type: 'LAOBAN' },
       amount: gross.mul(REF_RATE),
       label: '打赏老板1%',
@@ -188,12 +199,14 @@ async function grantReferralForGift(
     select: { inviterId: true, inviteeId: true, type: true },
   });
   if (pwRef?.type === 'PEIWAN') {
-    await payReferral({
+    workerResult = await payReferral({
       referral: { inviterId: pwRef.inviterId, inviteeId: pwRef.inviteeId, type: 'PEIWAN' },
       amount: netToReceiver.mul(REF_RATE),
       label: '打赏陪玩1%',
     });
   }
+
+  return { boss: bossResult, worker: workerResult };
 }
 
 function buildPublicGiftSuccessMessage(result: GiftTransactionResult): MessageCreateOptions {
@@ -290,6 +303,8 @@ export async function performGift(
     if (!receiver) throw new Error('收款方不存在。');
 
     let receiverRate = DEC(receiver.commissionRate ?? 0);
+    const commissionBoost = await getActiveCommissionBoost(tx, receiverId);
+    receiverRate = receiverRate.add(commissionBoost);
     if (receiverRate.gt(1)) receiverRate = DEC(1);
     const feeRate = DEC(1).sub(receiverRate);
     const feeAmount = gross.mul(feeRate);
@@ -303,14 +318,15 @@ export async function performGift(
     });
 
     // 礼物类代金券：按最早优先，每券对应 giftName，可有多种折扣
-    const voucherConfigs = VOUCHER_GIFT_CONFIGS[normalizedGiftName] ?? [];
-    let voucherCount = 0;
-    let voucherValue = DEC(0);
-    if (voucherConfigs.length) {
-      const allowedPrizeNames = voucherConfigs.map((v) => v.prizeName);
-      // 如果指定了特定券（网站触发），只消耗该券
-      if (lotteryVoucherId) {
-        const voucher = await tx.lotteryDraw.findFirst({
+  const voucherConfigs = VOUCHER_GIFT_CONFIGS[normalizedGiftName] ?? [];
+  let voucherCount = 0;
+  let voucherValue = DEC(0);
+  const consumedVoucherIds: string[] = [];
+  if (voucherConfigs.length) {
+    const allowedPrizeNames = voucherConfigs.map((v) => v.prizeName);
+    // 如果指定了特定券（网站触发），只消耗该券
+    if (lotteryVoucherId) {
+      const voucher = await tx.lotteryDraw.findFirst({
           where: {
             id: lotteryVoucherId,
             userId: giverId,
@@ -330,13 +346,14 @@ export async function performGift(
             consumeAt: now,
             requestId: voucherRequestId ?? undefined,
           },
-        });
-        voucherCount = 1;
-        const cfg = voucherConfigs.find((c) => c.prizeName === voucher.prize?.name);
-        const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
-        const discountRate = new Prisma.Decimal(1).sub(payRate);
-        voucherValue = voucherValue.add(unitPrice.mul(discountRate));
-      } else {
+      });
+      voucherCount = 1;
+      consumedVoucherIds.push(voucher.id);
+      const cfg = voucherConfigs.find((c) => c.prizeName === voucher.prize?.name);
+      const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+      const discountRate = new Prisma.Decimal(1).sub(payRate);
+      voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+    } else {
         // 旧逻辑：按数量取最早券
         await tx.lotteryDraw.updateMany({
           where: {
@@ -357,19 +374,20 @@ export async function performGift(
           select: { id: true, prize: { select: { name: true } } },
           orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
           take: quantity,
+      });
+      voucherCount = vouchers.length;
+      if (voucherCount > 0) {
+        const ids = vouchers.map((v) => v.id);
+        await tx.lotteryDraw.updateMany({
+          where: { id: { in: ids } },
+          data: { status: LotteryStatus.USED, consumeAt: now },
         });
-        voucherCount = vouchers.length;
-        if (voucherCount > 0) {
-          const ids = vouchers.map((v) => v.id);
-          await tx.lotteryDraw.updateMany({
-            where: { id: { in: ids } },
-            data: { status: LotteryStatus.USED, consumeAt: now },
-          });
-          for (const v of vouchers) {
-            const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
-            const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
-            const discountRate = new Prisma.Decimal(1).sub(payRate);
-            voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+        consumedVoucherIds.push(...ids);
+        for (const v of vouchers) {
+          const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
+          const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+          const discountRate = new Prisma.Decimal(1).sub(payRate);
+          voucherValue = voucherValue.add(unitPrice.mul(discountRate));
           }
         }
       }
@@ -404,6 +422,7 @@ export async function performGift(
       }
     }
 
+    const spendRemainingBefore = await getSpendBuffRemaining(tx, giverId);
     const spendBonus = await consumeSpendBuff(tx, giverId, payable);
     const totalSpentIncrement = payable.add(spendBonus.extra);
 
@@ -430,6 +449,7 @@ export async function performGift(
     const receiverRechargeBefore = new Prisma.Decimal(receiver.recharge ?? 0);
     const receiverBalanceBefore = new Prisma.Decimal(receiver.totalBalance ?? 0);
     let extraFlow = DEC(0);
+    const flowRemainingBefore = receiverPeiwan ? await getFlowBuffRemaining(tx, receiverId) : DEC(0);
 
     await tx.member.update({
       where: { discordUserId: receiverId },
@@ -487,7 +507,7 @@ export async function performGift(
       },
     });
 
-    await grantReferralForGift(tx, {
+    const referralResult = await grantReferralForGift(tx, {
       giverId,
       receiverId,
       gross,
@@ -496,8 +516,6 @@ export async function performGift(
       at: now,
     });
 
-<<<<<<< Updated upstream
-=======
     const heartGainInt = Math.round(Number(heartGain.toString()));
 
     await tx.giftAudit.create({
@@ -530,7 +548,6 @@ export async function performGift(
       },
     });
 
->>>>>>> Stashed changes
     return {
       txId: txRow.Transid,
       giftName: gift.GiftName,

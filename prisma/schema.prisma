@@ -592,8 +592,6 @@ model ReferralPayout {
   @@unique([referralId, orderId])
 }
 
-<<<<<<< Updated upstream
-=======
 model Revert {
   id                     String   @id @default(cuid())
   originalTransactionId  String   @unique
@@ -605,7 +603,6 @@ model Revert {
   @@map("revert")
 }
 
->>>>>>> Stashed changes
 /// 记录用户是否曾经进入过目标 Guild（只插入一次，用于防止重复邀请奖励）
 model GuildJoinRecord {
   userId       String   @id
