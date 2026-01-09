@@ -308,8 +308,13 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
       const workerNetText = Number(result.netAmount.toString()).toFixed(2);
       const giverName =
         giver?.username || (giver as any)?.displayName || result.audit.giverId;
+      const voucherUsed =
+        Array.isArray(result.audit.voucherIds) && result.audit.voucherIds.length > 0;
       if (giver) {
-        await giver.send(`你的一笔打赏已撤销，金额 ¥${refundText} 已返还。`).catch(() => {});
+        const giverMsg = voucherUsed
+          ? `你的一笔打赏已撤销，消耗的券已返还。`
+          : `你的一笔打赏已撤销，金额 ¥${refundText} 已返还。`;
+        await giver.send(giverMsg).catch(() => {});
       }
       if (receiver) {
         await receiver
