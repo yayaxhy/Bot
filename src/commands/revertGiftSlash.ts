@@ -18,8 +18,8 @@ export async function handleRevertGiftSlash(i: ChatInputCommandInteraction) {
     return;
   }
 
-  // 先占坑，避免 3 秒超时提示
-  await i.deferReply({ ephemeral: true }).catch(() => {});
+  // 先占坑，避免 3 秒超时提示（公开回复）
+  await i.deferReply({ ephemeral: false }).catch(() => {});
 
   const txId = i.options.getString('transaction_id', true).trim();
   const reason = i.options.getString('reason') ?? undefined;
