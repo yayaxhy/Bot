@@ -18,12 +18,15 @@ export async function handleRevertGiftSlash(i: ChatInputCommandInteraction) {
     return;
   }
 
+  // 先占坑，避免 3 秒超时提示
+  await i.deferReply({ ephemeral: true }).catch(() => {});
+
   const txId = i.options.getString('transaction_id', true).trim();
   const reason = i.options.getString('reason') ?? undefined;
 
   try {
     await revertGiftByIndividualTx({ transactionId: txId, operatorId: i.user.id, reason });
-    await i.reply({ content: `已撤销打赏流水 ${txId}，请留意余额和通知。`, ephemeral: false});
+    await i.editReply({ content: `已撤销打赏流水 ${txId}，请留意余额和通知。` });
   } catch (err: any) {
     const msg =
       err?.message === 'already_reverted'
@@ -31,6 +34,6 @@ export async function handleRevertGiftSlash(i: ChatInputCommandInteraction) {
         : err?.message === 'gift_not_found'
         ? '未找到对应的打赏审计记录。'
         : '撤销失败，请稍后重试。';
-    await i.reply({ content: msg, ephemeral: true });
+    await i.editReply({ content: msg });
   }
 }
