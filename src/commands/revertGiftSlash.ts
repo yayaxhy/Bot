@@ -23,7 +23,7 @@ export async function handleRevertGiftSlash(i: ChatInputCommandInteraction) {
 
   try {
     await revertGiftByIndividualTx({ transactionId: txId, operatorId: i.user.id, reason });
-    await i.reply({ content: `已尝试撤销打赏流水 ${txId}，请留意余额和通知。`, ephemeral: true });
+    await i.reply({ content: `已撤销打赏流水 ${txId}，请留意余额和通知。`, ephemeral: false});
   } catch (err: any) {
     const msg =
       err?.message === 'already_reverted'
