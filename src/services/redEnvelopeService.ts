@@ -12,7 +12,7 @@ import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
-import { consumeSpendBuff } from './buffService.js';
+import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -781,10 +781,13 @@ export async function claimRedEnvelope(
       select: { totalBalance: true, income: true, recharge: true, commissionRate: true },
     });
     const balanceBefore = new Prisma.Decimal(member?.totalBalance ?? 0);
-    const rate = member?.commissionRate
+    const baseRate = member?.commissionRate
       ? new Prisma.Decimal(member.commissionRate)
       : new Prisma.Decimal(1);
-    const netAmount = new Prisma.Decimal(share.mul(rate).toFixed(2));
+    const commissionBoost = await getActiveCommissionBoost(tx, claimerId);
+    let effectiveRate = baseRate.add(commissionBoost);
+    if (effectiveRate.gt(1)) effectiveRate = new Prisma.Decimal(1);
+    const netAmount = new Prisma.Decimal(share.mul(effectiveRate).toFixed(2));
     const balanceAfter = balanceBefore.add(netAmount);
 
     await tx.member.update({
