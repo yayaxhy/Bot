@@ -3,8 +3,12 @@ import { Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 
 const ROME_TZ = 'Europe/Rome';
-const CONSUME_CHANNEL_ID = '1451405411424141372';
-const INCOME_CHANNEL_ID = '1451405489635065866';
+const DAILY_CONSUME_CHANNEL_ID = '1459927296025690242';
+const DAILY_INCOME_CHANNEL_ID = '1459927770477101168';
+const WEEKLY_CONSUME_CHANNEL_ID = '1451405411424141372';
+const WEEKLY_INCOME_CHANNEL_ID = '1451405489635065866';
+const MONTHLY_CONSUME_CHANNEL_ID = '1451405411424141372';
+const MONTHLY_INCOME_CHANNEL_ID = '1451405489635065866';
 const RANK_LIMIT = 10;
 const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
@@ -295,8 +299,8 @@ async function generateDailyAndPost(client: Client) {
   );
 
   await Promise.all([
-    sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
-    sendLeaderboard(client, INCOME_CHANNEL_ID, incomeEmbed),
+    sendLeaderboard(client, DAILY_CONSUME_CHANNEL_ID, spendEmbed),
+    sendLeaderboard(client, DAILY_INCOME_CHANNEL_ID, incomeEmbed),
   ]);
 }
 
@@ -328,8 +332,8 @@ async function generateWeeklyAndPost(client: Client) {
   );
 
   await Promise.all([
-    sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
-    sendLeaderboard(client, INCOME_CHANNEL_ID, incomeEmbed),
+    sendLeaderboard(client, WEEKLY_CONSUME_CHANNEL_ID, spendEmbed),
+    sendLeaderboard(client, WEEKLY_INCOME_CHANNEL_ID, incomeEmbed),
   ]);
 }
 
@@ -364,8 +368,8 @@ async function generateMonthlyAndPost(client: Client) {
   );
 
   await Promise.all([
-    sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
-    sendLeaderboard(client, INCOME_CHANNEL_ID, incomeEmbed),
+    sendLeaderboard(client, MONTHLY_CONSUME_CHANNEL_ID, spendEmbed),
+    sendLeaderboard(client, MONTHLY_INCOME_CHANNEL_ID, incomeEmbed),
   ]);
 }
 
