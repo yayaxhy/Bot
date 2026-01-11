@@ -5,7 +5,6 @@ import prisma from '../db/prisma.js';
 const ROME_TZ = 'Europe/Rome';
 const CONSUME_CHANNEL_ID = '1451405411424141372';
 const INCOME_CHANNEL_ID = '1451405489635065866';
-const POLL_INTERVAL_MS = 60 * 1000; // realtime posting interval (testing)
 const RANK_LIMIT = 10;
 const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
@@ -66,6 +65,32 @@ const addDaysUtc = (date: Date, days: number) => {
   const next = new Date(date.getTime());
   next.setUTCDate(next.getUTCDate() + days);
   return next;
+};
+
+const romeDateFromParts = (year: number, month: number, day: number) => {
+  const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  const romeGuess = new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: ROME_TZ }));
+  const offsetMs = utcGuess - romeGuess.getTime();
+  return new Date(utcGuess + offsetMs);
+};
+
+const romeWeekStart = (date: Date) => {
+  const romeNow = new Date(date.toLocaleString('en-US', { timeZone: ROME_TZ }));
+  const day = romeNow.getDay(); // 0 Sun ... 6 Sat
+  const daysSinceMonday = (day + 6) % 7;
+  return addDaysUtc(romeDateStart(date), -daysSinceMonday);
+};
+
+const romeMonthStart = (date: Date) => {
+  const { year, month } = formatRomeParts(date);
+  return romeDateFromParts(year, month, 1);
+};
+
+const romeNextMonthStart = (date: Date) => {
+  const { year, month } = formatRomeParts(date);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  return romeDateFromParts(nextYear, nextMonth, 1);
 };
 
 async function ensureSnapshot(date: Date) {
@@ -156,18 +181,16 @@ async function loadSnapshotForDay(targetDayStart: Date) {
   return stripExcluded(startRows);
 }
 
-async function loadSnapshotsForDayRange(targetDayStart: Date) {
-  const nextDayStart = addDaysUtc(targetDayStart, 1);
-
-  await Promise.all([ensureSnapshot(targetDayStart), ensureSnapshot(nextDayStart)]);
+async function loadSnapshotsForRange(start: Date, end: Date) {
+  await Promise.all([ensureSnapshot(start), ensureSnapshot(end)]);
 
   const [startRows, endRows] = await Promise.all([
     prisma.dailySnapshot.findMany({
-      where: { date: targetDayStart },
+      where: { date: start },
       select: { discordUserId: true, totalEarn: true, totalSpent: true },
     }),
     prisma.dailySnapshot.findMany({
-      where: { date: nextDayStart },
+      where: { date: end },
       select: { discordUserId: true, totalEarn: true, totalSpent: true },
     }),
   ]);
@@ -197,6 +220,21 @@ function buildEntries(
   });
 
   return entries;
+}
+
+async function loadDisplayMap(startRows: SnapshotRow[], endRows: SnapshotRow[]) {
+  const userIds = Array.from(
+    new Set([...startRows, ...endRows].map((row) => row.discordUserId))
+  );
+  if (!userIds.length) return new Map<string, string>();
+
+  const members = await prisma.member.findMany({
+    where: { discordUserId: { in: userIds } },
+    select: { discordUserId: true, serverDisplayName: true },
+  });
+  return new Map(
+    members.map((m) => [m.discordUserId, m.serverDisplayName ?? m.discordUserId])
+  );
 }
 
 const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
@@ -233,18 +271,9 @@ async function generateDailyAndPost(client: Client) {
   const targetDayStart = addDaysUtc(todayStart, -1);
   const dateLabel = romeDateLabel(targetDayStart);
 
-  const { startRows, endRows } = await loadSnapshotsForDayRange(targetDayStart);
-
-  const userIds = Array.from(
-    new Set([...startRows, ...endRows].map((row) => row.discordUserId))
-  );
-  const members = await prisma.member.findMany({
-    where: { discordUserId: { in: userIds } },
-    select: { discordUserId: true, serverDisplayName: true },
-  });
-  const displayMap = new Map(
-    members.map((m) => [m.discordUserId, m.serverDisplayName ?? m.discordUserId])
-  );
+  const endDayStart = addDaysUtc(targetDayStart, 1);
+  const { startRows, endRows } = await loadSnapshotsForRange(targetDayStart, endDayStart);
+  const displayMap = await loadDisplayMap(startRows, endRows);
 
   const entries = buildEntries(startRows, endRows, displayMap);
   const spendTop = entries
@@ -261,7 +290,7 @@ async function generateDailyAndPost(client: Client) {
     spendTop
   );
   const incomeEmbed = formatIncomeEmbed(
-    `${crown} 陪玩人气日榜（${dateLabel}） ${crown}`,
+    `${crown} 陪玩人气日榜 ${crown}`,
     incomeTop
   );
 
@@ -271,39 +300,15 @@ async function generateDailyAndPost(client: Client) {
   ]);
 }
 
-async function generateRealtimeAndPost(client: Client) {
+async function generateWeeklyAndPost(client: Client) {
   const now = new Date();
-  const todayStart = romeDateStart(now);
-  const dateLabel = romeDateLabel(todayStart);
+  const thisWeekStart = romeWeekStart(now);
+  const lastWeekStart = addDaysUtc(thisWeekStart, -7);
 
-  const startRows = await loadSnapshotForDay(todayStart);
-  const endRows: CurrentRow[] = await prisma.member.findMany({
-    select: {
-      discordUserId: true,
-      totalSpent: true,
-      peiwan: { select: { totalEarn: true } },
-    },
-  }).then((rows) =>
-    rows.map((row) => ({
-      discordUserId: row.discordUserId,
-      totalSpent: row.totalSpent,
-      totalEarn: row.peiwan?.totalEarn ?? new Prisma.Decimal(0),
-    }))
-  );
-  const filteredEndRows = stripExcluded(endRows);
+  const { startRows, endRows } = await loadSnapshotsForRange(lastWeekStart, thisWeekStart);
+  const displayMap = await loadDisplayMap(startRows, endRows);
 
-  const userIds = Array.from(
-    new Set([...startRows, ...filteredEndRows].map((row) => row.discordUserId))
-  );
-  const members = await prisma.member.findMany({
-    where: { discordUserId: { in: userIds } },
-    select: { discordUserId: true, serverDisplayName: true },
-  });
-  const displayMap = new Map(
-    members.map((m) => [m.discordUserId, m.serverDisplayName ?? m.discordUserId])
-  );
-
-  const entries = buildEntries(startRows, filteredEndRows, displayMap);
+  const entries = buildEntries(startRows, endRows, displayMap);
   const spendTop = entries
     .filter((e) => e.deltaSpent.gt(0))
     .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
@@ -314,19 +319,56 @@ async function generateRealtimeAndPost(client: Client) {
     .slice(0, RANK_LIMIT);
 
   const spendEmbed = formatSpendEmbed(
-    `${redCrown} 老板的尊享日榜 ${redCrown}`,
+    `${redCrown} 老板尊享周榜 ${redCrown}`,
     spendTop
   );
   const incomeEmbed = formatIncomeEmbed(
-    `${crown} 陪玩人气日榜（${dateLabel}） ${crown}`,
+    `${crown} 陪玩人气周榜 ${crown}`,
     incomeTop
-  )
+  );
 
   await Promise.all([
     sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
     sendLeaderboard(client, INCOME_CHANNEL_ID, incomeEmbed),
   ]);
 }
+
+async function generateMonthlyAndPost(client: Client) {
+  const now = new Date();
+  const thisMonthStart = romeMonthStart(now);
+  const { year, month } = formatRomeParts(thisMonthStart);
+  const lastMonthYear = month === 1 ? year - 1 : year;
+  const lastMonth = month === 1 ? 12 : month - 1;
+  const lastMonthStart = romeDateFromParts(lastMonthYear, lastMonth, 1);
+
+  const { startRows, endRows } = await loadSnapshotsForRange(lastMonthStart, thisMonthStart);
+  const displayMap = await loadDisplayMap(startRows, endRows);
+
+  const entries = buildEntries(startRows, endRows, displayMap);
+  const spendTop = entries
+    .filter((e) => e.deltaSpent.gt(0))
+    .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
+    .slice(0, RANK_LIMIT);
+  const incomeTop = entries
+    .filter((e) => e.deltaEarn.gt(0))
+    .sort((a, b) => b.deltaEarn.cmp(a.deltaEarn))
+    .slice(0, RANK_LIMIT);
+
+  const spendEmbed = formatSpendEmbed(
+    `${redCrown} 老板尊享月榜 ${redCrown}`,
+    spendTop
+  );
+  const incomeEmbed = formatIncomeEmbed(
+    `${crown} 陪玩人气月榜 ${crown}`,
+    incomeTop
+  );
+
+  await Promise.all([
+    sendLeaderboard(client, CONSUME_CHANNEL_ID, spendEmbed),
+    sendLeaderboard(client, INCOME_CHANNEL_ID, incomeEmbed),
+  ]);
+}
+
 
 export function startLeaderboardScheduler(client: Client) {
   const scheduleDaily = () => {
@@ -349,15 +391,41 @@ export function startLeaderboardScheduler(client: Client) {
 
   scheduleDaily();
 
-  const scheduleRealtime = () => {
+  const scheduleWeekly = () => {
+    const now = new Date();
+    const thisWeekStart = romeWeekStart(now);
+    const nextWeekStart = addDaysUtc(thisWeekStart, 7);
+    const delay = nextWeekStart.getTime() - now.getTime();
+
     const tick = () => {
-      generateRealtimeAndPost(client).catch((err) =>
-        console.error('[leaderboard] realtime failed', err)
+      generateWeeklyAndPost(client).catch((err) =>
+        console.error('[leaderboard] weekly failed', err)
       );
     };
-    tick();
-    setInterval(tick, POLL_INTERVAL_MS);
+
+    setTimeout(() => {
+      tick();
+      setInterval(tick, 7 * 24 * 60 * 60 * 1000);
+    }, Math.max(1000, delay));
   };
 
-  scheduleRealtime();
+  const scheduleMonthly = () => {
+    const now = new Date();
+    const nextMonthStart = romeNextMonthStart(now);
+    const delay = nextMonthStart.getTime() - now.getTime();
+
+    const tick = () => {
+      generateMonthlyAndPost(client).catch((err) =>
+        console.error('[leaderboard] monthly failed', err)
+      );
+    };
+
+    setTimeout(() => {
+      tick();
+      scheduleMonthly();
+    }, Math.max(1000, delay));
+  };
+
+  scheduleWeekly();
+  scheduleMonthly();
 }
