@@ -132,13 +132,14 @@ const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
 
 const formatSpendRankingText = (entries: LeaderboardEntry[]) => {
   if (!entries.length) return '暂无数据';
-  const lines: string[] = [];
+  const lines: string[] = [''];
 
   entries.forEach((entry, idx) => {
     const rank = idx + 1;
     const prefix = rank <= 3 ? spinCrown : redStar;
     const mention = rank <= 3 ? ` ${userMention(entry.discordUserId)}` : '';
     lines.push(`${prefix} 第${rank}名：${entry.displayName}${mention}`);
+    if (rank <= 3) lines.push('');
   });
 
   return lines.join('\n');
