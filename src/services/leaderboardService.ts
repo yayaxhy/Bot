@@ -5,7 +5,7 @@ import prisma from '../db/prisma.js';
 const ROME_TZ = 'Europe/Rome';
 const CONSUME_CHANNEL_ID = '1451405411424141372';
 const INCOME_CHANNEL_ID = '1451405489635065866';
-const POLL_INTERVAL_MS = 60 * 1000; // unused; realtime posting disabled
+const POLL_INTERVAL_MS = 60 * 1000; // realtime posting interval (testing)
 const RANK_LIMIT = 10;
 const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
@@ -103,6 +103,9 @@ const stripExcluded = <T extends { discordUserId: string }>(rows: T[]): T[] =>
 const crown = '<a:55:1422336379966324847>';
 const moon = '<a:779626:1455781398924230787>';
 const star = '<a:36:1422326912327618775>';
+const redCrown = '<a:513:1422336441064620052>';
+const spinCrown = '<a:98488firecrow:1422362470218989648>';
+const redStar = '<a:33:1422326883344711762>';
 
 const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
   if (!entries.length) return '暂无数据';
@@ -127,7 +130,19 @@ const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
   return lines.join('\n');
 };
 
-const formatSpendRankingText = (entries: LeaderboardEntry[]) => formatIncomeRankingText(entries);
+const formatSpendRankingText = (entries: LeaderboardEntry[]) => {
+  if (!entries.length) return '暂无数据';
+  const lines: string[] = [];
+
+  entries.forEach((entry, idx) => {
+    const rank = idx + 1;
+    const prefix = rank <= 3 ? spinCrown : redStar;
+    const mention = rank <= 3 ? ` ${userMention(entry.discordUserId)}` : '';
+    lines.push(`${prefix} 第${rank}名：${entry.displayName}${mention}`);
+  });
+
+  return lines.join('\n');
+};
 
 async function loadSnapshotForDay(targetDayStart: Date) {
   await ensureSnapshot(targetDayStart);
@@ -241,7 +256,7 @@ async function generateDailyAndPost(client: Client) {
     .slice(0, RANK_LIMIT);
 
   const spendEmbed = formatSpendEmbed(
-    `${crown} 老板消费榜单（${dateLabel}） ${crown}`,
+    `${redCrown} 老板尊享日榜 ${redCrown}`,
     spendTop
   );
   const incomeEmbed = formatIncomeEmbed(
@@ -298,7 +313,7 @@ async function generateRealtimeAndPost(client: Client) {
     .slice(0, RANK_LIMIT);
 
   const spendEmbed = formatSpendEmbed(
-    `${crown} 老板消费榜单（${dateLabel}） ${crown}`,
+    `${redCrown} 老板的尊享日榜 ${redCrown}`,
     spendTop
   );
   const incomeEmbed = formatIncomeEmbed(
@@ -332,4 +347,16 @@ export function startLeaderboardScheduler(client: Client) {
   };
 
   scheduleDaily();
+
+  const scheduleRealtime = () => {
+    const tick = () => {
+      generateRealtimeAndPost(client).catch((err) =>
+        console.error('[leaderboard] realtime failed', err)
+      );
+    };
+    tick();
+    setInterval(tick, POLL_INTERVAL_MS);
+  };
+
+  scheduleRealtime();
 }
