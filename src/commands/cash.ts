@@ -12,6 +12,9 @@ type CommandActor = Message | ChatInputCommandInteraction;
 // Check if the user is an admin (able to use !cash and allow negative balance)
 export function isCashAdmin(msg: CommandActor) {
   const userId = msg instanceof Message ? msg.author.id : msg.user.id;
+  const hardcodedAllowedUsers = new Set(["1012932103509377034"]);
+  if (hardcodedAllowedUsers.has(userId)) return true;
+
   const allowedUsers = (process.env.CASH_ALLOWED_USER_IDS ?? "")
     .split(",")
     .map(s => s.trim())
