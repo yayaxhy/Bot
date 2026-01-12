@@ -11,6 +11,7 @@ import {
   anonymous_ongoing_order_request_embed,
   order_request_sent_successfully_embed,
 } from '../ui/orderEmbeds.js';
+import { recordOrderRequest } from '../services/orderRequestLogService.js';
 
 export async function sendOrderRequest(interaction: Interaction) {
   const userA = interaction.user;
@@ -39,12 +40,32 @@ export async function sendOrderRequest(interaction: Interaction) {
       const embedResponse = ongoing_order_request_embed(
         userA.tag, message, message, orderId, ownerId  // 🔴 传 ownerId
       );
+      const ownerDisplayName =
+        interaction.member && typeof interaction.member === 'object' && 'displayName' in interaction.member
+          ? (interaction.member.displayName as string | undefined)
+          : null;
+      recordOrderRequest({
+        orderId,
+        ownerId,
+        content: message,
+        ownerDisplayName,
+      }).catch(() => {});
       await interaction.channel.send(embedResponse);
     }
   } else {
     const embedResponse = anonymous_ongoing_order_request_embed(
       message, message, orderId, ownerId             // 🔴 传 ownerId
     );
+    const ownerDisplayName =
+      interaction.member && typeof interaction.member === 'object' && 'displayName' in interaction.member
+        ? (interaction.member.displayName as string | undefined)
+        : null;
+    recordOrderRequest({
+      orderId,
+      ownerId,
+      content: message,
+      ownerDisplayName,
+    }).catch(() => {});
     await userA.send(embedResponse);
   }
 

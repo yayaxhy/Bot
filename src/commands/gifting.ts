@@ -9,6 +9,7 @@ import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
+import { unlockGiftWallForPeiwan } from '../services/giftWallService.js';
 import {
   consumeFlowBuff,
   consumeSpendBuff,
@@ -596,6 +597,20 @@ export async function performGift(
     );
   } catch (notifyErr) {
     console.error('[performGift] notify receiver failed:', notifyErr);
+  }
+
+  try {
+    const reward = await unlockGiftWallForPeiwan({
+      receiverId,
+      giftName: result.giftName,
+    });
+    if (reward) {
+      const rewardText = reward.quantity === 1 ? reward.label : `${reward.label} x${reward.quantity}`;
+      const receiverUser = await client.users.fetch(receiverId);
+      await receiverUser.send(`🎉 恭喜你集齐礼物墙，已发放 ${rewardText}！`);
+    }
+  } catch (err) {
+    console.error('[gift-wall] reward notify failed:', err);
   }
 
   syncSpentRolesForMember(giverId).catch((err) =>

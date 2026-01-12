@@ -38,6 +38,7 @@ import { runOrderDeclineFlow } from '../interactions/buttons/declineOrder.js';
 import { handleLotteryMessage } from '../commands/lottery.js';
 import { handleRenameCardCommand } from '../commands/renameCard.js';
 import { clickStore } from '../services/clickStore.js';
+import { recordOrderRequest } from '../services/orderRequestLogService.js';
 
 dotenv.config();
 
@@ -735,6 +736,12 @@ export async function execute(message: Message) {
       orderBroadcastChannelIds.includes(message.channel.id) &&
       hasAllowedRole
     ) {
+      recordOrderRequest({
+        orderId,
+        ownerId,
+        content: originalMsg,
+        ownerDisplayName: message.member?.displayName ?? null,
+      }).catch(() => {});
       const callEmoji =
         message.guild?.emojis.resolve('1422321930043789343')?.toString()
         ?? defaultCallEmoji;
@@ -770,6 +777,12 @@ export async function execute(message: Message) {
       await userA.send({ content: '订单创建成功！', embeds: [successEmbed] });
     } else if (!message.guild) {
       if (hasAllowedRole) {
+        recordOrderRequest({
+          orderId,
+          ownerId,
+          content: originalMsg,
+          ownerDisplayName: message.member?.displayName ?? null,
+        }).catch(() => {});
         const channelB = await message.client.channels.fetch(orderAnonChannelId);
         if (channelB instanceof TextChannel) {
           const callEmoji =

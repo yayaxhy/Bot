@@ -5,6 +5,7 @@ import {
   order_request_sent_successfully_embed,
 } from '../ui/orderEmbeds.js';
 import { scheduleOrderRequestClosure } from '../services/orderInteractionManager.js';
+import { recordOrderRequest } from '../services/orderRequestLogService.js';
 
 const SUPPORT_USER_IDS = new Set(['1421651539247894549', '525770714574225408', '794340158991237121']);
 const ORDER_CHANNEL_ID = '1421495114928492604';
@@ -70,6 +71,17 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
   try {
     await i.deferReply({ ephemeral: true });
 
+    let ownerDisplayName: string | null = null;
+    if (channel.guild) {
+      ownerDisplayName = channel.guild.members.cache.get(boss.id)?.displayName ?? null;
+      if (!ownerDisplayName) {
+        ownerDisplayName = await channel.guild.members
+          .fetch(boss.id)
+          .then((m) => m.displayName)
+          .catch(() => null);
+      }
+    }
+
     await channel.send({ content: '老板派单啦，快来抢单' });
     const embedPayload = isAnonymous
       ? anonymous_ongoing_order_request_embed(
@@ -92,6 +104,12 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
       allowedMentions: { users: [], roles: allowedRoleIds, parse: [] },
     });
     scheduleOrderRequestClosure(posted);
+    recordOrderRequest({
+      orderId,
+      ownerId,
+      content: messageText,
+      ownerDisplayName: ownerDisplayName ?? null,
+    }).catch(() => {});
 
     const { embed: successEmbed } = order_request_sent_successfully_embed(orderId);
     await boss.send({ content: '订单创建成功！', embeds: [successEmbed] }).catch(() => null);

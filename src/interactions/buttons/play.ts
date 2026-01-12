@@ -10,6 +10,7 @@ import {
 } from 'discord.js';
 import prisma from '../../db/prisma.js';
 import { clickStore } from '../../services/clickStore.js';
+import { recordOrderClick } from '../../services/orderRequestLogService.js';
 import { PeiwanStatus, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
@@ -256,6 +257,11 @@ export async function handlePlayButton(i: ButtonInteraction) {
     clickStore.init(orderId, ownerId);
     const res = clickStore.addClick(orderId, workerId);
     if (res) {
+      const workerDisplayName =
+        i.member && typeof i.member === 'object' && 'displayName' in i.member
+          ? (i.member.displayName as string | undefined)
+          : null;
+      recordOrderClick({ orderId, workerId, workerDisplayName }).catch(() => {});
       try {
         const row = makePlayRow(res.count, orderId, ownerId);
         const targets = res.messages ?? [];
