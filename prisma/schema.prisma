@@ -265,9 +265,20 @@ model Gift {
   GiftName String   @id
   price    Decimal? @db.Decimal(19, 4)
   url_link String?
+  active   Boolean  @default(true)
   rate     Decimal  @default(1) @db.Decimal(10, 2)
 
   unlocks PeiwanGiftUnlock[]
+  giftImage GiftImage?
+}
+
+model GiftImage {
+  giftName  String   @id
+  fileName  String
+  category  String   @default("默认")
+  uploadedAt DateTime @default(now())
+
+  gift Gift @relation(fields: [giftName], references: [GiftName], onDelete: Cascade)
 }
 
 model PeiwanGiftUnlock {

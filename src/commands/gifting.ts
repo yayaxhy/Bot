@@ -95,6 +95,7 @@ type GiftRecord = {
   price: Prisma.Decimal | null;
   url_link: string | null;
   rate: Prisma.Decimal | null;
+  active: boolean;
 };
 
 export interface GiftTransactionResult {
@@ -275,9 +276,10 @@ export async function performGift(
   const normalizedGiftName = giftName.normalize('NFKC').trim();
   const gift = giftRecord ?? await prisma.gift.findUnique({
     where: { GiftName: normalizedGiftName },
-    select: { GiftName: true, price: true, url_link: true, rate: true },
+    select: { GiftName: true, price: true, url_link: true, rate: true, active: true },
   });
   if (!gift) throw new Error(`礼物不存在：${giftName}`);
+  if (!gift.active) throw new Error('该礼物已经下架');
 
   await Promise.all([
     ensureMember(prisma, giverId, giverUsername),
@@ -751,7 +753,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       const normalized = giftName.normalize('NFKC').trim();
       const gift = await prisma.gift.findFirst({
         where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-        select: { GiftName: true, price: true, url_link: true, rate: true },
+        select: { GiftName: true, price: true, url_link: true, rate: true, active: true },
       });
 
       if (!gift) {
@@ -765,6 +767,10 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           ? `可选：${suggestions.map((s) => s.GiftName).join(', ')}`
           : '（没有相近名称）';
         await msg.reply(`礼物不存在：${giftName}。${hint}`);
+        return;
+      }
+      if (!gift.active) {
+        await msg.reply('该礼物已经下架。');
         return;
       }
 

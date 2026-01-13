@@ -105,11 +105,11 @@ export async function unlockGiftWallForPeiwan(params: {
       skipDuplicates: true,
     });
 
-    const totalGifts = await tx.gift.count();
+    const totalGifts = await tx.gift.count({ where: { active: true } });
     if (totalGifts <= 0) return null;
 
     const unlockedCount = await tx.peiwanGiftUnlock.count({
-      where: { discordUserId: receiverId },
+      where: { discordUserId: receiverId, gift: { active: true } },
     });
     if (unlockedCount < totalGifts) return null;
 
