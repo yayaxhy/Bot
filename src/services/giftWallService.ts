@@ -105,13 +105,19 @@ export async function unlockGiftWallForPeiwan(params: {
       skipDuplicates: true,
     });
 
-    const totalGifts = await tx.gift.count({ where: { active: true } });
-    if (totalGifts <= 0) return null;
+    const giftCatalog = await tx.gift.findMany({
+      where: { active: true },
+      select: { GiftName: true, giftImage: { select: { category: true } } },
+    });
+    const eligibleGiftNames = giftCatalog
+      .filter((gift) => gift.giftImage?.category !== '老板')
+      .map((gift) => gift.GiftName);
+    if (eligibleGiftNames.length <= 0) return null;
 
     const unlockedCount = await tx.peiwanGiftUnlock.count({
-      where: { discordUserId: receiverId, gift: { active: true } },
+      where: { discordUserId: receiverId, giftName: { in: eligibleGiftNames } },
     });
-    if (unlockedCount < totalGifts) return null;
+    if (unlockedCount < eligibleGiftNames.length) return null;
 
     for (const reward of GIFT_WALL_REWARDS) {
       if (!reward.quantity || reward.quantity <= 0) continue;
