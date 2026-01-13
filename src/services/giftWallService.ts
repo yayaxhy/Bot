@@ -1,4 +1,4 @@
-import { CouponStatus, CouponType, Prisma } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryPool, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { isUniqueConstraintError, realignCouponSequence } from './sequenceService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
@@ -65,7 +65,7 @@ async function grantLotteryReward(
   tx: Prisma.TransactionClient,
   receiverId: string,
   reward: GiftWallReward,
-  prize: { id: string; pool: Prisma.LotteryPool }
+  prize: { id: string; pool: LotteryPool }
 ) {
 
   const now = Date.now();
