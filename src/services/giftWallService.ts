@@ -110,7 +110,7 @@ export async function unlockGiftWallForPeiwan(params: {
       select: { GiftName: true, giftImage: { select: { category: true } } },
     });
     const eligibleGiftNames = giftCatalog
-      .filter((gift) => gift.giftImage?.category !== '老板')
+      .filter((gift) => gift.giftImage?.fileName && gift.giftImage.category !== '老板')
       .map((gift) => gift.GiftName);
     if (eligibleGiftNames.length <= 0) return null;
 

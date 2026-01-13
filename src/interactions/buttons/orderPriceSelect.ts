@@ -9,6 +9,7 @@ import prisma from '../../db/prisma.js';
 import { OrderMode, OrderStatus, QuotationCode } from '@prisma/client';
 import { invitation_embed } from '../../ui/orderEmbeds.js';
 import { registerInvitationMessage } from '../../services/orderInteractionManager.js';
+import { recordOrderRequest } from '../../services/orderRequestLogService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const SUPPORT_STAFF_USER_ID = process.env.SUPPORT_STAFF_USER_ID ?? '';
@@ -192,6 +193,24 @@ export async function handleOrderPriceSelect(i: Interaction) {
     },
     select: { id: true, displayNo: true },
   });
+
+  const requestContent = [
+    `点单给 <@${workerId}>`,
+    `陪玩ID:${peiwan.PEIWANID}`,
+    orderContentFromEmbed || '',
+  ]
+    .join(' ')
+    .trim();
+  const ownerDisplayName =
+    i.member && typeof i.member === 'object' && 'displayName' in i.member
+      ? (i.member.displayName as string | undefined)
+      : (i.user.globalName ?? i.user.username ?? null);
+  recordOrderRequest({
+    orderId: order.id,
+    ownerId: hostId,
+    content: requestContent || `点单给 <@${workerId}>`,
+    ownerDisplayName: ownerDisplayName ?? null,
+  }).catch(() => {});
 
   // 5) 私信陪玩：发送邀请嵌入
   try {
