@@ -107,7 +107,7 @@ export async function unlockGiftWallForPeiwan(params: {
 
     const giftCatalog = await tx.gift.findMany({
       where: { active: true },
-      select: { GiftName: true, giftImage: { select: { category: true } } },
+      select: { GiftName: true, giftImage: { select: { category: true, fileName: true } } },
     });
     const eligibleGiftNames = giftCatalog
       .filter((gift) => gift.giftImage?.fileName && gift.giftImage.category !== '老板')
