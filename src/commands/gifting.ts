@@ -731,6 +731,11 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         },
       });
 
+      if (!msg.guild) {
+        await msg.reply('如需匿名打赏请复制如下口令重新发送：!匿名打赏 数量/礼物 5xxxx');
+        return;
+      }
+
       const parsed = parseGiftingCommand(msg);
       if (!parsed) {
         await msg.reply('用法：`!打赏 数量/礼物名 @对方(可多个)` 例如：`!打赏 3/甜甜圈 @陪玩A @陪玩B`');
