@@ -137,6 +137,7 @@ const star = '<a:36:1422326912327618775>';
 const redCrown = '<a:513:1422336441064620052>';
 const spinCrown = '<a:98488firecrow:1422362470218989648>';
 const redStar = '<a:33:1422326883344711762>';
+const ANON_SPEND_USER_IDS = new Set<string>(['775769771475075144']);
 
 const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
   if (!entries.length) return '暂无数据';
@@ -168,8 +169,10 @@ const formatSpendRankingText = (entries: LeaderboardEntry[]) => {
   entries.forEach((entry, idx) => {
     const rank = idx + 1;
     const prefix = rank <= 3 ? spinCrown : redStar;
-    const mention = rank <= 3 ? ` ${userMention(entry.discordUserId)}` : '';
-    lines.push(`${prefix} 第${rank}名：${entry.displayName}${mention}`);
+    const isAnon = ANON_SPEND_USER_IDS.has(entry.discordUserId);
+    const mention = rank <= 3 && !isAnon ? ` ${userMention(entry.discordUserId)}` : '';
+    const displayName = isAnon ? '匿名老板' : entry.displayName;
+    lines.push(`${prefix} 第${rank}名：${displayName}${mention}`);
     if (rank <= 3) lines.push('');
   });
 
