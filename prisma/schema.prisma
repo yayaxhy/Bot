@@ -125,6 +125,8 @@ model Member {
 
   // One-to-one: every 陪玩 is a member; not every member is a 陪玩
   peiwan PEIWAN? @relation("MemberToPeiwan")
+  // Loyalty points (one-to-one)
+  loyaltyPoint LoyaltyPoint?
 
   // Orders (reverse edges)
   ordersAsHost   Order[] @relation("HostOrders")
