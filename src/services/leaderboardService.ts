@@ -30,6 +30,8 @@ type LeaderboardEntry = {
   deltaSpent: Prisma.Decimal;
 };
 
+type LeaderboardKind = 'daily' | 'weekly' | 'monthly';
+
 const formatRomeParts = (date: Date) => {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: ROME_TZ,
@@ -255,6 +257,27 @@ const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
   return new EmbedBuilder().setTitle(title).setDescription(lines).setImage(bannerUrl);
 };
 
+async function hasLeaderboardPost(kind: LeaderboardKind, periodStart: Date) {
+  const existing = await prisma.leaderboardPost.findUnique({
+    where: { kind_periodStart: { kind, periodStart } },
+    select: { id: true },
+  });
+  return !!existing;
+}
+
+async function recordLeaderboardPost(kind: LeaderboardKind, periodStart: Date) {
+  try {
+    await prisma.leaderboardPost.create({
+      data: { kind, periodStart },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return;
+    }
+    throw err;
+  }
+}
+
 async function sendLeaderboard(
   client: Client,
   channelId: string,
@@ -274,6 +297,9 @@ async function generateDailyAndPost(client: Client) {
   const todayStart = romeDateStart(now);
   const targetDayStart = addDaysUtc(todayStart, -1);
   const dateLabel = romeDateLabel(targetDayStart);
+  if (await hasLeaderboardPost('daily', targetDayStart)) {
+    return;
+  }
 
   const endDayStart = addDaysUtc(targetDayStart, 1);
   const { startRows, endRows } = await loadSnapshotsForRange(targetDayStart, endDayStart);
@@ -302,12 +328,16 @@ async function generateDailyAndPost(client: Client) {
     sendLeaderboard(client, DAILY_CONSUME_CHANNEL_ID, spendEmbed),
     sendLeaderboard(client, DAILY_INCOME_CHANNEL_ID, incomeEmbed),
   ]);
+  await recordLeaderboardPost('daily', targetDayStart);
 }
 
 async function generateWeeklyAndPost(client: Client) {
   const now = new Date();
   const thisWeekStart = romeWeekStart(now);
   const lastWeekStart = addDaysUtc(thisWeekStart, -7);
+  if (await hasLeaderboardPost('weekly', lastWeekStart)) {
+    return;
+  }
 
   const { startRows, endRows } = await loadSnapshotsForRange(lastWeekStart, thisWeekStart);
   const displayMap = await loadDisplayMap(startRows, endRows);
@@ -335,6 +365,7 @@ async function generateWeeklyAndPost(client: Client) {
     sendLeaderboard(client, WEEKLY_CONSUME_CHANNEL_ID, spendEmbed),
     sendLeaderboard(client, WEEKLY_INCOME_CHANNEL_ID, incomeEmbed),
   ]);
+  await recordLeaderboardPost('weekly', lastWeekStart);
 }
 
 async function generateMonthlyAndPost(client: Client) {
@@ -344,6 +375,9 @@ async function generateMonthlyAndPost(client: Client) {
   const lastMonthYear = month === 1 ? year - 1 : year;
   const lastMonth = month === 1 ? 12 : month - 1;
   const lastMonthStart = romeDateFromParts(lastMonthYear, lastMonth, 1);
+  if (await hasLeaderboardPost('monthly', lastMonthStart)) {
+    return;
+  }
 
   const { startRows, endRows } = await loadSnapshotsForRange(lastMonthStart, thisMonthStart);
   const displayMap = await loadDisplayMap(startRows, endRows);
@@ -371,10 +405,21 @@ async function generateMonthlyAndPost(client: Client) {
     sendLeaderboard(client, MONTHLY_CONSUME_CHANNEL_ID, spendEmbed),
     sendLeaderboard(client, MONTHLY_INCOME_CHANNEL_ID, incomeEmbed),
   ]);
+  await recordLeaderboardPost('monthly', lastMonthStart);
 }
 
 
 export function startLeaderboardScheduler(client: Client) {
+  generateDailyAndPost(client).catch((err) =>
+    console.error('[leaderboard] daily catch-up failed', err)
+  );
+  generateWeeklyAndPost(client).catch((err) =>
+    console.error('[leaderboard] weekly catch-up failed', err)
+  );
+  generateMonthlyAndPost(client).catch((err) =>
+    console.error('[leaderboard] monthly catch-up failed', err)
+  );
+
   const scheduleDaily = () => {
     const now = new Date();
     const todayRomeStart = romeDateStart(now);

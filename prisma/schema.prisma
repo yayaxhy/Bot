@@ -338,6 +338,16 @@ model GiftAudit {
   @@map("gift_audit")
 }
 
+model LeaderboardPost {
+  id          String   @id @default(cuid())
+  kind        String
+  periodStart DateTime
+  createdAt   DateTime @default(now())
+
+  @@unique([kind, periodStart])
+  @@index([kind])
+}
+
 model Recharge {
   RechargeID String  @id @default(dbgenerated("concat('C', nextval('\"Recharge_RechargeID_seq\"'::regclass))"))
   amount     Decimal @db.Decimal(19, 4)
