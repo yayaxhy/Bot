@@ -513,7 +513,9 @@ export function order_end_boss_embed(
   total: number,
   totalBalance: number,
   heartInc: number,
-  heartTotal: number
+  heartTotal: number,
+  pointsEarned: number,
+  pointsTotal: number
 ) {
   const orderLabel = typeof orderIdentifier === 'number'
     ? `${ORDER_ID_PREFIX}${orderIdentifier}`
@@ -528,6 +530,8 @@ export function order_end_boss_embed(
     `游玩总时长：${totalMin} 分钟`,
     `总计消费：¥${total.toFixed(2)}`,
     `余额：¥${totalBalance.toFixed(2)}`,
+    `本次获得积分：+${pointsEarned.toFixed(2)}`,
+    `累计积分：${pointsTotal.toFixed(2)}`,
     `心动值累计：+${heartInc}`,
     `总心动值：${heartTotal}`,
   ].join('\n'));

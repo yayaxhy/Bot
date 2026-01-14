@@ -4,6 +4,7 @@ import { recordIndividualTransaction } from './individualTransactionService.js';
 import { syncSpentRolesForMember } from './spentRoleService.js';
 import { getFlowBuffRemaining, getSpendBuffRemaining } from './buffService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
+import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 
 type TxLike = PrismaClient | Prisma.TransactionClient;
 
@@ -123,6 +124,7 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
         totalSpent: giverTotalSpentAfter,
       },
     });
+    await adjustLoyaltyPointsTx(tx, audit.giverId, payable.mul(-1));
 
     await recordIndividualTransaction(tx, {
       discordId: audit.giverId,

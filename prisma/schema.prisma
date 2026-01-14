@@ -161,6 +161,15 @@ model Member {
   orderRequestClicks   OrderRequestClick[] @relation("OrderRequestWorker")
 }
 
+model LoyaltyPoint {
+  discordUserId String   @id
+  points        Decimal  @default(0) @db.Decimal(19, 4)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+}
+
 model Transaction {
   Transid   String   @id @default(cuid())
   orderID   Int      @unique @default(autoincrement())

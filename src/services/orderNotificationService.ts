@@ -109,6 +109,12 @@ export async function notifyOrderEnded(orderId: string) {
     select: { total: true },
   });
   const currentHeart = heartCounter?.total ?? 0;
+  const pointsRow = await prisma.loyaltyPoint.findUnique({
+    where: { discordUserId: order.hostId },
+    select: { points: true },
+  });
+  const pointsTotal = pointsRow ? Number(pointsRow.points.toString()) : 0;
+  const pointsEarned = Math.max(0, gross);
   const displayNo = order.displayNo;
   const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
 
@@ -123,7 +129,9 @@ export async function notifyOrderEnded(orderId: string) {
         gross,
         hostBalance,
         heartInc,
-        currentHeart
+        currentHeart,
+        pointsEarned,
+        pointsTotal
       ),
     ];
     let components: any[] = [];

@@ -10,6 +10,7 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 import { unlockGiftWallForPeiwan } from '../services/giftWallService.js';
+import { adjustLoyaltyPointsTx } from '../services/loyaltyPointService.js';
 import {
   consumeFlowBuff,
   consumeSpendBuff,
@@ -104,6 +105,7 @@ export interface GiftTransactionResult {
   quantity: Prisma.Decimal;
   unitPrice: Prisma.Decimal;
   gross: Prisma.Decimal;
+  payable: Prisma.Decimal;
   receiverRate: Prisma.Decimal;
   feeAmount: Prisma.Decimal;
   netAmount: Prisma.Decimal;
@@ -442,6 +444,7 @@ export async function performGift(
         totalSpent: { increment: totalSpentIncrement },
       },
     });
+    await adjustLoyaltyPointsTx(tx, giverId, payable);
 
     const giverIndTx = await recordIndividualTransaction(tx, {
       discordId: giverId,
@@ -561,6 +564,7 @@ export async function performGift(
       quantity: qtyDecimal,
       unitPrice,
       gross,
+      payable,
       receiverRate,
       feeAmount,
       netAmount,
@@ -621,6 +625,19 @@ export async function performGift(
   syncSpentRolesForMember(receiverId, { includeSpendRoles: false }).catch((err) =>
     console.error('[spent-role] gift sync failed for receiver', err)
   );
+
+  try {
+    const pointsRow = await prisma.loyaltyPoint.findUnique({
+      where: { discordUserId: giverId },
+      select: { points: true },
+    });
+    const earnedText = Number(result.payable.toString()).toFixed(2);
+    const totalText = Number((pointsRow?.points ?? 0).toString()).toFixed(2);
+    const giverUser = await client.users.fetch(giverId);
+    await giverUser.send(`打赏完成：本次获得积分 ${earnedText}，累计积分 ${totalText}。`);
+  } catch (err) {
+    console.error('[performGift] notify giver points failed:', err);
+  }
 
   return result;
 }

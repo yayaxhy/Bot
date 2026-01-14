@@ -13,6 +13,7 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
+import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -601,6 +602,7 @@ export async function createRedEnvelope(
       },
       select: { totalBalance: true },
     });
+    await adjustLoyaltyPointsTx(tx, params.creatorId, totalAmount);
 
     const peiwanRecord = await tx.pEIWAN.findUnique({
       where: { discordUserId: params.creatorId },
@@ -926,6 +928,7 @@ export async function expireEnvelope(
               totalSpent: { decrement: remainingAmount },
             },
           });
+          await adjustLoyaltyPointsTx(tx, envelope.creatorId, remainingAmount.mul(-1));
 
         const peiwan = await tx.pEIWAN.findUnique({
           where: { discordUserId: envelope.creatorId },

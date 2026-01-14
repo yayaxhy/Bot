@@ -404,6 +404,12 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
     select: { total: true },
   });
   const currentHeart = heartCounter?.total ?? 0;
+  const pointsRow = await prisma.loyaltyPoint.findUnique({
+    where: { discordUserId: ended.hostId },
+    select: { points: true },
+  });
+  const pointsTotal = pointsRow ? Number(pointsRow.points.toString()) : 0;
+  const pointsEarned = Math.max(0, gross);
 
   const endedLabel = formatOrderLabel(ended.displayNo, ended.id);
 
@@ -421,7 +427,9 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
           gross,
           hostBalance,
           heartInc,
-          currentHeart
+          currentHeart,
+          pointsEarned,
+          pointsTotal
         ),
       ],
     });
@@ -517,8 +525,13 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
 
     const hostBalance = Number(hostMember.totalBalance.toString());
     if (!Number.isFinite(hostBalance) || hostBalance < 100) {
-      const staffPing = process.env.SUPPORT_STAFF_USER_ID ? `<@${process.env.SUPPORT_STAFF_USER_ID}>` : '客服';
-      await message.reply(`余额不足 100，点单失败。请先充值后再试，可联系 ${staffPing} 获取帮助。`);
+      const staffPing = '<@1421651539247894549>';
+      const notice = `余额不足 100，点单失败。请先充值后再试，可联系 ${staffPing} 获取帮助。`;
+      try {
+        await message.author.send(notice);
+      } catch {
+        await message.reply('请查看私信');
+      }
       return true;
     }
 

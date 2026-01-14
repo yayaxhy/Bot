@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff } from './buffService.js';
+import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -376,6 +377,7 @@ export async function performLotteryDraw(params: {
           totalSpent: { increment: totalSpentIncrement },
         },
       });
+      await adjustLoyaltyPointsTx(tx, userId, DRAW_COST);
       const balanceBefore = total;
       const balanceAfter = total.sub(DRAW_COST);
       await recordIndividualTransaction(tx, {

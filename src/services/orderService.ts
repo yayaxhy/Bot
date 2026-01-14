@@ -7,6 +7,7 @@ import { notifyOrderEnded } from './orderNotificationService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
+import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 
 // Prevent double settlement when multiple end requests land at once.
@@ -347,6 +348,7 @@ async function settle(
         totalSpent: { increment: totalSpentIncrement },
       },
     });
+    await adjustLoyaltyPointsTx(tx, order.hostId, gross);
 
     await recordIndividualTransaction(tx, {
       discordId: order.hostId,
