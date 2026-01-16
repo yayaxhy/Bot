@@ -292,31 +292,6 @@ model GiftImage {
   gift Gift @relation(fields: [giftName], references: [GiftName], onDelete: Cascade)
 }
 
-model PeiwanGiftUnlock {
-  id            String   @id @default(cuid())
-  discordUserId String
-  giftName      String
-  unlockedAt    DateTime @default(now())
-
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
-  gift   Gift   @relation(fields: [giftName], references: [GiftName], onDelete: Cascade)
-
-  @@unique([discordUserId, giftName])
-  @@index([discordUserId])
-}
-
-model PeiwanGiftRewardClaim {
-  id            String   @id @default(cuid())
-  discordUserId String
-  rewardKey     String
-  grantedAt     DateTime @default(now())
-
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
-
-  @@unique([discordUserId, rewardKey])
-  @@index([discordUserId])
-}
-
 model GiftAudit {
   id                       String   @id @default(cuid())
   paymentTransactionId     String   @unique
@@ -369,6 +344,31 @@ model LeaderboardPostChannel {
   @@unique([kind, periodStart, channelId])
   @@index([kind])
   @@index([channelId])
+}
+
+model PeiwanGiftUnlock {
+  id            String   @id @default(cuid())
+  discordUserId String
+  giftName      String
+  unlockedAt    DateTime @default(now())
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+  gift   Gift   @relation(fields: [giftName], references: [GiftName], onDelete: Cascade)
+
+  @@unique([discordUserId, giftName])
+  @@index([discordUserId])
+}
+
+model PeiwanGiftRewardClaim {
+  id            String   @id @default(cuid())
+  discordUserId String
+  rewardKey     String
+  grantedAt     DateTime @default(now())
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+
+  @@unique([discordUserId, rewardKey])
+  @@index([discordUserId])
 }
 
 model Recharge {
