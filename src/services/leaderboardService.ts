@@ -139,7 +139,12 @@ const spinCrown = '<a:98488firecrow:1422362470218989648>';
 const redStar = '<a:33:1422326883344711762>';
 const ANON_SPEND_USER_IDS = new Set<string>(['775769771475075144']);
 
-const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
+const formatAmount = (value: Prisma.Decimal) => {
+  const num = Number(value.toString());
+  return Number.isFinite(num) ? `¥${num.toFixed(2)}` : '¥0.00';
+};
+
+const formatIncomeRankingText = (entries: LeaderboardEntry[], includeAmount = false) => {
   if (!entries.length) return '暂无数据';
   const ordinal = ['第1名', '第2名', '第3名', '第4名', '第5名'];
   const lines: string[] = [];
@@ -149,7 +154,8 @@ const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
     const prefix = idx <= 2 ? moon : star;
     const mention = idx <= 2 ? ` ${userMention(entry.discordUserId)}` : '';
     const label = `${rankLabel}：`;
-    const parts = [prefix, label, `${entry.displayName}${mention}`].filter(Boolean);
+    const amount = includeAmount ? ` ${formatAmount(entry.deltaEarn)}` : '';
+    const parts = [prefix, label, `${entry.displayName}${mention}${amount}`].filter(Boolean);
     let line = parts.join(' ');
     if (idx === 0) line = `**${line}**`; // 最大强调（去除下划线）
     else if (idx === 1 || idx === 2) line = `**${line}**`; // 中号
@@ -162,7 +168,7 @@ const formatIncomeRankingText = (entries: LeaderboardEntry[]) => {
   return lines.join('\n');
 };
 
-const formatSpendRankingText = (entries: LeaderboardEntry[]) => {
+const formatSpendRankingText = (entries: LeaderboardEntry[], includeAmount = false) => {
   if (!entries.length) return '暂无数据';
   const lines: string[] = [''];
 
@@ -172,7 +178,8 @@ const formatSpendRankingText = (entries: LeaderboardEntry[]) => {
     const isAnon = ANON_SPEND_USER_IDS.has(entry.discordUserId);
     const mention = rank <= 3 && !isAnon ? ` ${userMention(entry.discordUserId)}` : '';
     const displayName = isAnon ? '匿名老板' : entry.displayName;
-    lines.push(`${prefix} 第${rank}名：${displayName}${mention}`);
+    const amount = includeAmount ? ` ${formatAmount(entry.deltaSpent)}` : '';
+    lines.push(`${prefix} 第${rank}名：${displayName}${mention}${amount}`);
     if (rank <= 3) lines.push('');
   });
 
@@ -246,17 +253,17 @@ async function loadDisplayMap(startRows: SnapshotRow[], endRows: SnapshotRow[]) 
   );
 }
 
-const formatSpendEmbed = (title: string, entries: LeaderboardEntry[]) => {
-  const lines = formatSpendRankingText(entries);
+const formatSpendEmbed = (title: string, entries: LeaderboardEntry[], includeAmount = false) => {
+  const lines = formatSpendRankingText(entries, includeAmount);
   const bannerUrl =
     'https://cdn.discordapp.com/attachments/1445864521343439019/1456874910474571838/1-_.gif?ex=695de87e&is=695c96fe&hm=aba3f5f92935f16f0d795b9fdb5c59a0d353f7791b184df3ca27e37948bb2b36';
   return new EmbedBuilder().setTitle(title).setDescription(lines).setImage(bannerUrl);
 };
 
-const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[]) => {
+const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[], includeAmount = false) => {
   const bannerUrl =
     'https://cdn.discordapp.com/attachments/1445864521343439019/1456874937234096159/2-_.gif?ex=695de884&is=695c9704&hm=47a66d65f47bd30df197958616a2e792a90f05c427a3c2d259efd8bbce9cb75d';
-  const lines = formatIncomeRankingText(entries);
+  const lines = formatIncomeRankingText(entries, includeAmount);
   return new EmbedBuilder().setTitle(title).setDescription(lines).setImage(bannerUrl);
 };
 
@@ -281,17 +288,72 @@ async function recordLeaderboardPost(kind: LeaderboardKind, periodStart: Date) {
   }
 }
 
+async function hasLeaderboardChannelPost(
+  kind: LeaderboardKind,
+  periodStart: Date,
+  channelId: string
+) {
+  const existing = await prisma.leaderboardPostChannel.findUnique({
+    where: { kind_periodStart_channelId: { kind, periodStart, channelId } },
+    select: { id: true },
+  });
+  if (existing) return true;
+  return hasLeaderboardPost(kind, periodStart);
+}
+
+async function recordLeaderboardChannelPost(
+  kind: LeaderboardKind,
+  periodStart: Date,
+  channelId: string
+) {
+  try {
+    await prisma.leaderboardPostChannel.create({
+      data: { kind, periodStart, channelId },
+    });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+      return;
+    }
+    throw err;
+  }
+}
+
+async function sendTargets(
+  client: Client,
+  kind: LeaderboardKind,
+  periodStart: Date,
+  targets: Array<{ channelId: string; embed: EmbedBuilder }>
+) {
+  let allOk = true;
+  for (const target of targets) {
+    const already = await hasLeaderboardChannelPost(kind, periodStart, target.channelId);
+    if (already) continue;
+    const ok = await sendLeaderboard(client, target.channelId, target.embed);
+    if (ok) {
+      await recordLeaderboardChannelPost(kind, periodStart, target.channelId);
+    } else {
+      allOk = false;
+    }
+  }
+  return allOk;
+}
+
 async function sendLeaderboard(
   client: Client,
   channelId: string,
   embed: EmbedBuilder
 ) {
   try {
-    const channel = await client.channels.fetch(channelId);
-    if (!channel || !channel.isTextBased()) return;
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) {
+      console.error('[leaderboard] channel unavailable', { channelId });
+      return false;
+    }
     await (channel as TextChannel).send({ embeds: [embed] });
+    return true;
   } catch (err) {
     console.error('[leaderboard] send failed', { channelId, err });
+    return false;
   }
 }
 
@@ -300,7 +362,34 @@ async function generateDailyAndPost(client: Client) {
   const todayStart = romeDateStart(now);
   const targetDayStart = addDaysUtc(todayStart, -1);
   const dateLabel = romeDateLabel(targetDayStart);
-  if (await hasLeaderboardPost('daily', targetDayStart)) {
+  const needsAnyDaily = !(await hasLeaderboardPost('daily', targetDayStart));
+  const needsConsumeDefault = !(await hasLeaderboardChannelPost(
+    'daily',
+    targetDayStart,
+    DAILY_CONSUME_CHANNEL_ID
+  ));
+  const needsIncomeDefault = !(await hasLeaderboardChannelPost(
+    'daily',
+    targetDayStart,
+    DAILY_INCOME_CHANNEL_ID
+  ));
+  const needsConsumeWithAmount = !(await hasLeaderboardChannelPost(
+    'daily',
+    targetDayStart,
+    WEEKLY_CONSUME_CHANNEL_ID
+  ));
+  const needsIncomeWithAmount = !(await hasLeaderboardChannelPost(
+    'daily',
+    targetDayStart,
+    WEEKLY_INCOME_CHANNEL_ID
+  ));
+  if (
+    !needsAnyDaily &&
+    !needsConsumeDefault &&
+    !needsIncomeDefault &&
+    !needsConsumeWithAmount &&
+    !needsIncomeWithAmount
+  ) {
     return;
   }
 
@@ -322,25 +411,48 @@ async function generateDailyAndPost(client: Client) {
     `${redCrown} 老板尊享日榜 ${redCrown}`,
     spendTop
   );
+  const spendEmbedWithAmount = formatSpendEmbed(
+    `${redCrown} 老板尊享日榜 ${redCrown}`,
+    spendTop,
+    true
+  );
   const incomeEmbed = formatIncomeEmbed(
     `${crown} 陪玩人气日榜 ${crown}`,
     incomeTop
   );
+  const incomeEmbedWithAmount = formatIncomeEmbed(
+    `${crown} 陪玩人气日榜 ${crown}`,
+    incomeTop,
+    true
+  );
 
-  await Promise.all([
-    sendLeaderboard(client, DAILY_CONSUME_CHANNEL_ID, spendEmbed),
-    sendLeaderboard(client, DAILY_INCOME_CHANNEL_ID, incomeEmbed),
+  const allOk = await sendTargets(client, 'daily', targetDayStart, [
+    { channelId: DAILY_CONSUME_CHANNEL_ID, embed: spendEmbed },
+    { channelId: DAILY_INCOME_CHANNEL_ID, embed: incomeEmbed },
+    { channelId: WEEKLY_CONSUME_CHANNEL_ID, embed: spendEmbedWithAmount },
+    { channelId: WEEKLY_INCOME_CHANNEL_ID, embed: incomeEmbedWithAmount },
   ]);
-  await recordLeaderboardPost('daily', targetDayStart);
+  if (allOk) {
+    await recordLeaderboardPost('daily', targetDayStart);
+  }
 }
 
 async function generateWeeklyAndPost(client: Client) {
   const now = new Date();
   const thisWeekStart = romeWeekStart(now);
   const lastWeekStart = addDaysUtc(thisWeekStart, -7);
-  if (await hasLeaderboardPost('weekly', lastWeekStart)) {
-    return;
-  }
+  const needsAnyWeekly = !(await hasLeaderboardPost('weekly', lastWeekStart));
+  const needsSpend = !(await hasLeaderboardChannelPost(
+    'weekly',
+    lastWeekStart,
+    WEEKLY_CONSUME_CHANNEL_ID
+  ));
+  const needsIncome = !(await hasLeaderboardChannelPost(
+    'weekly',
+    lastWeekStart,
+    WEEKLY_INCOME_CHANNEL_ID
+  ));
+  if (!needsAnyWeekly && !needsSpend && !needsIncome) return;
 
   const { startRows, endRows } = await loadSnapshotsForRange(lastWeekStart, thisWeekStart);
   const displayMap = await loadDisplayMap(startRows, endRows);
@@ -357,18 +469,22 @@ async function generateWeeklyAndPost(client: Client) {
 
   const spendEmbed = formatSpendEmbed(
     `${redCrown} 老板尊享周榜 ${redCrown}`,
-    spendTop
+    spendTop,
+    true
   );
   const incomeEmbed = formatIncomeEmbed(
     `${crown} 陪玩人气周榜 ${crown}`,
-    incomeTop
+    incomeTop,
+    true
   );
 
-  await Promise.all([
-    sendLeaderboard(client, WEEKLY_CONSUME_CHANNEL_ID, spendEmbed),
-    sendLeaderboard(client, WEEKLY_INCOME_CHANNEL_ID, incomeEmbed),
+  const allOk = await sendTargets(client, 'weekly', lastWeekStart, [
+    { channelId: WEEKLY_CONSUME_CHANNEL_ID, embed: spendEmbed },
+    { channelId: WEEKLY_INCOME_CHANNEL_ID, embed: incomeEmbed },
   ]);
-  await recordLeaderboardPost('weekly', lastWeekStart);
+  if (allOk) {
+    await recordLeaderboardPost('weekly', lastWeekStart);
+  }
 }
 
 async function generateMonthlyAndPost(client: Client) {
@@ -378,9 +494,18 @@ async function generateMonthlyAndPost(client: Client) {
   const lastMonthYear = month === 1 ? year - 1 : year;
   const lastMonth = month === 1 ? 12 : month - 1;
   const lastMonthStart = romeDateFromParts(lastMonthYear, lastMonth, 1);
-  if (await hasLeaderboardPost('monthly', lastMonthStart)) {
-    return;
-  }
+  const needsAnyMonthly = !(await hasLeaderboardPost('monthly', lastMonthStart));
+  const needsSpend = !(await hasLeaderboardChannelPost(
+    'monthly',
+    lastMonthStart,
+    MONTHLY_CONSUME_CHANNEL_ID
+  ));
+  const needsIncome = !(await hasLeaderboardChannelPost(
+    'monthly',
+    lastMonthStart,
+    MONTHLY_INCOME_CHANNEL_ID
+  ));
+  if (!needsAnyMonthly && !needsSpend && !needsIncome) return;
 
   const { startRows, endRows } = await loadSnapshotsForRange(lastMonthStart, thisMonthStart);
   const displayMap = await loadDisplayMap(startRows, endRows);
@@ -397,87 +522,47 @@ async function generateMonthlyAndPost(client: Client) {
 
   const spendEmbed = formatSpendEmbed(
     `${redCrown} 老板尊享月榜 ${redCrown}`,
-    spendTop
+    spendTop,
+    true
   );
   const incomeEmbed = formatIncomeEmbed(
     `${crown} 陪玩人气月榜 ${crown}`,
-    incomeTop
+    incomeTop,
+    true
   );
 
-  await Promise.all([
-    sendLeaderboard(client, MONTHLY_CONSUME_CHANNEL_ID, spendEmbed),
-    sendLeaderboard(client, MONTHLY_INCOME_CHANNEL_ID, incomeEmbed),
+  const allOk = await sendTargets(client, 'monthly', lastMonthStart, [
+    { channelId: MONTHLY_CONSUME_CHANNEL_ID, embed: spendEmbed },
+    { channelId: MONTHLY_INCOME_CHANNEL_ID, embed: incomeEmbed },
   ]);
-  await recordLeaderboardPost('monthly', lastMonthStart);
+  if (allOk) {
+    await recordLeaderboardPost('monthly', lastMonthStart);
+  }
 }
 
-
 export function startLeaderboardScheduler(client: Client) {
-  generateDailyAndPost(client).catch((err) =>
-    console.error('[leaderboard] daily catch-up failed', err)
-  );
-  generateWeeklyAndPost(client).catch((err) =>
-    console.error('[leaderboard] weekly catch-up failed', err)
-  );
-  generateMonthlyAndPost(client).catch((err) =>
-    console.error('[leaderboard] monthly catch-up failed', err)
-  );
-
-  const scheduleDaily = () => {
-    const now = new Date();
-    const todayRomeStart = romeDateStart(now);
-    const nextRomeMidnight = addDaysUtc(todayRomeStart, 1); // 00:00 Rome next day
-    const delay = nextRomeMidnight.getTime() - now.getTime();
-
-    const tick = () => {
-      generateDailyAndPost(client).catch((err) =>
-        console.error('[leaderboard] daily failed', err)
-      );
-    };
-
-    setTimeout(() => {
-      tick();
-      setInterval(tick, 24 * 60 * 60 * 1000);
-    }, Math.max(1000, delay));
+  let running = false;
+  const tick = async () => {
+    if (running) return;
+    running = true;
+    try {
+      await generateDailyAndPost(client);
+    } catch (err) {
+      console.error('[leaderboard] daily failed', err);
+    }
+    try {
+      await generateWeeklyAndPost(client);
+    } catch (err) {
+      console.error('[leaderboard] weekly failed', err);
+    }
+    try {
+      await generateMonthlyAndPost(client);
+    } catch (err) {
+      console.error('[leaderboard] monthly failed', err);
+    }
+    running = false;
   };
 
-  scheduleDaily();
-
-  const scheduleWeekly = () => {
-    const now = new Date();
-    const thisWeekStart = romeWeekStart(now);
-    const nextWeekStart = addDaysUtc(thisWeekStart, 7);
-    const delay = nextWeekStart.getTime() - now.getTime();
-
-    const tick = () => {
-      generateWeeklyAndPost(client).catch((err) =>
-        console.error('[leaderboard] weekly failed', err)
-      );
-    };
-
-    setTimeout(() => {
-      tick();
-      setInterval(tick, 7 * 24 * 60 * 60 * 1000);
-    }, Math.max(1000, delay));
-  };
-
-  const scheduleMonthly = () => {
-    const now = new Date();
-    const nextMonthStart = romeNextMonthStart(now);
-    const delay = nextMonthStart.getTime() - now.getTime();
-
-    const tick = () => {
-      generateMonthlyAndPost(client).catch((err) =>
-        console.error('[leaderboard] monthly failed', err)
-      );
-    };
-
-    setTimeout(() => {
-      tick();
-      scheduleMonthly();
-    }, Math.max(1000, delay));
-  };
-
-  scheduleWeekly();
-  scheduleMonthly();
+  tick();
+  setInterval(tick, 60 * 1000);
 }

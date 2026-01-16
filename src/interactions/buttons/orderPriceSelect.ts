@@ -10,6 +10,7 @@ import { OrderMode, OrderStatus, QuotationCode } from '@prisma/client';
 import { invitation_embed } from '../../ui/orderEmbeds.js';
 import { registerInvitationMessage } from '../../services/orderInteractionManager.js';
 import { recordOrderRequest } from '../../services/orderRequestLogService.js';
+import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const SUPPORT_STAFF_USER_ID = process.env.SUPPORT_STAFF_USER_ID ?? '';
@@ -205,6 +206,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
     i.member && typeof i.member === 'object' && 'displayName' in i.member
       ? (i.member.displayName as string | undefined)
       : (i.user.globalName ?? i.user.username ?? null);
+  updateMemberServerDisplayName(prisma, hostId, ownerDisplayName).catch(() => {});
   recordOrderRequest({
     orderId: order.id,
     ownerId: hostId,

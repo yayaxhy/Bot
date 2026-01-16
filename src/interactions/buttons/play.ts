@@ -11,6 +11,7 @@ import {
 import prisma from '../../db/prisma.js';
 import { clickStore } from '../../services/clickStore.js';
 import { recordOrderClick } from '../../services/orderRequestLogService.js';
+import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 import { PeiwanStatus, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
@@ -261,6 +262,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
         i.member && typeof i.member === 'object' && 'displayName' in i.member
           ? (i.member.displayName as string | undefined)
           : null;
+      updateMemberServerDisplayName(prisma, workerId, workerDisplayName).catch(() => {});
       recordOrderClick({ orderId, workerId, workerDisplayName }).catch(() => {});
       try {
         const row = makePlayRow(res.count, orderId, ownerId);

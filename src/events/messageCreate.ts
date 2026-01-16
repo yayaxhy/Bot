@@ -39,6 +39,7 @@ import { handleLotteryMessage } from '../commands/lottery.js';
 import { handleRenameCardCommand } from '../commands/renameCard.js';
 import { clickStore } from '../services/clickStore.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
+import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 
 dotenv.config();
 
@@ -522,6 +523,8 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
       update: {},
       select: { totalBalance: true },
     });
+    const hostDisplayName = message.member?.displayName ?? null;
+    updateMemberServerDisplayName(prisma, message.author.id, hostDisplayName).catch(() => {});
 
     const hostBalance = Number(hostMember.totalBalance.toString());
     if (!Number.isFinite(hostBalance) || hostBalance < 100) {
@@ -749,11 +752,13 @@ export async function execute(message: Message) {
       orderBroadcastChannelIds.includes(message.channel.id) &&
       hasAllowedRole
     ) {
+      const ownerDisplayName = message.member?.displayName ?? null;
+      updateMemberServerDisplayName(prisma, ownerId, ownerDisplayName).catch(() => {});
       recordOrderRequest({
         orderId,
         ownerId,
         content: originalMsg,
-        ownerDisplayName: message.member?.displayName ?? null,
+        ownerDisplayName,
       }).catch(() => {});
       const callEmoji =
         message.guild?.emojis.resolve('1422321930043789343')?.toString()
@@ -790,11 +795,13 @@ export async function execute(message: Message) {
       await userA.send({ content: '订单创建成功！', embeds: [successEmbed] });
     } else if (!message.guild) {
       if (hasAllowedRole) {
+        const ownerDisplayName = message.member?.displayName ?? null;
+        updateMemberServerDisplayName(prisma, ownerId, ownerDisplayName).catch(() => {});
         recordOrderRequest({
           orderId,
           ownerId,
           content: originalMsg,
-          ownerDisplayName: message.member?.displayName ?? null,
+          ownerDisplayName,
         }).catch(() => {});
         const channelB = await message.client.channels.fetch(orderAnonChannelId);
         if (channelB instanceof TextChannel) {

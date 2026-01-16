@@ -11,7 +11,9 @@ import {
   anonymous_ongoing_order_request_embed,
   order_request_sent_successfully_embed,
 } from '../ui/orderEmbeds.js';
+import prisma from '../db/prisma.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
+import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 
 export async function sendOrderRequest(interaction: Interaction) {
   const userA = interaction.user;
@@ -44,6 +46,7 @@ export async function sendOrderRequest(interaction: Interaction) {
         interaction.member && typeof interaction.member === 'object' && 'displayName' in interaction.member
           ? (interaction.member.displayName as string | undefined)
           : null;
+      updateMemberServerDisplayName(prisma, ownerId, ownerDisplayName).catch(() => {});
       recordOrderRequest({
         orderId,
         ownerId,
@@ -60,6 +63,7 @@ export async function sendOrderRequest(interaction: Interaction) {
       interaction.member && typeof interaction.member === 'object' && 'displayName' in interaction.member
         ? (interaction.member.displayName as string | undefined)
         : null;
+    updateMemberServerDisplayName(prisma, ownerId, ownerDisplayName).catch(() => {});
     recordOrderRequest({
       orderId,
       ownerId,

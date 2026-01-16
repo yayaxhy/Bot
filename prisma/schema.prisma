@@ -359,6 +359,18 @@ model LeaderboardPost {
   @@index([kind])
 }
 
+model LeaderboardPostChannel {
+  id          String   @id @default(cuid())
+  kind        String
+  periodStart DateTime
+  channelId   String
+  createdAt   DateTime @default(now())
+
+  @@unique([kind, periodStart, channelId])
+  @@index([kind])
+  @@index([channelId])
+}
+
 model Recharge {
   RechargeID String  @id @default(dbgenerated("concat('C', nextval('\"Recharge_RechargeID_seq\"'::regclass))"))
   amount     Decimal @db.Decimal(19, 4)

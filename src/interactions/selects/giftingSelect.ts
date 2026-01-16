@@ -2,6 +2,7 @@ import { StringSelectMenuInteraction, MessageCreateOptions } from 'discord.js';
 import prisma from '../../db/prisma.js';
 import { performGift } from '../../commands/gifting.js';
 import { giftBox_success } from '../../ui/orderEmbeds.js';
+import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 
 const PEIWAN_ID_FIELD_NAMES = new Set(['PEIWANID', '陪玩ID']);
 const isPeiwanIdFieldName = (name?: string | null) => {
@@ -80,6 +81,13 @@ export async function handleGiftingSelect(i: StringSelectMenuInteraction) {
     }
 
     const receiverUser = await i.client.users.fetch(receiverId).catch(() => null);
+    const giverDisplayName =
+      i.member && typeof i.member === 'object' && 'displayName' in i.member
+        ? (i.member.displayName as string | undefined)
+        : null;
+    updateMemberServerDisplayName(prisma, giverId, giverDisplayName).catch(() => {});
+    const receiverDisplayName = i.guild?.members.cache.get(receiverId)?.displayName ?? null;
+    updateMemberServerDisplayName(prisma, receiverId, receiverDisplayName).catch(() => {});
 
     const result = await performGift(i.client, prisma, {
       giverId,

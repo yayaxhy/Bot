@@ -1,0 +1,191 @@
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{multicol}
+\input{glyphtounicode}
+
+\usepackage[default]{sourcesanspro}
+\usepackage[T1]{fontenc}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+\titleformat{\section}{
+  \vspace{-4pt}\centering
+}{}{0em}{}[\color{black}\titlerule\vspace{-5pt}]
+
+
+\pdfgentounicode=1
+
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{5pt}
+}
+
+\newcommand{\resumeSubSubheading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textit{\small#1} & \textit{\small #2} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+\newcommand{\resumeDesc}[1]{%
+  \vspace{-4pt}%
+  \begin{flushleft}\small #1\end{flushleft}%
+  \vspace{-6pt}%
+}
+\newcommand{\Name}[1]{\fontsize{28}{30}\selectfont #1}
+
+\begin{document}
+
+
+
+\begin{center}
+    {\Name James Fang}  \\ \vspace{-2pt}
+    \begin{multicols}{2}
+    \begin{flushleft}
+    \href{{https://github.com/YaYa-xhy}}{Github: https://github.com/yayaxhy}\\
+    \end{flushleft}
+    
+    \begin{flushright}
+    \href{mailto:jamesfang1116@gmail.com}{Email: jamesfang1116@gmail.com}
+    \item{Phone: 437-662-9197}
+    \end{flushright}
+    \end{multicols}
+\end{center}
+
+
+%-----------EDUCATION-----------
+\vspace{-20pt}
+\section{Education}
+  \resumeSubHeadingListStart
+      \resumeSubheading
+      {Toronto Metropolitan University}{Sept. 2023 -- Present}
+      {3rd Year Undergraduate Student in Computer Science}{Toronto, On}
+
+  \resumeSubHeadingListEnd
+  
+  \resumeSubHeadingListStart
+ \resumeSubheading
+      {Courses taken in the current semester}{ }
+      {Fall 2025} {}
+      \resumeItemListStart
+        \resumeItem{CPS721 Artificial Intelligence}
+        \resumeItem{CPS510 Database}
+        \resumeItem{CPS803 Machine Learning}
+        \resumeItem{CPS633 Computer Security}
+        \resumeItem{ASL101 American Sign Language}
+        \resumeItem{CHY599 Business of Chem and Bio}
+        \resumeItem{CHS503 Chinese Literary Traditions}
+    \resumeItemListEnd
+
+  \resumeSubHeadingListEnd
+      
+
+
+
+%-----------EXPERIENCE-----------
+\section{Experience}
+ \resumeSubHeadingListStart
+ \resumeSubheading 
+      {Discord Customer Agent}{March. 2023 -- Present}
+      {} {Remote}\\ 
+      Supported a 17k+ member Discord community, resolving user issues and responding to inquiries in real time. Maintained member relationships and hosted/managed gaming events bi-monthly. \\
+      
+  \resumeSubHeadingListEnd
+  
+ \resumeSubHeadingListStart
+ \resumeSubheading 
+      {Discord Bot and Website functionalities testing and design}{December. 2024}
+      {} {Remote}\\ 
+      Tested bot and website features, triaged user issues, and provided timely support. \\
+  \resumeSubHeadingListEnd
+
+
+
+%-----------PROGRAMMING SKILLS-----------
+\section{Technical Skills, Language Skills, and Interests}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+    \textbf{OS}{: Windows, Linux} \\
+     \textbf{Programming Languages}{: Python, Java, SQL} \\
+     \textbf{Writing}{: Office} \\
+     \textbf{Languages}{: English (IELTS 7.5), Mandarin (fluent)} \\
+     \textbf{Interests}{: K-pop}
+     
+    }}
+ \end{itemize}
+
+%-----------CERTIFICATIONS-----------
+\section{Projects}
+ \resumeSubHeadingListStart
+ \resumeSubheading 
+      {Discord Companion Bot \& Admin/Gift Wall Web}{}
+      {} {}\\
+      \resumeItemListStart
+        \resumeItem{Built end-to-end features: ordering, gifting, leaderboards, gift wall, loyalty points, and settlement notifications.}
+        \resumeItem{Designed auditable transaction flows with rollback handling and idempotency safeguards.}
+        \resumeItem{Implemented category-based gift-wall rewards with automated user notifications.}
+        \resumeItem{Serving 1 Discord server with 1000+ users and 50+ orders/day, with steady growth.}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+ \resumeSubHeadingListStart
+ \resumeSubheading 
+      {Discord Music Bot}{}
+      {} {}\\ 
+      Plays audio from YouTube links on demand. \\
+      
+  \resumeSubHeadingListEnd
+
+\end{document}

@@ -11,6 +11,7 @@ import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 import { unlockGiftWallForPeiwan } from '../services/giftWallService.js';
 import { adjustLoyaltyPointsTx } from '../services/loyaltyPointService.js';
+import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 import {
   consumeFlowBuff,
   consumeSpendBuff,
@@ -613,7 +614,8 @@ export async function performGift(
     if (reward) {
       const rewardText = reward.quantity === 1 ? reward.label : `${reward.label} x${reward.quantity}`;
       const receiverUser = await client.users.fetch(receiverId);
-      await receiverUser.send(`🎉 恭喜你集齐礼物墙，已发放 ${rewardText}！`);
+      const categoryLabel = reward.category ? `【${reward.category}】` : '该分类';
+      await receiverUser.send(`🎉 恭喜你集齐${categoryLabel}分类礼物，已发放 ${rewardText}！`);
     }
   } catch (err) {
     console.error('[gift-wall] reward notify failed:', err);
@@ -771,6 +773,12 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         ensureMember(prisma, giverId, msg.author.username),
         ...toUserIds.map((id) => ensureMember(prisma, id, msg.mentions.users.get(id)?.username)),
       ]);
+      const giverDisplayName = msg.member?.displayName ?? null;
+      updateMemberServerDisplayName(prisma, giverId, giverDisplayName).catch(() => {});
+      for (const receiverId of toUserIds) {
+        const receiverDisplayName = msg.mentions.members?.get(receiverId)?.displayName ?? null;
+        updateMemberServerDisplayName(prisma, receiverId, receiverDisplayName).catch(() => {});
+      }
 
       const normalized = giftName.normalize('NFKC').trim();
       const gift = await prisma.gift.findFirst({

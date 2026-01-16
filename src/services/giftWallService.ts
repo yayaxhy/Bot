@@ -18,7 +18,7 @@ const LOTTERY_REWARD_EXPIRES_MS = 30 * 24 * 60 * 60 * 1000;
 
 const GIFT_WALL_REWARDS: GiftWallReward[] = [
   {
-    key: 'all-gifts',
+    key: 'category',
     kind: 'lottery',
     label: '抽奖代金券',
     prizeName: PRIZE_NAMES.LOTTERY_VOUCHER,
@@ -29,6 +29,7 @@ const GIFT_WALL_REWARDS: GiftWallReward[] = [
 export type GiftWallRewardGrant = {
   label: string;
   quantity: number;
+  category: string;
 };
 
 async function grantCouponReward(
@@ -105,28 +106,43 @@ export async function unlockGiftWallForPeiwan(params: {
       skipDuplicates: true,
     });
 
-    const giftCatalog = await tx.gift.findMany({
-      where: { active: true },
-      select: { GiftName: true, giftImage: { select: { category: true, fileName: true } } },
+    const giftInfo = await tx.gift.findUnique({
+      where: { GiftName: giftName },
+      select: { giftImage: { select: { category: true, fileName: true } } },
     });
-    const eligibleGiftNames = giftCatalog
-      .filter((gift) => gift.giftImage?.fileName && gift.giftImage.category !== '老板')
-      .map((gift) => gift.GiftName);
-    if (eligibleGiftNames.length <= 0) return null;
+    const category = giftInfo?.giftImage?.category?.trim() ?? '';
+    const fileName = giftInfo?.giftImage?.fileName ?? '';
+    if (!category || category === '老板' || !fileName) return null;
 
-    const unlockedCount = await tx.peiwanGiftUnlock.count({
-      where: { discordUserId: receiverId, giftName: { in: eligibleGiftNames } },
+    const categoryGifts = await tx.gift.findMany({
+      where: {
+        active: true,
+        giftImage: {
+          is: {
+            category,
+            fileName: { not: '' },
+          },
+        },
+      },
+      select: { GiftName: true },
     });
-    if (unlockedCount < eligibleGiftNames.length) return null;
+    if (!categoryGifts.length) return null;
+
+    const giftNames = categoryGifts.map((gift) => gift.GiftName);
+    const unlockedCount = await tx.peiwanGiftUnlock.count({
+      where: { discordUserId: receiverId, giftName: { in: giftNames } },
+    });
+    if (unlockedCount < giftNames.length) return null;
 
     for (const reward of GIFT_WALL_REWARDS) {
       if (!reward.quantity || reward.quantity <= 0) continue;
+      const rewardKey = `${reward.key}:${category}`;
 
       const existingClaim = await tx.peiwanGiftRewardClaim.findUnique({
         where: {
           discordUserId_rewardKey: {
             discordUserId: receiverId,
-            rewardKey: reward.key,
+            rewardKey,
           },
         },
       });
@@ -136,7 +152,7 @@ export async function unlockGiftWallForPeiwan(params: {
         if (!reward.couponType) continue;
         try {
           await tx.peiwanGiftRewardClaim.create({
-            data: { discordUserId: receiverId, rewardKey: reward.key },
+            data: { discordUserId: receiverId, rewardKey },
           });
         } catch (err) {
           if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -156,7 +172,7 @@ export async function unlockGiftWallForPeiwan(params: {
 
         try {
           await tx.peiwanGiftRewardClaim.create({
-            data: { discordUserId: receiverId, rewardKey: reward.key },
+            data: { discordUserId: receiverId, rewardKey },
           });
         } catch (err) {
           if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
@@ -170,7 +186,7 @@ export async function unlockGiftWallForPeiwan(params: {
         continue;
       }
 
-      return { label: reward.label, quantity: reward.quantity };
+      return { label: reward.label, quantity: reward.quantity, category };
     }
 
     return null;
