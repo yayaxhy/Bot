@@ -11,6 +11,7 @@ import {
   MessageCreateOptions,
 } from 'discord.js';
 import { QuotationCode, Gift } from '@prisma/client';
+import type { ActivityItem } from '../services/activityService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
@@ -87,6 +88,19 @@ function getAdminMentions(): string {
   return ids.map((id) => `<@${id}>`).join(' ');
 }
 
+function appendActivities(lines: string[], activities: ActivityItem[]) {
+  const valid = activities.filter((a) => a?.title?.trim());
+  if (!valid.length) return;
+
+  lines.push('', '【正在进行的活动】');
+  for (const activity of valid) {
+    const title = activity.title.trim();
+    const desc = (activity.description ?? '').trim();
+    const truncatedDesc = desc ? (desc.length > 120 ? `${desc.slice(0, 117)}...` : desc) : '';
+    lines.push(truncatedDesc ? `- ${title}：${truncatedDesc}` : `- ${title}`);
+  }
+}
+
 function base(title: string, desc?: string): APIEmbed {
   const e = new EmbedBuilder().setTitle(title).setColor(DEFAULT_EMBED_COLOR);
   if (desc) e.setDescription(desc);
@@ -113,7 +127,8 @@ export function ongoing_order_request_embed(
   originalMsg: string,
   orderId: string,
   ownerId: string,
-  callEmoji: string = PEIPEI_CALL_EMOJI
+  callEmoji: string = PEIPEI_CALL_EMOJI,
+  activities: ActivityItem[] = []
 ): MessageCreateOptions {
   const { plainText: mentionPlain } = parseRoleMentions(rolesLine);
   const mentionLinePlain = mentionPlain.trim();
@@ -125,6 +140,7 @@ export function ongoing_order_request_embed(
     '',
   ];
   if (mentionLinePlain) lines.push(`<a:41:1422335911236206723> ${mentionLinePlain}`);
+  appendActivities(lines, activities);
 
   const embed = new EmbedBuilder()
     .setTitle('派单进行中')
@@ -148,7 +164,8 @@ export function anonymous_ongoing_order_request_embed(
   originalMsg: string,
   orderId: string,
   ownerId: string,
-  callEmoji: string = PEIPEI_CALL_EMOJI
+  callEmoji: string = PEIPEI_CALL_EMOJI,
+  activities: ActivityItem[] = []
 ): MessageCreateOptions {
   const { plainText: mentionPlain } = parseRoleMentions(rolesLine);
   const mentionLinePlain = mentionPlain.trim();
@@ -160,6 +177,7 @@ export function anonymous_ongoing_order_request_embed(
     '',
   ];
   if (mentionLinePlain) lines.push(`<a:41:1422335911236206723> ${mentionLinePlain}`);
+  appendActivities(lines, activities);
   const embed = new EmbedBuilder()
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)

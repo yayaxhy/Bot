@@ -9,7 +9,7 @@ import { OrderStatus } from '@prisma/client';
 import { MIN } from '../lib/time.js';
 
 export const ORDER_REQUEST_CLOSE_MS = 20 * MIN;
-const INVITATION_EXPIRE_MS = 10 * MIN;
+export const INVITATION_EXPIRE_MS = 10 * MIN;
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 
 const requestTimers = new Map<string, NodeJS.Timeout>();
@@ -141,4 +141,30 @@ export async function markInvitationHandled(orderId: string) {
 
 export function isInvitationExpired(orderId: string): boolean {
   return expiredInvitations.has(orderId);
+}
+
+/** Recover pending invitations after a restart so they still expire. */
+export async function recoverPendingInvitations(now = new Date()) {
+  const pending = await prisma.order.findMany({
+    where: { status: OrderStatus.PENDING },
+    select: { id: true, createdAt: true },
+  });
+
+  for (const order of pending) {
+    const ageMs = now.getTime() - order.createdAt.getTime();
+    const remainingMs = INVITATION_EXPIRE_MS - ageMs;
+    if (remainingMs <= 0) {
+      await expireInvitation(order.id);
+      continue;
+    }
+
+    const existing = invitationTimers.get(order.id);
+    if (existing) clearTimeout(existing);
+    invitationTimers.set(
+      order.id,
+      setTimeout(() => {
+        expireInvitation(order.id);
+      }, remainingMs),
+    );
+  }
 }

@@ -30,6 +30,7 @@ import { registerInviteReward } from './services/inviteRewardService.js';
 import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
 import { startCommissionBuffWatcher } from './services/buffService.js';
 import { startLeaderboardScheduler } from './services/leaderboardService.js';
+import { recoverPendingInvitations } from './services/orderInteractionManager.js';
 import {
   CLAIM_EMOJI_REACTION,
   claimRedEnvelope,
@@ -217,6 +218,11 @@ registerInviteReward(client);
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
   await recoverAllTimers();
+  try {
+    await recoverPendingInvitations();
+  } catch (err) {
+    console.error('[startup] recover pending invites failed:', err);
+  }
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerTotalEarnCommand(client, prisma);

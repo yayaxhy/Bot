@@ -40,6 +40,7 @@ import { handleRenameCardCommand } from '../commands/renameCard.js';
 import { clickStore } from '../services/clickStore.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
+import { getActiveActivities } from '../services/activityService.js';
 
 dotenv.config();
 
@@ -746,6 +747,7 @@ export async function execute(message: Message) {
   const ownerId = userA.id;         // 🔴 显式传给按钮
   clickStore.init(orderId, ownerId);
   const defaultCallEmoji = '<:11:1422321930043789343>';
+  const activities = await getActiveActivities();
 
   try {
     if (
@@ -760,16 +762,16 @@ export async function execute(message: Message) {
         content: originalMsg,
         ownerDisplayName,
       }).catch(() => {});
-      const callEmoji =
-        message.guild?.emojis.resolve('1422321930043789343')?.toString()
-        ?? defaultCallEmoji;
-      const embedResponse = ongoing_order_request_embed(
-        userA.tag, content, originalMsg, orderId, ownerId, callEmoji
-      );
-      if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
-        await message.channel.send('老板派单啦，快来抢单');
-        const posted = await message.channel.send(embedResponse);
-        clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
+        const callEmoji =
+          message.guild?.emojis.resolve('1422321930043789343')?.toString()
+          ?? defaultCallEmoji;
+        const embedResponse = ongoing_order_request_embed(
+          userA.tag, content, originalMsg, orderId, ownerId, callEmoji, activities
+        );
+        if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
+          await message.channel.send('老板派单啦，快来抢单');
+          const posted = await message.channel.send(embedResponse);
+          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
         scheduleOrderRequestClosure(posted);
       }
 
@@ -816,7 +818,7 @@ export async function execute(message: Message) {
             });
           }
           const embedResponse = anonymous_ongoing_order_request_embed(
-            content, content, orderId, ownerId, callEmoji
+            content, content, orderId, ownerId, callEmoji, activities
           );
           const posted = await channelB.send(embedResponse);
           clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
