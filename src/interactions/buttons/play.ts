@@ -47,6 +47,15 @@ function makeEndedRow(count: number, orderId: string, ownerId: string) {
   return new ActionRowBuilder<ButtonBuilder>().addComponents(endedBtn);
 }
 
+function makeOwnerEndedRow(orderId: string, ownerId: string) {
+  const endedBtn = new ButtonBuilder()
+    .setCustomId(`requestOrder:${orderId}:${ownerId}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setLabel('已结束派单')
+    .setDisabled(true);
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(endedBtn);
+}
+
 function numberOrZero(x: any): number {
   if (!x) return 0;
   if (typeof x === 'number') return x;
@@ -412,14 +421,15 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
     }
 
     const count = clickStore.count(orderId);
-    const row = makeEndedRow(count, orderId, ownerId);
+    const ownerRow = makeOwnerEndedRow(orderId, ownerId);
+    const publicRow = makeEndedRow(count, orderId, ownerId);
     const state = clickStore.get(orderId);
     const targets = state?.messages ?? [];
     const updatedIds = new Set<string>();
 
     if (i.message.editable) {
       try {
-        await i.message.edit({ components: [row] });
+        await i.message.edit({ components: [ownerRow] });
         updatedIds.add(`${i.channelId ?? ''}:${i.message.id}`);
       } catch (err) {
         console.error('[handleEndRequestButton] edit current failed:', err);
@@ -434,7 +444,7 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
         if (ch && ch.isTextBased() && 'messages' in ch) {
           const msg = await (ch as TextChannel).messages.fetch(m.messageId).catch(() => null);
           if (msg?.editable) {
-            await msg.edit({ components: [row] });
+            await msg.edit({ components: [publicRow] });
           }
         }
       } catch (err) {
