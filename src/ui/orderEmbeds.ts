@@ -214,18 +214,13 @@ export function order_request_sent_successfully_embed(
   ];
   const embed = base('订单创建', lines.join('\n'));
 
-  const cancel = new ButtonBuilder()
-    .setCustomId('order_cancel')
-    .setLabel('取消派单')
-    .setStyle(ButtonStyle.Danger);
-
-  const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(cancel)];
+  const components: any[] = [];
 
   if (ownerId) {
     const endBtn = new ButtonBuilder()
       .setCustomId(`requestEnd:${interId}:${ownerId}`)
       .setLabel('结束派单')
-      .setStyle(ButtonStyle.Secondary);
+      .setStyle(ButtonStyle.Danger);
     components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(endBtn));
   }
 
