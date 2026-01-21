@@ -67,7 +67,12 @@ function getPeiwanIdFromEmbed(i: StringSelectMenuInteraction): number | null {
 function getOrderContentFromEmbed(i: StringSelectMenuInteraction): string {
   const embed = i.message.embeds?.[0];
   const fields = embed?.fields ?? [];
-  const field = fields.find((x) => ORDER_CONTENT_FIELD_NAMES.has((x?.name ?? '').trim()));
+  const field = fields.find((x) => {
+    const name = (x?.name ?? '').trim();
+    if (!name) return false;
+    if (ORDER_CONTENT_FIELD_NAMES.has(name)) return true;
+    return name.includes('订单内容');
+  });
   let value = field?.value ? String(field.value).trim() : '';
   const description = embed?.description ?? '';
   if (!value && description) {
