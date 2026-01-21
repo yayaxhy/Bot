@@ -111,8 +111,8 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
       ownerDisplayName: ownerDisplayName ?? null,
     }).catch(() => {});
 
-    const { embed: successEmbed } = order_request_sent_successfully_embed(orderId);
-    await boss.send({ content: '订单创建成功！', embeds: [successEmbed] }).catch(() => null);
+    const { embed: successEmbed, components: successComponents } = order_request_sent_successfully_embed(orderId, ownerId);
+    await boss.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents }).catch(() => null);
 
     await i.editReply({ content: '派单已发送。' });
   } catch (err) {

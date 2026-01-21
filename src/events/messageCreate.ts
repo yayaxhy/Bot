@@ -793,8 +793,11 @@ export async function execute(message: Message) {
         }
       }
 
-      const { embed: successEmbed } = order_request_sent_successfully_embed(message.id);
-      await userA.send({ content: '订单创建成功！', embeds: [successEmbed] });
+      const { embed: successEmbed, components: successComponents } = order_request_sent_successfully_embed(
+        message.id,
+        ownerId,
+      );
+      await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
     } else if (!message.guild) {
       if (hasAllowedRole) {
         const ownerDisplayName = message.member?.displayName ?? null;
@@ -825,8 +828,11 @@ export async function execute(message: Message) {
           scheduleOrderRequestClosure(posted);
         }
 
-        const { embed: successEmbed } = order_request_sent_successfully_embed(message.id);
-        await userA.send({ content: '订单创建成功！', embeds: [successEmbed] });
+        const { embed: successEmbed, components: successComponents } = order_request_sent_successfully_embed(
+          message.id,
+          ownerId,
+        );
+        await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
 
         const balance = await getMemberBalance(userA.id);
         const balanceLabel = typeof balance === 'number' && Number.isFinite(balance)

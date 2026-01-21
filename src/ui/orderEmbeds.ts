@@ -195,7 +195,10 @@ export function anonymous_ongoing_order_request_embed(
 }
 
 /* ================== 订单创建成功（DM 给老板） ================== */
-export function order_request_sent_successfully_embed(interId: string): {
+export function order_request_sent_successfully_embed(
+  interId: string,
+  ownerId?: string,
+): {
   embed: APIEmbed; components: any[];
 } {
   const lines = [
@@ -216,7 +219,17 @@ export function order_request_sent_successfully_embed(interId: string): {
     .setLabel('取消派单')
     .setStyle(ButtonStyle.Danger);
 
-  return { embed, components: [new ActionRowBuilder<ButtonBuilder>().addComponents(cancel)] };
+  const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(cancel)];
+
+  if (ownerId) {
+    const endBtn = new ButtonBuilder()
+      .setCustomId(`requestEnd:${interId}:${ownerId}`)
+      .setLabel('结束派单')
+      .setStyle(ButtonStyle.Secondary);
+    components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(endBtn));
+  }
+
+  return { embed, components };
 }
 
 /* ================== MP 卡（DM 给老板） ================== */

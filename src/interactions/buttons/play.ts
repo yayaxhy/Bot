@@ -30,12 +30,21 @@ const FALLBACK_CHANNEL_ID = process.env.ORDER_DM_FALLBACK_CHANNEL_ID ?? '';
 
 /** 构建“抢单(n)”按钮行（保持 customId = requestOrder:<orderId>:<ownerId>） */
 function makePlayRow(count: number, orderId: string, ownerId: string) {
-  return new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`requestOrder:${orderId}:${ownerId}`)
-      .setStyle(ButtonStyle.Success)
-      .setLabel(`抢单(${count})`)
-  );
+  const requestBtn = new ButtonBuilder()
+    .setCustomId(`requestOrder:${orderId}:${ownerId}`)
+    .setStyle(ButtonStyle.Success)
+    .setLabel(`抢单(${count})`);
+
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(requestBtn);
+}
+
+function makeEndedRow(count: number, orderId: string, ownerId: string) {
+  const endedBtn = new ButtonBuilder()
+    .setCustomId(`requestOrder:${orderId}:${ownerId}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setLabel(`老板已点单(${count})`)
+    .setDisabled(true);
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(endedBtn);
 }
 
 function numberOrZero(x: any): number {
@@ -243,6 +252,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
     if (!orderId || !ownerId || ownerId === 'unknown') return;
     if (ownerId === i.client.user?.id) return; // 防御：避免写成机器人自己
     if (i.user.id === ownerId) return;         // 老板不能抢自己单（静默）
+    if (i.component?.disabled) return;
 
     const workerId = i.user.id;
 
@@ -379,3 +389,59 @@ export async function handlePlayButton(i: ButtonInteraction) {
   }
 }
 
+/** 老板主动结束派单：禁用抢单按钮并保留抢单计数 */
+export async function handleEndRequestButton(i: ButtonInteraction) {
+  try {
+    if (!i.isButton()) return;
+    if (!i.customId.startsWith('requestEnd:')) return;
+
+    const parts = i.customId.split(':');
+    const orderId = parts[1];
+    const ownerId = parts[2] || 'unknown';
+
+    if (!orderId || !ownerId || ownerId === 'unknown') return;
+    if (ownerId !== i.user.id) {
+      if (!i.replied && !i.deferred) {
+        await i.reply({ content: '只有老板可以结束派单。', ephemeral: true });
+      }
+      return;
+    }
+
+    if (!i.deferred && !i.replied) {
+      await i.deferUpdate();
+    }
+
+    const count = clickStore.count(orderId);
+    const row = makeEndedRow(count, orderId, ownerId);
+    const state = clickStore.get(orderId);
+    const targets = state?.messages ?? [];
+    const updatedIds = new Set<string>();
+
+    if (i.message.editable) {
+      try {
+        await i.message.edit({ components: [row] });
+        updatedIds.add(`${i.channelId ?? ''}:${i.message.id}`);
+      } catch (err) {
+        console.error('[handleEndRequestButton] edit current failed:', err);
+      }
+    }
+
+    for (const m of targets) {
+      const key = `${m.channelId}:${m.messageId}`;
+      if (updatedIds.has(key)) continue;
+      try {
+        const ch = await i.client.channels.fetch(m.channelId).catch(() => null);
+        if (ch && ch.isTextBased() && 'messages' in ch) {
+          const msg = await (ch as TextChannel).messages.fetch(m.messageId).catch(() => null);
+          if (msg?.editable) {
+            await msg.edit({ components: [row] });
+          }
+        }
+      } catch (err) {
+        console.error('[handleEndRequestButton] sync label failed', { channelId: m.channelId, messageId: m.messageId, err });
+      }
+    }
+  } catch (err) {
+    console.error('[handleEndRequestButton] error:', err);
+  }
+}

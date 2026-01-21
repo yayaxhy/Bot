@@ -32,6 +32,11 @@ class ClickStore {
     return this.map.get(messageId);
   }
 
+  count(messageId: string) {
+    const state = this.map.get(messageId);
+    return state ? state.userIds.size : 0;
+  }
+
   addClick(messageId: string, userId: string) {
     const state = this.map.get(messageId);
     if (!state) return null;

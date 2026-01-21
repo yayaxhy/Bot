@@ -1,7 +1,7 @@
 // src/index.ts
 import { Client, GatewayIntentBits, Partials, Interaction, Events } from 'discord.js';
 import dotenv from 'dotenv';
-import { handlePlayButton } from './interactions/buttons/play.js';
+import { handlePlayButton, handleEndRequestButton } from './interactions/buttons/play.js';
 import { execute as messageCreateHandler } from './events/messageCreate.js';
 import { registerGiftingCommand } from './commands/gifting.js';
 import prisma, { prismaReady } from './db/prisma.js';
@@ -184,6 +184,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
       // 抢单按钮
       if (i.customId?.startsWith('requestOrder:') || i.customId?.startsWith('play:')) {
         await handlePlayButton(i);
+        return;
+      }
+      if (i.customId?.startsWith('requestEnd:')) {
+        await handleEndRequestButton(i);
         return;
       }
 

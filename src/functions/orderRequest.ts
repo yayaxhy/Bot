@@ -73,6 +73,6 @@ export async function sendOrderRequest(interaction: Interaction) {
     await userA.send(embedResponse);
   }
 
-  const { embed } = order_request_sent_successfully_embed(orderId);
-  await userA.send({ embeds: [embed] });
+  const { embed, components } = order_request_sent_successfully_embed(orderId, ownerId);
+  await userA.send({ embeds: [embed], components });
 }

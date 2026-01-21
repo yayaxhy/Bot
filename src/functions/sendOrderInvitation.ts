@@ -18,10 +18,11 @@ export async function sendOrderInvitation(orderId: string, userId: string, clien
   }
 
   // Destructure to get only the embed part
-  const { embed } = order_request_sent_successfully_embed(orderId);  // Extract only the embed
+  const { embed, components } = order_request_sent_successfully_embed(orderId, userId);
 
   // Send the embed after verifying the user's balance
   await user.send({
-    embeds: [embed]  // Use only the embed part from the response
+    embeds: [embed],
+    components,
   });
 }
