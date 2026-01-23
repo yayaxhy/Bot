@@ -138,15 +138,16 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
   try {
     // String select for price (实名/匿名点单)
     if (i.isStringSelectMenu()) {
-      if (i.customId === 'realname_box' || i.customId === 'anonymous_box') {
+      const customId = i.customId ?? '';
+      if (customId.startsWith('realname_box') || customId.startsWith('anonymous_box')) {
         await handleOrderPriceSelect(i);
         return;
       }
-      if (i.customId === 'realname_gifting_box' || i.customId === 'anonymous_gifting_box') {
+      if (customId === 'realname_gifting_box' || customId === 'anonymous_gifting_box') {
         await handleGiftingSelect(i);
         return;
       }
-      if (i.customId.startsWith('discount_box')) {
+      if (customId.startsWith('discount_box')) {
         await handleDiscountSelect(i);
         return;
       }
