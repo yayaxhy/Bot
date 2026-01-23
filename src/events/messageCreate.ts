@@ -543,6 +543,7 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
     for (const code of Object.keys(PRICE_FIELD_BY_CODE) as Array<QuotationCode>) {
       prices[code] = priceFromPeiwan(peiwan, code);
     }
+    const orderId = message.id; // use message ID to correlate with price select interactions
     const priceSelect = buildQuotationSelect(
       mode === OrderMode.REALNAME ? 'REALNAME' : 'ANON',
       prices,
