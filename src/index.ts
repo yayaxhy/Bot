@@ -31,6 +31,7 @@ import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageC
 import { startCommissionBuffWatcher } from './services/buffService.js';
 import { startLeaderboardScheduler } from './services/leaderboardService.js';
 import { recoverPendingInvitations } from './services/orderInteractionManager.js';
+import { recoverRunningOrders } from './services/orderService.js';
 import {
   CLAIM_EMOJI_REACTION,
   claimRedEnvelope,
@@ -228,6 +229,9 @@ client.once(Events.ClientReady, async () => {
   } catch (err) {
     console.error('[startup] recover pending invites failed:', err);
   }
+  recoverRunningOrders().catch((err) =>
+    console.error('[startup] recover running orders failed:', err),
+  );
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerTotalEarnCommand(client, prisma);

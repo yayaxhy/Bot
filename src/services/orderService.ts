@@ -5,7 +5,6 @@ import { addMinutes, minutesBetweenFloor } from '../lib/time.js';
 import { addHeart } from './heartService.js';
 import { notifyOrderEnded } from './orderNotificationService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
-import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
@@ -128,7 +127,13 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
     const perMinute = round2(unitPrice.div(60));
     if (perMinute.lte(0)) return { charged: false, insufficient: false };
 
-    const hostBalance = new Prisma.Decimal(order.host.totalBalance ?? 0);
+    // 读取最新余额（行锁），避免使用旧快照
+    await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
+    const hostMember = await tx.member.findUnique({
+      where: { discordUserId: order.hostId },
+      select: { totalBalance: true },
+    });
+    const hostBalance = new Prisma.Decimal(hostMember?.totalBalance ?? 0);
     const runningReserved = await tx.order.aggregate({
       _sum: { chargedGross: true },
       where: { hostId: order.hostId, status: OrderStatus.RUNNING },
@@ -177,6 +182,12 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
     const now = new Date();
     const elapsedTotalMinutes = minutesBetweenCeil(order.stopwatchStartAt!, now);
 
+    // 最新余额 + 预留已计费金额
+    await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
+    const hostMember = await tx.member.findUnique({
+      where: { discordUserId: order.hostId },
+      select: { totalBalance: true },
+    });
     const runningForHost = await tx.order.findMany({
       where: { hostId: order.hostId, status: OrderStatus.RUNNING },
       select: { id: true, unitPrice: true, chargedGross: true },
@@ -185,7 +196,7 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
       (sum, r) => (r.chargedGross ? sum.add(new Prisma.Decimal(r.chargedGross)) : sum),
       new Prisma.Decimal(0)
     );
-    let hostBalance = new Prisma.Decimal(order.host.totalBalance ?? 0).sub(reserved);
+    let hostBalance = new Prisma.Decimal(hostMember?.totalBalance ?? 0).sub(reserved);
     if (hostBalance.lt(0)) hostBalance = new Prisma.Decimal(0);
     let totalHourlyCost = new Prisma.Decimal(0);
     for (const r of runningForHost) {
@@ -273,15 +284,7 @@ async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTim
   const netToWorker = round2(gross.mul(payoutShare));
   const feeToPlatform = round2(gross.sub(netToWorker));
 
-  const hostBalance = new Prisma.Decimal(order.host.totalBalance);
-  if (hostBalance.lt(gross)) {
-    const cappedGross = hostBalance;
-    const cappedNet   = round2(cappedGross.mul(payoutShare));
-    const cappedFee   = round2(cappedGross.sub(cappedNet));
-    await settle(tx, order, endTime, totalMinutes, billableMinutes, cappedGross, cappedNet, cappedFee);
-  } else {
-    await settle(tx, order, endTime, totalMinutes, billableMinutes, gross, netToWorker, feeToPlatform);
-  }
+  await settle(tx, order, endTime, totalMinutes, billableMinutes, gross, netToWorker, feeToPlatform);
 
   await tx.pEIWAN.update({ where: { PEIWANID: order.peiwanId }, data: { status: PeiwanStatus.free } });
   await tx.workerLock.deleteMany({ where: { workerId: order.workerId } });
@@ -313,6 +316,9 @@ async function settle(
     },
   });
 
+  // 串行化老板扣款，防止并发结算读取相同余额
+  await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
+
   const hostAccount = await tx.member.findUnique({
     where: { discordUserId: order.hostId },
     select: { income: true, recharge: true, totalBalance: true },
@@ -327,23 +333,16 @@ async function settle(
   const totalSpentIncrement = gross.add(spendBonus.extra);
 
   if (gross.gt(0)) {
-    let hostSplit;
-    try {
-      hostSplit = splitIncomeRecharge(hostIncome, hostRecharge, gross);
-    } catch (err: any) {
-      if (err?.message === 'INSUFFICIENT_FUNDS') {
-        throw new Error('余额不足，无法完成结算。');
-      }
-      throw err;
-    }
+    const fromIncome = hostIncome.gte(gross) ? gross : hostIncome;
+    const fromRecharge = gross.sub(fromIncome);
 
     hostBalanceAfter = hostBalanceBefore.sub(gross);
 
     await tx.member.update({
       where: { discordUserId: order.hostId },
       data: {
-        income: { decrement: hostSplit.fromIncome },
-        recharge: { decrement: hostSplit.fromRecharge },
+        income: { decrement: fromIncome },
+        recharge: { decrement: fromRecharge },
         totalBalance: { decrement: gross },
         totalSpent: { increment: totalSpentIncrement },
       },
@@ -540,5 +539,23 @@ async function grantReferralCommission(
       amount,
       baseLabel: '陪玩1%',
     });
+  }
+}
+
+/** Recover running orders after restart: recompute balance/cutoff and auto-end if不足 */
+export async function recoverRunningOrders(): Promise<void> {
+  const running = await prisma.order.findMany({
+    where: { status: OrderStatus.RUNNING },
+    select: { id: true },
+  });
+  for (const o of running) {
+    try {
+      const { ended } = await recalcOrAutoEnd(o.id);
+      if (ended) {
+        await notifyOrderEnded(o.id);
+      }
+    } catch (err) {
+      console.error('[recoverRunningOrders] order', o.id, 'failed:', err);
+    }
   }
 }
