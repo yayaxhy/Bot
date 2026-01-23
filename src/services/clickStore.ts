@@ -1,7 +1,7 @@
 export type ClickState = {
   ownerId: string;
   userIds: Set<string>;
-  messages: Array<{ channelId: string; messageId: string }>;
+  messages: Array<{ channelId: string; messageId: string; kind: 'hint' | 'body' }>;
 };
 
 class ClickStore {
@@ -16,7 +16,7 @@ class ClickStore {
     }
   }
 
-  registerMessage(orderId: string, messageId: string, channelId: string, ownerId: string) {
+  registerMessage(orderId: string, messageId: string, channelId: string, ownerId: string, kind: 'hint' | 'body' = 'body') {
     this.init(orderId, ownerId);
     const state = this.map.get(orderId);
     if (!state) return;
@@ -24,7 +24,7 @@ class ClickStore {
       (m) => m.channelId === channelId && m.messageId === messageId
     );
     if (!exists) {
-      state.messages.push({ channelId, messageId });
+      state.messages.push({ channelId, messageId, kind });
     }
   }
 
@@ -72,6 +72,13 @@ class ClickStore {
     }
 
     return latest;
+  }
+
+  getMessages(orderId: string, kind?: 'hint' | 'body') {
+    const state = this.map.get(orderId);
+    if (!state) return [];
+    if (!kind) return [...state.messages];
+    return state.messages.filter((m) => m.kind === kind);
   }
 }
 

@@ -770,9 +770,9 @@ export async function execute(message: Message) {
         );
         if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
           const hintMsg = await message.channel.send('老板派单啦，快来抢单');
-          clickStore.registerMessage(orderId, hintMsg.id, hintMsg.channelId, ownerId);
+          clickStore.registerMessage(orderId, hintMsg.id, hintMsg.channelId, ownerId, 'hint');
           const posted = await message.channel.send(embedResponse);
-          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
+          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'body');
         scheduleOrderRequestClosure(posted);
       }
 
@@ -788,9 +788,9 @@ export async function execute(message: Message) {
           .catch(() => null);
         if (generalChannel instanceof TextChannel) {
           const hintGeneral = await generalChannel.send('老板派单啦，快来抢单');
-          clickStore.registerMessage(orderId, hintGeneral.id, hintGeneral.channelId, ownerId);
+          clickStore.registerMessage(orderId, hintGeneral.id, hintGeneral.channelId, ownerId, 'hint');
           const postedCopy = await generalChannel.send(embedResponse);
-          clickStore.registerMessage(orderId, postedCopy.id, postedCopy.channelId, ownerId);
+          clickStore.registerMessage(orderId, postedCopy.id, postedCopy.channelId, ownerId, 'body');
           scheduleOrderRequestClosure(postedCopy);
         }
       }
@@ -823,12 +823,12 @@ export async function execute(message: Message) {
             });
           }
           const anonHint = await channelB.send('老板派单啦，快来抢单');
-          clickStore.registerMessage(orderId, anonHint.id, anonHint.channelId, ownerId);
+          clickStore.registerMessage(orderId, anonHint.id, anonHint.channelId, ownerId, 'hint');
           const embedResponse = anonymous_ongoing_order_request_embed(
             content, content, orderId, ownerId, callEmoji, activities
           );
           const posted = await channelB.send(embedResponse);
-          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
+          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'body');
           scheduleOrderRequestClosure(posted);
         }
 
