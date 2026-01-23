@@ -335,8 +335,8 @@ export async function handlePlayButton(i: ButtonInteraction) {
     const prices = pricesFromPeiwan(peiwan);
     const giftsForSelect = DEFAULT_GIFTS as Array<{ GiftName: string; price: number }>;
 
-    const realnameBox = buildQuotationSelect('REALNAME', prices);
-    const anonymousBox = buildQuotationSelect('ANON', prices);
+    const realnameBox = buildQuotationSelect('REALNAME', prices, orderId);
+    const anonymousBox = buildQuotationSelect('ANON', prices, orderId);
     const realnameGiftBox = buildGiftingSelect('REALNAME', giftsForSelect as any);
     const anonymousGiftBox = buildGiftingSelect('ANON', giftsForSelect as any);
 

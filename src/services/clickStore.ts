@@ -50,6 +50,29 @@ class ClickStore {
       messages: [...state.messages],
     };
   }
+
+  /**
+   * 获取最新一条派单（按消息 ID 最大值）及其关联消息列表
+   */
+  latestForOwner(ownerId: string): { orderId: string; messages: Array<{ channelId: string; messageId: string }> } | null {
+    let latest: { orderId: string; messages: Array<{ channelId: string; messageId: string }> } | null = null;
+
+    for (const [orderId, state] of this.map.entries()) {
+      if (state.ownerId !== ownerId) continue;
+      if (!latest) {
+        latest = { orderId, messages: [...state.messages] };
+        continue;
+      }
+      // Discord snowflake 越大越新
+      const currentId = BigInt(orderId);
+      const latestId = BigInt(latest.orderId);
+      if (currentId > latestId) {
+        latest = { orderId, messages: [...state.messages] };
+      }
+    }
+
+    return latest;
+  }
 }
 
 export const clickStore = new ClickStore();

@@ -269,10 +269,17 @@ export function sent_MP_embed(
  */
 export function buildQuotationSelect(
   kind: 'REALNAME' | 'ANON',
-  prices: Record<string, number | null | undefined>
+  prices: Record<string, number | null | undefined>,
+  orderId?: string
 ): StringSelectMenuBuilder | null {
   const menu = new StringSelectMenuBuilder()
-    .setCustomId(kind === 'REALNAME' ? 'realname_box' : 'anonymous_box')
+    .setCustomId(
+      orderId
+        ? `${kind === 'REALNAME' ? 'realname_box' : 'anonymous_box'}:${orderId}`
+        : kind === 'REALNAME'
+          ? 'realname_box'
+          : 'anonymous_box'
+    )
     .setPlaceholder(kind === 'REALNAME' ? '实名点单' : '匿名点单')
     .setMinValues(1).setMaxValues(1);
 

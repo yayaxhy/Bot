@@ -11,10 +11,13 @@ import { invitation_embed } from '../../ui/orderEmbeds.js';
 import { registerInvitationMessage } from '../../services/orderInteractionManager.js';
 import { recordOrderRequest } from '../../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
+import type { TextBasedChannel } from 'discord.js';
+import { clickStore } from '../../services/clickStore.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const SUPPORT_STAFF_USER_ID = process.env.SUPPORT_STAFF_USER_ID ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
+const ORDER_SELECTED_HINT = '老板点到了心仪的陪玩。派单还未结束，可继续扣单！';
 
 const PEIWAN_ID_FIELD_NAMES = new Set(['PEIWANID', '陪玩ID']);
 const ORDER_CONTENT_FIELD_NAMES = new Set(['订单内容']);
@@ -118,9 +121,11 @@ async function sendAnonLogMessage(i: StringSelectMenuInteraction, content: strin
  */
 export async function handleOrderPriceSelect(i: Interaction) {
   if (!i.isStringSelectMenu()) return;
-  if (i.customId !== 'realname_box' && i.customId !== 'anonymous_box') return;
+  const [customIdBase, customOrderId] = i.customId.split(':');
+  if (customIdBase !== 'realname_box' && customIdBase !== 'anonymous_box') return;
 
-  const mode: OrderMode = (i.customId === 'realname_box') ? OrderMode.REALNAME : OrderMode.ANONYMOUS;
+  const mode: OrderMode = (customIdBase === 'realname_box') ? OrderMode.REALNAME : OrderMode.ANONYMOUS;
+  const orderIdFromCustom = customOrderId && customOrderId.trim() ? customOrderId.trim() : null;
 
   // 1) 解析所选报价档位（Q1..Q7）
   const codeStr = i.values?.[0];
@@ -240,6 +245,23 @@ export async function handleOrderPriceSelect(i: Interaction) {
     content: `已向陪玩 ${userMention(workerId)} 发送邀请，请等待对方接单。\n订单号：${orderLabel}\n选择价格： ¥${unitPrice.toFixed(2)}`,
     ephemeral: shouldBeEphemeral,
   });
+
+  // 公告：老板已点到心仪的陪玩（仅公会频道编辑派单提示）
+  if (i.inGuild() && orderIdFromCustom) {
+    const state = clickStore.get(orderIdFromCustom);
+    const msgs = state?.messages ?? [];
+    for (const msg of msgs) {
+      try {
+        const channel = await i.client.channels.fetch(msg.channelId).catch(() => null);
+        if (!channel || !channel.isTextBased()) continue;
+        const m = await (channel as TextBasedChannel).messages.fetch(msg.messageId).catch(() => null);
+        if (!m) continue;
+        await m.edit({ content: ORDER_SELECTED_HINT });
+      } catch (err) {
+        console.warn('[orderPriceSelect] failed to edit broadcast message', err);
+      }
+    }
+  }
 
   if (mode === OrderMode.ANONYMOUS) {
     const balanceLabel = Number.isFinite(hostBalance) ? hostBalance.toFixed(2) : '未知';

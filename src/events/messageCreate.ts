@@ -769,7 +769,8 @@ export async function execute(message: Message) {
           userA.tag, content, originalMsg, orderId, ownerId, callEmoji, activities
         );
         if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
-          await message.channel.send('老板派单啦，快来抢单');
+          const hintMsg = await message.channel.send('老板派单啦，快来抢单');
+          clickStore.registerMessage(orderId, hintMsg.id, hintMsg.channelId, ownerId);
           const posted = await message.channel.send(embedResponse);
           clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId);
         scheduleOrderRequestClosure(posted);
@@ -786,7 +787,8 @@ export async function execute(message: Message) {
           .fetch(GENERAL_BROADCAST_CHANNEL_ID)
           .catch(() => null);
         if (generalChannel instanceof TextChannel) {
-          await generalChannel.send('老板派单啦，快来抢单');
+          const hintGeneral = await generalChannel.send('老板派单啦，快来抢单');
+          clickStore.registerMessage(orderId, hintGeneral.id, hintGeneral.channelId, ownerId);
           const postedCopy = await generalChannel.send(embedResponse);
           clickStore.registerMessage(orderId, postedCopy.id, postedCopy.channelId, ownerId);
           scheduleOrderRequestClosure(postedCopy);
@@ -820,6 +822,8 @@ export async function execute(message: Message) {
               allowedMentions: { users: [], roles: roleInfo.roleIds, parse: [] },
             });
           }
+          const anonHint = await channelB.send('老板派单啦，快来抢单');
+          clickStore.registerMessage(orderId, anonHint.id, anonHint.channelId, ownerId);
           const embedResponse = anonymous_ongoing_order_request_embed(
             content, content, orderId, ownerId, callEmoji, activities
           );
