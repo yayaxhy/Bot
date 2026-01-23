@@ -142,3 +142,5 @@ class ClickStore {
 }
 
 export const clickStore = new ClickStore();
+import fs from 'node:fs';
+import path from 'node:path';
