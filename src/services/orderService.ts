@@ -102,6 +102,9 @@ type ChargeResult = { charged: boolean; insufficient: boolean };
 
 export async function chargePendingMinutes(orderId: string): Promise<ChargeResult> {
   return prisma.$transaction(async (tx) => {
+    // Lock order first to keep lock ordering consistent with endOrder/recalc and avoid deadlocks.
+    await lockOrderForUpdate(tx, orderId);
+
     const order = await tx.order.findUnique({
       where: { id: orderId },
       include: {
