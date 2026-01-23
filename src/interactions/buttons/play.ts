@@ -285,7 +285,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
       recordOrderClick({ orderId, workerId, workerDisplayName }).catch(() => {});
       try {
         const row = makePlayRow(res.count, orderId, ownerId);
-        const targets = res.messages ?? [];
+        const targets = clickStore.getMessages(orderId, 'body');
         const updatedIds = new Set<string>();
 
         // update the message where the click happened
@@ -423,8 +423,7 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
     const count = clickStore.count(orderId);
     const ownerRow = makeOwnerEndedRow(orderId, ownerId);
     const publicRow = makeEndedRow(count, orderId, ownerId);
-    const state = clickStore.get(orderId);
-    const targets = state?.messages ?? [];
+    const targets = clickStore.getMessages(orderId, 'body');
     const updatedIds = new Set<string>();
 
     if (i.message.editable) {
