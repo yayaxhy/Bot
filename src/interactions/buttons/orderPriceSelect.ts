@@ -11,7 +11,6 @@ import { invitation_embed } from '../../ui/orderEmbeds.js';
 import { registerInvitationMessage } from '../../services/orderInteractionManager.js';
 import { recordOrderRequest } from '../../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
-import type { TextBasedChannel } from 'discord.js';
 import { clickStore } from '../../services/clickStore.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
