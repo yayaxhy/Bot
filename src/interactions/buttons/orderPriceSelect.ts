@@ -245,8 +245,8 @@ export async function handleOrderPriceSelect(i: Interaction) {
     ephemeral: shouldBeEphemeral,
   });
 
-  // 公告：老板已点到心仪的陪玩（仅公会频道编辑“提示”消息，不改按钮消息）
-  if (i.inGuild() && orderIdFromCustom) {
+  // 公告：老板已点到心仪的陪玩（编辑“提示”消息，不改按钮消息）
+  if (orderIdFromCustom) {
     const hintMsgs = clickStore.getMessages(orderIdFromCustom, 'hint');
     for (const msg of hintMsgs) {
       try {
