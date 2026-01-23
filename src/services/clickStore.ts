@@ -6,6 +6,55 @@ export type ClickState = {
 
 class ClickStore {
   private map = new Map<string, ClickState>();
+  private persistTimer: NodeJS.Timeout | null = null;
+  private readonly persistPath: string;
+
+  constructor() {
+    const defaultPath = path.join(process.cwd(), 'clickstore-state.json');
+    this.persistPath = process.env.CLICKSTORE_PATH ?? defaultPath;
+    this.loadFromDisk().catch((err) => {
+      console.warn('[clickStore] failed to load persisted state:', err);
+    });
+  }
+
+  private schedulePersist() {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+    }
+    this.persistTimer = setTimeout(() => this.persist().catch((err) => {
+      console.warn('[clickStore] persist error:', err);
+    }), 200);
+  }
+
+  private async persist() {
+    const entries = Array.from(this.map.entries()).map(([orderId, state]) => ({
+      orderId,
+      ownerId: state.ownerId,
+      userIds: Array.from(state.userIds),
+      messages: state.messages,
+    }));
+    await fs.promises.writeFile(this.persistPath, JSON.stringify({ entries }), 'utf8');
+  }
+
+  private async loadFromDisk() {
+    try {
+      const raw = await fs.promises.readFile(this.persistPath, 'utf8');
+      const data = JSON.parse(raw) as { entries?: Array<{ orderId: string; ownerId: string; userIds: string[]; messages: Array<{ channelId: string; messageId: string; kind: 'hint' | 'body' }> }> };
+      if (!data?.entries) return;
+      for (const entry of data.entries) {
+        const state: ClickState = {
+          ownerId: entry.ownerId,
+          userIds: new Set(entry.userIds ?? []),
+          messages: Array.isArray(entry.messages) ? entry.messages : [],
+        };
+        this.map.set(entry.orderId, state);
+      }
+      console.log('[clickStore] restored state entries:', data.entries.length);
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return; // no persisted state yet
+      throw err;
+    }
+  }
 
   init(messageId: string, ownerId: string) {
     const existing = this.map.get(messageId);
@@ -25,6 +74,7 @@ class ClickStore {
     );
     if (!exists) {
       state.messages.push({ channelId, messageId, kind });
+      this.schedulePersist();
     }
   }
 
@@ -43,6 +93,9 @@ class ClickStore {
     const before = state.userIds.size;
     state.userIds.add(userId);
     const after = state.userIds.size;
+    if (after !== before) {
+      this.schedulePersist();
+    }
     return {
       added: after > before,
       count: after,
@@ -79,6 +132,12 @@ class ClickStore {
     if (!state) return [];
     if (!kind) return [...state.messages];
     return state.messages.filter((m) => m.kind === kind);
+  }
+
+  remove(orderId: string) {
+    if (this.map.delete(orderId)) {
+      this.schedulePersist();
+    }
   }
 }
 

@@ -450,6 +450,9 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
         console.error('[handleEndRequestButton] sync label failed', { channelId: m.channelId, messageId: m.messageId, err });
       }
     }
+
+    // 清理存储的派单状态
+    clickStore.remove(orderId);
   } catch (err) {
     console.error('[handleEndRequestButton] error:', err);
   }
