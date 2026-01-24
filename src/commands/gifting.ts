@@ -43,6 +43,33 @@ const VOUCHER_GIFT_CONFIGS: Record<string, Array<{ prizeName: string; payRate: n
   一周冠: [{ prizeName: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER, payRate: 0.9 }],
   月冠名: [{ prizeName: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER, payRate: 0.9 }],
 };
+const GIFT_VOUCHER_NAMES = new Set([
+  PRIZE_NAMES.CAKE_VOUCHER,
+  PRIZE_NAMES.LOLLIPOP_VOUCHER,
+  PRIZE_NAMES.PERFUME_VOUCHER,
+  PRIZE_NAMES.CAROUSEL_VOUCHER,
+  PRIZE_NAMES.PUMPKIN_CAR_VOUCHER,
+  PRIZE_NAMES.PHONOGRAPH_VOUCHER,
+  PRIZE_NAMES.CROWN_DAY_90_VOUCHER,
+  PRIZE_NAMES.CROWN_75_VOUCHER,
+  PRIZE_NAMES.CROWN_3DAY_90_VOUCHER,
+  PRIZE_NAMES.CROWN_WEEK_90_VOUCHER,
+  PRIZE_NAMES.CROWN_MONTH_90_VOUCHER,
+]);
+// prizeName -> payRate (优惠后实际支付占比)
+const PRIZE_PAY_RATE = Object.values(VOUCHER_GIFT_CONFIGS).reduce<Record<string, number>>((acc, entries) => {
+  for (const e of entries) {
+    acc[e.prizeName] = e.payRate;
+  }
+  return acc;
+}, {});
+const computeVoucherConsumeAmount = (prizeName: string, unitPrice: Prisma.Decimal): Prisma.Decimal | null => {
+  if (!GIFT_VOUCHER_NAMES.has(prizeName)) return null;
+  const payRate = PRIZE_PAY_RATE[prizeName];
+  const discountRate = 1 - (Number.isFinite(payRate) ? payRate : 1);
+  if (discountRate <= 0) return DEC(0);
+  return unitPrice.mul(discountRate);
+};
 const REF_RATE = new Prisma.Decimal(0.01);
 
 /** Parse: "!打赏 3/liwu @UserB @UserC" */
@@ -349,12 +376,14 @@ export async function performGift(
         if (!voucher) {
           throw new Error('礼物券不可用或已过期。');
         }
+        const consumeAmount = computeVoucherConsumeAmount(voucher.prize?.name ?? '', unitPrice);
         await tx.lotteryDraw.update({
           where: { id: voucher.id },
           data: {
             status: LotteryStatus.USED,
             consumeAt: now,
             requestId: voucherRequestId ?? undefined,
+            consumeAmount: consumeAmount ?? undefined,
           },
       });
       voucherCount = 1;
@@ -387,13 +416,13 @@ export async function performGift(
       });
       voucherCount = vouchers.length;
       if (voucherCount > 0) {
-        const ids = vouchers.map((v) => v.id);
-        await tx.lotteryDraw.updateMany({
-          where: { id: { in: ids } },
-          data: { status: LotteryStatus.USED, consumeAt: now },
-        });
-        consumedVoucherIds.push(...ids);
         for (const v of vouchers) {
+          const consumeAmount = computeVoucherConsumeAmount(v.prize?.name ?? '', unitPrice);
+          await tx.lotteryDraw.update({
+            where: { id: v.id },
+            data: { status: LotteryStatus.USED, consumeAt: now, consumeAmount: consumeAmount ?? undefined },
+          });
+          consumedVoucherIds.push(v.id);
           const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
           const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
           const discountRate = new Prisma.Decimal(1).sub(payRate);

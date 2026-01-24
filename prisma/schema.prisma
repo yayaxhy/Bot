@@ -650,12 +650,15 @@ model LotteryDraw {
   code      String?       @unique
   expiresAt DateTime?
   consumeAt DateTime?
+  consumeAmount Decimal?  @db.Decimal(19, 4) // 奖品使用时带来的金额（折扣/返利等）
+  consumeOrderId String?  // 关联使用的订单
 
   prize  LotteryPrize? @relation(fields: [prizeId], references: [id])
   member Member        @relation(fields: [userId], references: [discordUserId])
 
   @@index([userId, createdAt])
   @@index([pool, createdAt])
+  @@index([consumeOrderId])
 }
 
 model LotteryPity {

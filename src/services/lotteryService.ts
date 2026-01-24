@@ -344,7 +344,12 @@ export async function performLotteryDraw(params: {
     if (useFreeVoucher) {
       await tx.lotteryDraw.update({
         where: { id: freeVoucher!.id },
-        data: { status: LotteryStatus.USED, consumeAt: now },
+        data: {
+          status: LotteryStatus.USED,
+          consumeAt: now,
+          requestId,
+          consumeAmount: DRAW_COST, // 抽奖代金券固定面额
+        },
       });
     }
 

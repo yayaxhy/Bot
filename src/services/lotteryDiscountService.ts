@@ -156,6 +156,8 @@ export async function applyLotteryDiscountForOrder(params: {
         status: LotteryStatus.USED,
         consumeAt: now,
         requestId: order.id,
+        consumeAmount: discountAmount,
+        consumeOrderId: order.id,
       },
     });
 

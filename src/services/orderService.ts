@@ -8,6 +8,28 @@ import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
+import { PrismaClientKnownRequestError as PrismaKnownError } from '@prisma/client/runtime/library.js';
+
+const TX_TIMEOUT_MS = 10000;
+const DEADLOCK_CODE = '40P01';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function withDeadlockRetries<T>(fn: () => Promise<T>, retries = 2, delayMs = 100): Promise<T> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isDeadlock =
+        (err instanceof PrismaKnownError && err.code === 'P2010' && (err as any)?.meta?.code === DEADLOCK_CODE) ||
+        (err?.code === 'P2010' && err?.meta?.code === DEADLOCK_CODE);
+      if (!isDeadlock || i === retries) throw err;
+      await sleep(delayMs);
+    }
+  }
+  // Unreachable
+  throw new Error('withDeadlockRetries exhausted');
+}
 
 // Prevent double settlement when multiple end requests land at once.
 async function lockOrderForUpdate(tx: Prisma.TransactionClient, orderId: string) {
@@ -95,13 +117,13 @@ export async function acceptOrder(orderId: string) {
     });
 
     return updated;
-  });
+  }, { timeout: TX_TIMEOUT_MS });
 }
 
 type ChargeResult = { charged: boolean; insufficient: boolean };
 
 export async function chargePendingMinutes(orderId: string): Promise<ChargeResult> {
-  return prisma.$transaction(async (tx) => {
+  return withDeadlockRetries(() => prisma.$transaction(async (tx) => {
     // Lock order first to keep lock ordering consistent with endOrder/recalc and avoid deadlocks.
     await lockOrderForUpdate(tx, orderId);
 
@@ -164,14 +186,14 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
     });
 
     return { charged: true, insufficient: minutesToCharge < pendingMinutes };
-  });
+  }, { timeout: TX_TIMEOUT_MS }));
 }
 
 type RecalcResult = { order: any | null; ended: boolean };
 
 /** Recompute remaining minutes; auto-end if balance can’t cover next minute */
 export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
-  return prisma.$transaction(async (tx) => {
+  return withDeadlockRetries(() => prisma.$transaction(async (tx) => {
     await lockOrderForUpdate(tx, orderId);
 
     const order = await tx.order.findUnique({
@@ -235,7 +257,7 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
       data: { lastRecalcAt: now, totalMinutes: elapsedTotalMinutes },
     });
     return { order: updated, ended: false };
-  });
+  }, { timeout: TX_TIMEOUT_MS }));
 }
 
 export async function recalcAllOrdersForHost(hostId: string) {
@@ -255,7 +277,7 @@ export async function recalcAllOrdersForHost(hostId: string) {
 
 /** End an order (host or worker) */
 export async function endOrder(orderId: string, byDiscordId: string) {
-  return prisma.$transaction(async (tx) => {
+  return withDeadlockRetries(() => prisma.$transaction(async (tx) => {
     await lockOrderForUpdate(tx, orderId);
 
     const order = await tx.order.findUnique({
@@ -266,7 +288,7 @@ export async function endOrder(orderId: string, byDiscordId: string) {
     if (order.hostId !== byDiscordId && order.workerId !== byDiscordId) throw new Error('Not participant');
 
     return endOrderInternal(tx, order, new Date());
-  });
+  }, { timeout: TX_TIMEOUT_MS }));
 }
 
 /** Settlement helper */
