@@ -43,7 +43,7 @@ const VOUCHER_GIFT_CONFIGS: Record<string, Array<{ prizeName: string; payRate: n
   一周冠: [{ prizeName: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER, payRate: 0.9 }],
   月冠名: [{ prizeName: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER, payRate: 0.9 }],
 };
-const GIFT_VOUCHER_NAMES = new Set([
+const GIFT_VOUCHER_NAMES: Set<string> = new Set([
   PRIZE_NAMES.CAKE_VOUCHER,
   PRIZE_NAMES.LOLLIPOP_VOUCHER,
   PRIZE_NAMES.PERFUME_VOUCHER,
