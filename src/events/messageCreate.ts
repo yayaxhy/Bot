@@ -803,6 +803,7 @@ export async function execute(message: Message) {
       const { embed: successEmbed, components: successComponents } = order_request_sent_successfully_embed(
         message.id,
         ownerId,
+        activities,
       );
       await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
     } else if (!message.guild) {
@@ -840,6 +841,7 @@ export async function execute(message: Message) {
         const { embed: successEmbed, components: successComponents } = order_request_sent_successfully_embed(
           message.id,
           ownerId,
+          activities,
         );
         await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
 

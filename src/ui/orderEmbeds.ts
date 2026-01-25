@@ -199,6 +199,7 @@ export function anonymous_ongoing_order_request_embed(
 export function order_request_sent_successfully_embed(
   interId: string,
   ownerId?: string,
+  activities: ActivityItem[] = [],
 ): {
   embed: APIEmbed; components: any[];
 } {
@@ -213,6 +214,7 @@ export function order_request_sent_successfully_embed(
     '',
     `✨锦鲤客服随时在线为您服务 ${getAdminMentions()}`,
   ];
+  appendActivities(lines, activities);
   const embed = base('订单创建', lines.join('\n'));
 
   const components: any[] = [];
