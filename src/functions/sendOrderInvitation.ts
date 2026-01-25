@@ -1,6 +1,7 @@
 import { ongoing_order_request_embed, anonymous_ongoing_order_request_embed, order_request_sent_successfully_embed } from '../ui/orderEmbeds.js'; // Use your custom embeds
 import { Client } from 'discord.js';  // To fetch the user object
 import prisma from '../db/prisma.js';  // Correct prisma import
+import { getActiveActivities } from '../services/activityService.js';
 
 export async function sendOrderInvitation(orderId: string, userId: string, client: Client) {
   // Fetch user details from the Member table (not PEIWAN)
@@ -17,8 +18,8 @@ export async function sendOrderInvitation(orderId: string, userId: string, clien
     return;  // If user not found, exit early
   }
 
-  // Destructure to get only the embed part
-  const { embed, components } = order_request_sent_successfully_embed(orderId, userId, []);
+  const activities = await getActiveActivities();
+  const { embed, components } = order_request_sent_successfully_embed(orderId, userId, activities);
 
   // Send the embed after verifying the user's balance
   await user.send({
