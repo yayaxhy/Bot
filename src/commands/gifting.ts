@@ -568,6 +568,7 @@ export async function performGift(
         unitPrice,
         gross,
         payable,
+        pointsEarned: payable,
         feeAmount,
         netAmount,
         receiverRate,

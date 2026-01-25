@@ -84,6 +84,7 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
     });
 
     const payable = DEC(audit.payable);
+    const pointsEarned = DEC((audit as any).pointsEarned ?? audit.payable);
     const gross = DEC(audit.gross);
     const netAmount = DEC(audit.netAmount);
     const spendExtra = DEC(audit.spendBonusExtra ?? 0);
@@ -124,7 +125,7 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
         totalSpent: giverTotalSpentAfter,
       },
     });
-    await adjustLoyaltyPointsTx(tx, audit.giverId, payable.mul(-1));
+    await adjustLoyaltyPointsTx(tx, audit.giverId, pointsEarned.mul(-1));
 
     await recordIndividualTransaction(tx, {
       discordId: audit.giverId,
@@ -278,6 +279,7 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
         status: 'SUCCESS',
         details: {
           payable: payable.toString(),
+          pointsEarned: pointsEarned.toString(),
           netAmount: netAmount.toString(),
           heartGain,
           voucherIds,

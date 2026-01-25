@@ -100,9 +100,9 @@ enum LotteryPrizeType {
  */
 
 model Activity {
-  id          Int      @id @default(autoincrement())
-  title       String
+  title       String   @id
   description String?
+  type        String?
 }
 
 model Member {
@@ -308,6 +308,7 @@ model GiftAudit {
   unitPrice                Decimal  @db.Decimal(19, 4)
   gross                    Decimal  @db.Decimal(19, 4)
   payable                  Decimal  @db.Decimal(19, 4)
+  pointsEarned             Decimal  @db.Decimal(19, 4) // loyalty points awarded to giver for this gift
   feeAmount                Decimal  @db.Decimal(19, 4)
   netAmount                Decimal  @db.Decimal(19, 4)
   receiverRate             Decimal  @db.Decimal(19, 6)

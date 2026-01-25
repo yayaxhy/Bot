@@ -14,6 +14,7 @@ import {
 import prisma from '../db/prisma.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
+import { getActiveActivities } from '../services/activityService.js';
 
 export async function sendOrderRequest(interaction: Interaction) {
   const userA = interaction.user;
@@ -26,6 +27,7 @@ export async function sendOrderRequest(interaction: Interaction) {
   } else if (interaction instanceof ButtonInteraction) {
     message = (interaction.message as any)?.content ?? '';
   }
+  const activities = await getActiveActivities();
 
   const rolesMentioned =
     interaction instanceof ButtonInteraction
@@ -40,7 +42,7 @@ export async function sendOrderRequest(interaction: Interaction) {
         interaction.channel instanceof NewsChannel)
     ) {
       const embedResponse = ongoing_order_request_embed(
-        userA.tag, message, message, orderId, ownerId  // 🔴 传 ownerId
+        userA.tag, message, message, orderId, ownerId, undefined, activities  // 🔴 传 ownerId
       );
       const ownerDisplayName =
         interaction.member && typeof interaction.member === 'object' && 'displayName' in interaction.member
@@ -57,7 +59,7 @@ export async function sendOrderRequest(interaction: Interaction) {
     }
   } else {
     const embedResponse = anonymous_ongoing_order_request_embed(
-      message, message, orderId, ownerId             // 🔴 传 ownerId
+      message, message, orderId, ownerId, undefined, activities             // 🔴 传 ownerId
     );
     const ownerDisplayName =
       interaction.member && typeof interaction.member === 'object' && 'displayName' in interaction.member

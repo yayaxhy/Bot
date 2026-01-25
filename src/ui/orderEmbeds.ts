@@ -155,7 +155,7 @@ export function ongoing_order_request_embed(
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
 
-  return { embeds: [embed], components: [row] };
+  return { embeds: [embed.toJSON()], components: [row] };
 }
 
 /* ================== 派单（匿名老板） ================== */
@@ -178,6 +178,7 @@ export function anonymous_ongoing_order_request_embed(
   ];
   if (mentionLinePlain) lines.push(`<a:41:1422335911236206723> ${mentionLinePlain}`);
   appendActivities(lines, activities);
+
   const embed = new EmbedBuilder()
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
@@ -191,7 +192,7 @@ export function anonymous_ongoing_order_request_embed(
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(button);
 
-  return { embeds: [embed], components: [row] };
+  return { embeds: [embed.toJSON()], components: [row] };
 }
 
 /* ================== 订单创建成功（DM 给老板） ================== */
