@@ -105,6 +105,16 @@ function extractOrderContent(message: Message | null | undefined): string {
     if (value) return sanitizeOrderContent(value);
   }
 
+  const rawContent = message.content ?? '';
+  if (rawContent) {
+    const quoteMatch = rawContent.match(/“([\s\S]+?)”/);
+    if (quoteMatch) {
+      const text = quoteMatch[1].trim();
+      if (text) return sanitizeOrderContent(text);
+    }
+    return sanitizeOrderContent(rawContent.trim());
+  }
+
   const description = embed?.description ?? '';
   if (description) {
     const quoteMatch = description.match(/“([\s\S]+?)”/);
@@ -116,22 +126,17 @@ function extractOrderContent(message: Message | null | undefined): string {
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
-    if (lines.length) {
-      const lastLine = lines[lines.length - 1]
+    const preActivity: string[] = [];
+    for (const line of lines) {
+      if (line.includes('正在进行的活动')) break;
+      preActivity.push(line);
+    }
+    if (preActivity.length) {
+      const lastLine = preActivity[preActivity.length - 1]
         .replace(/^["“]+|["”]+$/g, '')
         .trim();
       if (lastLine) return sanitizeOrderContent(lastLine);
     }
-  }
-
-  const rawContent = message.content ?? '';
-  if (rawContent) {
-    const quoteMatch = rawContent.match(/“([\s\S]+?)”/);
-    if (quoteMatch) {
-      const text = quoteMatch[1].trim();
-      if (text) return sanitizeOrderContent(text);
-    }
-    return sanitizeOrderContent(rawContent.trim());
   }
 
   return '';
