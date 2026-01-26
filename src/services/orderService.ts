@@ -10,7 +10,8 @@ import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 import { PrismaClientKnownRequestError as PrismaKnownError } from '@prisma/client/runtime/library.js';
 
-const TX_TIMEOUT_MS = 10000;
+// Give end-order transactions more time to complete to avoid P2028 timeout errors.
+const TX_TIMEOUT_MS = 30000;
 const DEADLOCK_CODE = '40P01';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
