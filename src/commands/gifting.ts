@@ -666,7 +666,7 @@ export async function performGift(
     const earnedText = Number(result.payable.toString()).toFixed(2);
     const totalText = Number((pointsRow?.points ?? 0).toString()).toFixed(2);
     const giverUser = await client.users.fetch(giverId);
-    await giverUser.send(`打赏完成：本次获得积分 ${earnedText}，累计积分 ${totalText}。`);
+    await giverUser.send(`打赏完成：本次获得锦鲤积分 ${earnedText}，累计锦鲤积分 ${totalText}。`);
   } catch (err) {
     console.error('[performGift] notify giver points failed:', err);
   }
