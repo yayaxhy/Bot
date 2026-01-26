@@ -14,6 +14,8 @@ const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
   '525770714574225408',
 ]);
+const SPEND_TYPES = new Set<string>(['点单', '打赏', '抽奖消费', '红包发出']);
+const INCOME_TYPES = new Set<string>(['点单', '打赏', '红包收入']);
 
 type SnapshotRow = {
   discordUserId: string;
@@ -137,7 +139,7 @@ const star = '<a:36:1422326912327618775>';
 const redCrown = '<a:513:1422336441064620052>';
 const spinCrown = '<a:98488firecrow:1422362470218989648>';
 const redStar = '<a:33:1422326883344711762>';
-const ANON_SPEND_USER_IDS = new Set<string>(['775769771475075144']);
+const ANON_SPEND_USER_IDS = new Set<string>(['525770714574225408']);
 
 const formatAmount = (value: Prisma.Decimal) => {
   const num = Number(value.toString());
@@ -217,15 +219,15 @@ async function loadSnapshotsForRange(start: Date, end: Date) {
 function buildEntries(
   startRows: SnapshotRow[],
   endRows: CurrentRow[],
-  displayMap: Map<string, string>
+  displayMap: Map<string, string>,
+  spendMap: Map<string, Prisma.Decimal>,
+  incomeMap: Map<string, Prisma.Decimal>
 ): LeaderboardEntry[] {
-  const startMap = toMap(startRows);
   const entries: LeaderboardEntry[] = [];
 
   endRows.forEach((row) => {
-    const prev = startMap.get(row.discordUserId);
-    const deltaEarn = new Prisma.Decimal(row.totalEarn).sub(prev?.totalEarn ?? 0);
-    const deltaSpent = new Prisma.Decimal(row.totalSpent).sub(prev?.totalSpent ?? 0);
+    const deltaEarn = incomeMap.get(row.discordUserId) ?? new Prisma.Decimal(0);
+    const deltaSpent = spendMap.get(row.discordUserId) ?? new Prisma.Decimal(0);
     const displayName = displayMap.get(row.discordUserId) ?? row.discordUserId;
     entries.push({
       discordUserId: row.discordUserId,
@@ -251,6 +253,48 @@ async function loadDisplayMap(startRows: SnapshotRow[], endRows: SnapshotRow[]) 
   return new Map(
     members.map((m) => [m.discordUserId, m.serverDisplayName ?? m.discordUserId])
   );
+}
+
+async function loadActualSpend(start: Date, end: Date) {
+  const rows = await prisma.individualTransaction.findMany({
+    where: {
+      timeCreatedAt: { gte: start, lt: end },
+      typeOfTransaction: { in: Array.from(SPEND_TYPES) },
+    },
+    select: { discordId: true, balanceBefore: true, balanceAfter: true },
+  });
+
+  const spendMap = new Map<string, Prisma.Decimal>();
+  rows.forEach((row) => {
+    const before = new Prisma.Decimal(row.balanceBefore ?? 0);
+    const after = new Prisma.Decimal(row.balanceAfter ?? 0);
+    const delta = before.sub(after);
+    if (delta.lte(0)) return;
+    const prev = spendMap.get(row.discordId) ?? new Prisma.Decimal(0);
+    spendMap.set(row.discordId, prev.add(delta));
+  });
+  return spendMap;
+}
+
+async function loadActualIncome(start: Date, end: Date) {
+  const rows = await prisma.individualTransaction.findMany({
+    where: {
+      timeCreatedAt: { gte: start, lt: end },
+      typeOfTransaction: { in: Array.from(INCOME_TYPES) },
+    },
+    select: { discordId: true, balanceBefore: true, balanceAfter: true },
+  });
+
+  const incomeMap = new Map<string, Prisma.Decimal>();
+  rows.forEach((row) => {
+    const before = new Prisma.Decimal(row.balanceBefore ?? 0);
+    const after = new Prisma.Decimal(row.balanceAfter ?? 0);
+    const delta = after.sub(before);
+    if (delta.lte(0)) return;
+    const prev = incomeMap.get(row.discordId) ?? new Prisma.Decimal(0);
+    incomeMap.set(row.discordId, prev.add(delta));
+  });
+  return incomeMap;
 }
 
 const formatSpendEmbed = (title: string, entries: LeaderboardEntry[], includeAmount = false) => {
@@ -395,9 +439,13 @@ async function generateDailyAndPost(client: Client) {
 
   const endDayStart = addDaysUtc(targetDayStart, 1);
   const { startRows, endRows } = await loadSnapshotsForRange(targetDayStart, endDayStart);
+  const [actualSpend, actualIncome] = await Promise.all([
+    loadActualSpend(targetDayStart, endDayStart),
+    loadActualIncome(targetDayStart, endDayStart),
+  ]);
   const displayMap = await loadDisplayMap(startRows, endRows);
 
-  const entries = buildEntries(startRows, endRows, displayMap);
+  const entries = buildEntries(startRows, endRows, displayMap, actualSpend, actualIncome);
   const spendTop = entries
     .filter((e) => e.deltaSpent.gt(0))
     .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
@@ -455,9 +503,13 @@ async function generateWeeklyAndPost(client: Client) {
   if (!needsAnyWeekly && !needsSpend && !needsIncome) return;
 
   const { startRows, endRows } = await loadSnapshotsForRange(lastWeekStart, thisWeekStart);
+  const [actualSpend, actualIncome] = await Promise.all([
+    loadActualSpend(lastWeekStart, thisWeekStart),
+    loadActualIncome(lastWeekStart, thisWeekStart),
+  ]);
   const displayMap = await loadDisplayMap(startRows, endRows);
 
-  const entries = buildEntries(startRows, endRows, displayMap);
+  const entries = buildEntries(startRows, endRows, displayMap, actualSpend, actualIncome);
   const spendTop = entries
     .filter((e) => e.deltaSpent.gt(0))
     .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
@@ -508,9 +560,13 @@ async function generateMonthlyAndPost(client: Client) {
   if (!needsAnyMonthly && !needsSpend && !needsIncome) return;
 
   const { startRows, endRows } = await loadSnapshotsForRange(lastMonthStart, thisMonthStart);
+  const [actualSpend, actualIncome] = await Promise.all([
+    loadActualSpend(lastMonthStart, thisMonthStart),
+    loadActualIncome(lastMonthStart, thisMonthStart),
+  ]);
   const displayMap = await loadDisplayMap(startRows, endRows);
 
-  const entries = buildEntries(startRows, endRows, displayMap);
+  const entries = buildEntries(startRows, endRows, displayMap, actualSpend, actualIncome);
   const spendTop = entries
     .filter((e) => e.deltaSpent.gt(0))
     .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
