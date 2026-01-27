@@ -21,6 +21,7 @@ import { handleRedEnvelopeSlash, redEnvelopeSlashCommand } from './commands/redE
 import { handleKeywordRedEnvelopeSlash, keywordRedEnvelopeSlashCommand } from './commands/keywordRedEnvelopeSlash.js';
 import { customerGangCommand, handleCustomerGangSlash } from './commands/customerGangSlash.js';
 import { handleRevertGiftSlash, revertGiftCommand } from './commands/revertGiftSlash.js';
+import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
@@ -179,6 +180,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleRevertGiftSlash(i);
                 return;
             }
+            if (i.commandName === '派单私信') {
+                await handleBulkDmSlash(i);
+                return;
+            }
         }
 
     // Buttons
@@ -244,6 +249,7 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(keywordRedEnvelopeSlashCommand);
             await client.application.commands.create(customerGangCommand);
             await client.application.commands.create(revertGiftCommand);
+            await client.application.commands.create(bulkDmCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);
