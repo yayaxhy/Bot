@@ -18,6 +18,11 @@ const SEND_MAX_RETRY = 3;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const hasSend = (channel: unknown): channel is TextBasedChannel & { send: Function } =>
   !!channel && typeof (channel as any).send === 'function';
+const isOnline = (member: GuildMember): boolean => {
+  const status = member.presence?.status;
+  if (!status) return false;
+  return status !== 'offline' && status !== 'invisible';
+};
 
 function normalizeContent(text: string): string {
   return text.trim();
@@ -92,11 +97,11 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
   const role = i.options.getRole('角色', true) as Role;
 
   // 确保拉取成员列表
-  await i.guild!.members.fetch();
-  const targets = role.members.filter((m) => !m.user.bot);
+  await i.guild!.members.fetch({ withPresences: true });
+  const targets = role.members.filter((m) => !m.user.bot && isOnline(m));
 
   if (targets.size === 0) {
-    await i.reply({ content: '未找到该tag下的有效成员。', ephemeral: false });
+    await i.reply({ content: '未找到在线的目标成员（可能全部离线或未启用 Presence Intent）。', ephemeral: false });
     return;
   }
 
