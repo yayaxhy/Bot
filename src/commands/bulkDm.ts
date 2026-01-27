@@ -96,11 +96,14 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
   const targets = role.members.filter((m) => !m.user.bot);
 
   if (targets.size === 0) {
-    await i.reply({ content: '未找到该角色下的有效成员。', ephemeral: true });
+    await i.reply({ content: '未找到该tag下的有效成员。', ephemeral: false });
     return;
   }
 
-  await i.reply({ content: `开始向 ${targets.size} 名成员发送私信……`, ephemeral: true });
+  await i.reply({
+    content: `开始向 ${targets.size} 名成员发送私信…… 私信内容：${message}`,
+    ephemeral: false,
+  });
 
   const confirmChannel = await getConfirmChannel(i);
   let success = 0;
@@ -139,6 +142,6 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
 
   await i.followUp({
     content: `完成。成功 ${success} 人，失败 ${failure} 人，总计 ${targets.size} 人。`,
-    ephemeral: true,
+    ephemeral: false,
   });
 }
