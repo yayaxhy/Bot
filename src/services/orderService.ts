@@ -16,6 +16,9 @@ const DEADLOCK_CODE = '40P01';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const isRetriableTimeout = (err: any) =>
+  err instanceof PrismaKnownError && err.code === 'P2028';
+
 async function withDeadlockRetries<T>(fn: () => Promise<T>, retries = 2, delayMs = 100): Promise<T> {
   for (let i = 0; i <= retries; i++) {
     try {
@@ -30,6 +33,18 @@ async function withDeadlockRetries<T>(fn: () => Promise<T>, retries = 2, delayMs
   }
   // Unreachable
   throw new Error('withDeadlockRetries exhausted');
+}
+
+async function withTimeoutRetries<T>(fn: () => Promise<T>, retries = 1, delayMs = 50): Promise<T> {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (!isRetriableTimeout(err) || i === retries) throw err;
+      await sleep(delayMs);
+    }
+  }
+  throw new Error('withTimeoutRetries exhausted');
 }
 
 // Prevent double settlement when multiple end requests land at once.
@@ -194,71 +209,86 @@ type RecalcResult = { order: any | null; ended: boolean; heartAmount?: number; h
 
 /** Recompute remaining minutes; auto-end if balance can’t cover next minute */
 export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
-  const result = await withDeadlockRetries(() => prisma.$transaction(async (tx) => {
-    await lockOrderForUpdate(tx, orderId);
+  const outerStart = Date.now();
+  let txDuration = 0;
 
-    const order = await tx.order.findUnique({
-      where: { id: orderId },
-      include: { host: true, worker: true, peiwan: true },
-    });
-    if (!order || order.status !== OrderStatus.RUNNING) {
-      return { order, ended: false };
-    }
+  const result = await withDeadlockRetries(
+    () =>
+      withTimeoutRetries(async () => {
+        const txStart = Date.now();
+        try {
+          return await prisma.$transaction(async (tx) => {
+            await lockOrderForUpdate(tx, orderId);
 
-    const now = new Date();
-    const elapsedTotalMinutes = minutesBetweenCeil(order.stopwatchStartAt!, now);
+            const order = await tx.order.findUnique({
+              where: { id: orderId },
+              include: { host: true, worker: true, peiwan: true },
+            });
+            if (!order || order.status !== OrderStatus.RUNNING) {
+              return { order, ended: false };
+            }
 
-    // 最新余额 + 预留已计费金额
-    await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
-    const hostMember = await tx.member.findUnique({
-      where: { discordUserId: order.hostId },
-      select: { totalBalance: true },
-    });
-    const runningForHost = await tx.order.findMany({
-      where: { hostId: order.hostId, status: OrderStatus.RUNNING },
-      select: { id: true, unitPrice: true, chargedGross: true },
-    });
-    const reserved = runningForHost.reduce(
-      (sum, r) => (r.chargedGross ? sum.add(new Prisma.Decimal(r.chargedGross)) : sum),
-      new Prisma.Decimal(0)
-    );
-    let hostBalance = new Prisma.Decimal(hostMember?.totalBalance ?? 0).sub(reserved);
-    if (hostBalance.lt(0)) hostBalance = new Prisma.Decimal(0);
-    let totalHourlyCost = new Prisma.Decimal(0);
-    for (const r of runningForHost) {
-      if (r.unitPrice) {
-        const price = new Prisma.Decimal(r.unitPrice);
-        if (price.gt(0)) totalHourlyCost = totalHourlyCost.add(price);
-      }
-    }
-    const perMinuteCost = totalHourlyCost.div(60);
+            const now = new Date();
+            const elapsedTotalMinutes = minutesBetweenCeil(order.stopwatchStartAt!, now);
 
-    if (perMinuteCost.gt(0)) {
-      const minutesCoverable = hostBalance.div(perMinuteCost);
-      if (minutesCoverable.lt(2)) {
-        const ended = await endOrderInternal(tx, order, now);
-        return { order: ended.order, ended: true, heartAmount: ended.heartAmount, hostId: order.hostId, workerId: order.workerId };
-      }
-      const remainByBalance = Math.floor(minutesCoverable.toNumber());
-      const newCutoff = addMinutes(now, remainByBalance);
-      const updated = await tx.order.update({
-        where: { id: order.id },
-        data: { lastRecalcAt: now, totalMinutes: elapsedTotalMinutes, cutoffAt: newCutoff },
-      });
-      return { order: updated, ended: false };
-    }
+            // 最新余额 + 预留已计费金额
+            await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
+            const hostMember = await tx.member.findUnique({
+              where: { discordUserId: order.hostId },
+              select: { totalBalance: true },
+            });
+            const runningForHost = await tx.order.findMany({
+              where: { hostId: order.hostId, status: OrderStatus.RUNNING },
+              select: { id: true, unitPrice: true, chargedGross: true },
+            });
+            const reserved = runningForHost.reduce(
+              (sum, r) => (r.chargedGross ? sum.add(new Prisma.Decimal(r.chargedGross)) : sum),
+              new Prisma.Decimal(0)
+            );
+            let hostBalance = new Prisma.Decimal(hostMember?.totalBalance ?? 0).sub(reserved);
+            if (hostBalance.lt(0)) hostBalance = new Prisma.Decimal(0);
+            let totalHourlyCost = new Prisma.Decimal(0);
+            for (const r of runningForHost) {
+              if (r.unitPrice) {
+                const price = new Prisma.Decimal(r.unitPrice);
+                if (price.gt(0)) totalHourlyCost = totalHourlyCost.add(price);
+              }
+            }
+            const perMinuteCost = totalHourlyCost.div(60);
 
-    if (hostBalance.lte(0)) {
-      const ended = await endOrderInternal(tx, order, now);
-      return { order: ended.order, ended: true, heartAmount: ended.heartAmount, hostId: order.hostId, workerId: order.workerId };
-    }
+            if (perMinuteCost.gt(0)) {
+              const minutesCoverable = hostBalance.div(perMinuteCost);
+              if (minutesCoverable.lt(2)) {
+                const ended = await endOrderInternal(tx, order, now);
+                return { order: ended.order, ended: true, heartAmount: ended.heartAmount, hostId: order.hostId, workerId: order.workerId };
+              }
+              const remainByBalance = Math.floor(minutesCoverable.toNumber());
+              const newCutoff = addMinutes(now, remainByBalance);
+              const updated = await tx.order.update({
+                where: { id: order.id },
+                data: { lastRecalcAt: now, totalMinutes: elapsedTotalMinutes, cutoffAt: newCutoff },
+              });
+              return { order: updated, ended: false };
+            }
 
-    const updated = await tx.order.update({
-      where: { id: order.id },
-      data: { lastRecalcAt: now, totalMinutes: elapsedTotalMinutes },
-    });
-    return { order: updated, ended: false };
-  }, { timeout: TX_TIMEOUT_MS }));
+            if (hostBalance.lte(0)) {
+              const ended = await endOrderInternal(tx, order, now);
+              return { order: ended.order, ended: true, heartAmount: ended.heartAmount, hostId: order.hostId, workerId: order.workerId };
+            }
+
+            const updated = await tx.order.update({
+              where: { id: order.id },
+              data: { lastRecalcAt: now, totalMinutes: elapsedTotalMinutes },
+            });
+            return { order: updated, ended: false };
+          }, { timeout: TX_TIMEOUT_MS });
+        } finally {
+          txDuration = Date.now() - txStart;
+        }
+      }, 1, 50),
+    1,
+    50
+  );
 
   // 如果在事务内结束了订单，把耗时操作移到事务外
   if (result.ended && result.heartAmount && result.hostId && result.workerId) {
@@ -268,6 +298,8 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
       console.error('[recalcOrAutoEnd] addHeart failed', { orderId, err });
     }
   }
+  const totalDuration = Date.now() - outerStart;
+  console.log('[recalcOrAutoEnd] duration', { orderId, txMs: txDuration, totalMs: totalDuration, ended: result.ended });
   return result;
 }
 
@@ -288,19 +320,36 @@ export async function recalcAllOrdersForHost(hostId: string) {
 
 /** End an order (host or worker) */
 export async function endOrder(orderId: string, byDiscordId: string) {
-  const result = await withDeadlockRetries(() => prisma.$transaction(async (tx) => {
-    await lockOrderForUpdate(tx, orderId);
+  const outerStart = Date.now();
+  let txDuration = 0;
 
-    const order = await tx.order.findUnique({
-      where: { id: orderId },
-      include: { host: true, worker: true, peiwan: true },
-    });
-    if (!order || order.status !== OrderStatus.RUNNING) throw new Error('Order not running');
-    if (order.hostId !== byDiscordId && order.workerId !== byDiscordId) throw new Error('Not participant');
+  const result = await withDeadlockRetries(
+    () =>
+      withTimeoutRetries(async () => {
+        const txStart = Date.now();
+        try {
+          return await prisma.$transaction(async (tx) => {
+            await lockOrderForUpdate(tx, orderId);
 
-    const ended = await endOrderInternal(tx, order, new Date());
-    return { ...ended, hostId: order.hostId, workerId: order.workerId };
-  }, { timeout: TX_TIMEOUT_MS }));
+            const order = await tx.order.findUnique({
+              where: { id: orderId },
+              include: { host: true, worker: true, peiwan: true },
+            });
+            if (!order) throw new Error('Order not running');
+            // Idempotency guard: if订单已结束，直接返回现状
+            if (order.status !== OrderStatus.RUNNING) return { order, heartAmount: undefined, hostId: order.hostId, workerId: order.workerId };
+            if (order.hostId !== byDiscordId && order.workerId !== byDiscordId) throw new Error('Not participant');
+
+            const ended = await endOrderInternal(tx, order, new Date());
+            return { ...ended, hostId: order.hostId, workerId: order.workerId };
+          }, { timeout: TX_TIMEOUT_MS });
+        } finally {
+          txDuration = Date.now() - txStart;
+        }
+      }, 1, 50),
+    1,
+    50
+  );
 
   // 事务外执行耗时/非必须操作，缩短锁持有
   if (result.heartAmount && result.hostId && result.workerId) {
@@ -315,6 +364,8 @@ export async function endOrder(orderId: string, byDiscordId: string) {
   } catch (err) {
     console.error('[endOrder] notifyOrderEnded failed', { orderId, err });
   }
+  const totalDuration = Date.now() - outerStart;
+  console.log('[endOrder] duration', { orderId, txMs: txDuration, totalMs: totalDuration });
   return result.order;
 }
 
