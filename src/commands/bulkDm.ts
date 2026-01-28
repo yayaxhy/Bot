@@ -106,10 +106,18 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
   }
 
   const message = normalizeContent(i.options.getString('信息', true));
+  const primaryRole =
+    (i.options.getRole('tag') as Role | null) ??
+    (i.options.getRole('角色') as Role | null) ??
+    (i.options.getRole('role') as Role | null);
+  if (!primaryRole) {
+    await i.reply({ content: '❌ 缺少必填的 tag 参数，请重新选择后再试。', ephemeral: true });
+    return;
+  }
   const roles = [
-    i.options.getRole('角色', true) as Role,
-    i.options.getRole('角色2') as Role | null,
-    i.options.getRole('角色3') as Role | null,
+    primaryRole,
+    i.options.getRole('tag2') as Role | null,
+    i.options.getRole('tag3') as Role | null,
   ].filter(Boolean) as Role[];
 
   // 确保拉取成员列表
