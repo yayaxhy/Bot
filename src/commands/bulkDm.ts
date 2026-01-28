@@ -75,9 +75,21 @@ export const bulkDmCommand = new SlashCommandBuilder()
   )
   .addRoleOption((option) =>
     option
-      .setName('角色')
-      .setDescription('要发送给的角色')
+      .setName('tag')
+      .setDescription('要发送给的tag')
       .setRequired(true)
+  )
+  .addRoleOption((option) =>
+    option
+      .setName('tag2')
+      .setDescription('可选，需同时拥有此tag')
+      .setRequired(false)
+  )
+  .addRoleOption((option) =>
+    option
+      .setName('tag3')
+      .setDescription('可选，需同时拥有此tag')
+      .setRequired(false)
   );
 
 export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
@@ -94,19 +106,28 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
   }
 
   const message = normalizeContent(i.options.getString('信息', true));
-  const role = i.options.getRole('角色', true) as Role;
+  const roles = [
+    i.options.getRole('角色', true) as Role,
+    i.options.getRole('角色2') as Role | null,
+    i.options.getRole('角色3') as Role | null,
+  ].filter(Boolean) as Role[];
 
   // 确保拉取成员列表
   await i.guild!.members.fetch({ withPresences: true });
-  const targets = role.members.filter((m) => !m.user.bot && isOnline(m));
+  const allMembers = i.guild!.members.cache.values();
+  const targets = Array.from(allMembers).filter((m) => {
+    if (m.user.bot) return false;
+    if (!isOnline(m)) return false;
+    return roles.every((r) => m.roles.cache.has(r.id));
+  });
 
-  if (targets.size === 0) {
+  if (targets.length === 0) {
     await i.reply({ content: '未找到在线的目标成员（可能全部离线或未启用 Presence Intent）。', ephemeral: false });
     return;
   }
 
   await i.reply({
-    content: `开始向 ${targets.size} 名成员发送私信…… 私信内容：${message}`,
+    content: `开始向 ${targets.length} 名成员发送私信（需同时具备 ${roles.length} 个角色）…… 私信内容：${message}`,
     ephemeral: false,
   });
 
@@ -115,7 +136,7 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
   let failure = 0;
   let idx = 0;
 
-  for (const member of targets.values()) {
+  for (const member of targets) {
     idx += 1;
 
     const sendResult = await sendWithRetry(member, message);
@@ -146,7 +167,7 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
   }
 
   await i.followUp({
-    content: `完成。成功 ${success} 人，失败 ${failure} 人，总计 ${targets.size} 人。`,
+    content: `完成。成功 ${success} 人，失败 ${failure} 人，总计 ${targets.length} 人。`,
     ephemeral: false,
   });
 }
