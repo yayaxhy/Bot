@@ -190,11 +190,11 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
   }, { timeout: TX_TIMEOUT_MS }));
 }
 
-type RecalcResult = { order: any | null; ended: boolean };
+type RecalcResult = { order: any | null; ended: boolean; heartAmount?: number; hostId?: string; workerId?: string };
 
 /** Recompute remaining minutes; auto-end if balance can’t cover next minute */
 export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
-  return withDeadlockRetries(() => prisma.$transaction(async (tx) => {
+  const result = await withDeadlockRetries(() => prisma.$transaction(async (tx) => {
     await lockOrderForUpdate(tx, orderId);
 
     const order = await tx.order.findUnique({
@@ -236,8 +236,8 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
     if (perMinuteCost.gt(0)) {
       const minutesCoverable = hostBalance.div(perMinuteCost);
       if (minutesCoverable.lt(2)) {
-        const endedOrder = await endOrderInternal(tx, order, now);
-        return { order: endedOrder, ended: true };
+        const ended = await endOrderInternal(tx, order, now);
+        return { order: ended.order, ended: true, heartAmount: ended.heartAmount, hostId: order.hostId, workerId: order.workerId };
       }
       const remainByBalance = Math.floor(minutesCoverable.toNumber());
       const newCutoff = addMinutes(now, remainByBalance);
@@ -249,8 +249,8 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
     }
 
     if (hostBalance.lte(0)) {
-      const endedOrder = await endOrderInternal(tx, order, now);
-      return { order: endedOrder, ended: true };
+      const ended = await endOrderInternal(tx, order, now);
+      return { order: ended.order, ended: true, heartAmount: ended.heartAmount, hostId: order.hostId, workerId: order.workerId };
     }
 
     const updated = await tx.order.update({
@@ -259,6 +259,16 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
     });
     return { order: updated, ended: false };
   }, { timeout: TX_TIMEOUT_MS }));
+
+  // 如果在事务内结束了订单，把耗时操作移到事务外
+  if (result.ended && result.heartAmount && result.hostId && result.workerId) {
+    try {
+      await addHeart(result.hostId, result.workerId, result.heartAmount);
+    } catch (err) {
+      console.error('[recalcOrAutoEnd] addHeart failed', { orderId, err });
+    }
+  }
+  return result;
 }
 
 export async function recalcAllOrdersForHost(hostId: string) {
@@ -278,7 +288,7 @@ export async function recalcAllOrdersForHost(hostId: string) {
 
 /** End an order (host or worker) */
 export async function endOrder(orderId: string, byDiscordId: string) {
-  return withDeadlockRetries(() => prisma.$transaction(async (tx) => {
+  const result = await withDeadlockRetries(() => prisma.$transaction(async (tx) => {
     await lockOrderForUpdate(tx, orderId);
 
     const order = await tx.order.findUnique({
@@ -288,8 +298,24 @@ export async function endOrder(orderId: string, byDiscordId: string) {
     if (!order || order.status !== OrderStatus.RUNNING) throw new Error('Order not running');
     if (order.hostId !== byDiscordId && order.workerId !== byDiscordId) throw new Error('Not participant');
 
-    return endOrderInternal(tx, order, new Date());
+    const ended = await endOrderInternal(tx, order, new Date());
+    return { ...ended, hostId: order.hostId, workerId: order.workerId };
   }, { timeout: TX_TIMEOUT_MS }));
+
+  // 事务外执行耗时/非必须操作，缩短锁持有
+  if (result.heartAmount && result.hostId && result.workerId) {
+    try {
+      await addHeart(result.hostId, result.workerId, result.heartAmount);
+    } catch (err) {
+      console.error('[endOrder] addHeart failed', { orderId, err });
+    }
+  }
+  try {
+    await notifyOrderEnded(orderId);
+  } catch (err) {
+    console.error('[endOrder] notifyOrderEnded failed', { orderId, err });
+  }
+  return result.order;
 }
 
 /** Settlement helper */
@@ -315,9 +341,10 @@ async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTim
   await tx.pEIWAN.update({ where: { PEIWANID: order.peiwanId }, data: { status: PeiwanStatus.free } });
   await tx.workerLock.deleteMany({ where: { workerId: order.workerId } });
 
-  await addHeart(order.hostId, order.workerId, Number((order.grossAmount ?? gross).toNumber?.() ?? gross.toNumber()));
+  const heartAmount = Number((order.grossAmount ?? gross).toNumber?.() ?? gross.toNumber());
 
-  return tx.order.update({ where: { id: order.id }, data: { status: OrderStatus.ENDED } });
+  const updated = await tx.order.update({ where: { id: order.id }, data: { status: OrderStatus.ENDED } });
+  return { order: updated, heartAmount };
 }
 
 async function settle(
