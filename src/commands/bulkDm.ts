@@ -135,7 +135,7 @@ export async function handleBulkDmSlash(i: ChatInputCommandInteraction) {
   }
 
   await i.reply({
-    content: `开始向 ${targets.length} 名成员发送私信（需同时具备 ${roles.length} 个角色）…… 私信内容：${message}`,
+    content: `开始向 ${targets.length} 名成员发送私信（需同时具备 ${roles.length} 个tag）…… 私信内容：${message}`,
     ephemeral: false,
   });
 
