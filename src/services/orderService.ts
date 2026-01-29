@@ -222,7 +222,23 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
 
             const order = await tx.order.findUnique({
               where: { id: orderId },
-              include: { host: true, worker: true, peiwan: true },
+              select: {
+                id: true,
+                status: true,
+                hostId: true,
+                workerId: true,
+                peiwanId: true,
+                unitPrice: true,
+                commissionRate: true,
+                grossAmount: true,
+                stopwatchStartAt: true,
+                acceptedAt: true,
+                createdAt: true,
+                billableStartAt: true,
+                chargedMinutes: true,
+                chargedGross: true,
+                cutoffAt: true,
+              },
             });
             if (!order || order.status !== OrderStatus.RUNNING) {
               return { order, ended: false };
@@ -239,7 +255,7 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
             });
             const runningForHost = await tx.order.findMany({
               where: { hostId: order.hostId, status: OrderStatus.RUNNING },
-              select: { id: true, unitPrice: true, chargedGross: true },
+              select: { unitPrice: true, chargedGross: true },
             });
             const reserved = runningForHost.reduce(
               (sum, r) => (r.chargedGross ? sum.add(new Prisma.Decimal(r.chargedGross)) : sum),
@@ -333,7 +349,26 @@ export async function endOrder(orderId: string, byDiscordId: string) {
 
             const order = await tx.order.findUnique({
               where: { id: orderId },
-              include: { host: true, worker: true, peiwan: true },
+              select: {
+                id: true,
+                status: true,
+                hostId: true,
+                workerId: true,
+                peiwanId: true,
+                unitPrice: true,
+                commissionRate: true,
+                grossAmount: true,
+                stopwatchStartAt: true,
+                acceptedAt: true,
+                createdAt: true,
+                billableStartAt: true,
+                chargedMinutes: true,
+                chargedGross: true,
+                cutoffAt: true,
+                peiwan: { select: { totalEarn: true } },
+                worker: { select: { commissionRate: true, totalBalance: true, income: true, recharge: true } },
+                host: { select: { totalBalance: true, income: true, recharge: true } },
+              },
             });
             if (!order) throw new Error('Order not running');
             // Idempotency guard: if订单已结束，直接返回现状
