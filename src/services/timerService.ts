@@ -8,6 +8,35 @@ const cutoffTimers = new Map<string, NodeJS.Timeout>();
 const recalcTimers = new Map<string, NodeJS.Timeout>();
 const hourlyTimers = new Map<string, NodeJS.Timeout>();
 const billingTimers = new Map<string, NodeJS.Timeout>();
+let guardInterval: NodeJS.Timeout | null = null;
+let globalRecalcInterval: NodeJS.Timeout | null = null;
+let guardRunning = false;
+let globalRecalcRunning = false;
+
+const ORDER_TIMER_GUARD_MS = Number(process.env.ORDER_TIMER_GUARD_MS ?? MIN);
+const ORDER_GLOBAL_RECALC_MS = Number(process.env.ORDER_GLOBAL_RECALC_MS ?? MIN);
+const ORDER_TIMER_GUARD_ENABLED = (process.env.ORDER_TIMER_GUARD_ENABLED ?? 'true') !== 'false';
+const ORDER_GLOBAL_RECALC_ENABLED = (process.env.ORDER_GLOBAL_RECALC_ENABLED ?? 'true') !== 'false';
+
+function hasAllTimers(orderId: string) {
+  return (
+    cutoffTimers.has(orderId) &&
+    recalcTimers.has(orderId) &&
+    hourlyTimers.has(orderId) &&
+    billingTimers.has(orderId)
+  );
+}
+
+function allTimerOrderIds(): string[] {
+  return Array.from(
+    new Set([
+      ...cutoffTimers.keys(),
+      ...recalcTimers.keys(),
+      ...hourlyTimers.keys(),
+      ...billingTimers.keys(),
+    ])
+  );
+}
 
 export async function scheduleForOrder(orderId: string) {
   const order = await prisma.order.findUnique({ where: { id: orderId } });
@@ -142,4 +171,63 @@ export function cancelOrderTimers(orderId: string) {
 export async function recoverAllTimers() {
   const running = await prisma.order.findMany({ where: { status: OrderStatus.RUNNING }, select: { id: true } });
   for (const o of running) await scheduleForOrder(o.id);
+}
+
+/** Guard: ensure every RUNNING order has timers */
+export function startOrderTimerGuard() {
+  if (!ORDER_TIMER_GUARD_ENABLED || guardInterval) return;
+  guardInterval = setInterval(async () => {
+    if (guardRunning) return;
+    guardRunning = true;
+    try {
+      const running = await prisma.order.findMany({
+        where: { status: OrderStatus.RUNNING },
+        select: { id: true },
+      });
+      const runningIds = new Set(running.map((o) => o.id));
+
+      for (const id of runningIds) {
+        if (!hasAllTimers(id)) {
+          await scheduleForOrder(id);
+        }
+      }
+
+      for (const id of allTimerOrderIds()) {
+        if (!runningIds.has(id)) {
+          cancelOrderTimers(id);
+        }
+      }
+    } catch (err) {
+      console.error('[timerService] guard failed:', err);
+    } finally {
+      guardRunning = false;
+    }
+  }, ORDER_TIMER_GUARD_MS);
+}
+
+/** Global fallback: recalc all RUNNING orders periodically */
+export function startGlobalRecalcLoop() {
+  if (!ORDER_GLOBAL_RECALC_ENABLED || globalRecalcInterval) return;
+  globalRecalcInterval = setInterval(async () => {
+    if (globalRecalcRunning) return;
+    globalRecalcRunning = true;
+    try {
+      const running = await prisma.order.findMany({
+        where: { status: OrderStatus.RUNNING },
+        select: { id: true },
+      });
+      for (const o of running) {
+        try {
+          const { ended } = await recalcOrAutoEnd(o.id);
+          if (ended) await notifyOrderEnded(o.id);
+        } catch (err) {
+          console.error('[timerService] global recalc failed:', { orderId: o.id, err });
+        }
+      }
+    } catch (err) {
+      console.error('[timerService] global recalc loop failed:', err);
+    } finally {
+      globalRecalcRunning = false;
+    }
+  }, ORDER_GLOBAL_RECALC_MS);
 }

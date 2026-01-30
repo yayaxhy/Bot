@@ -6,7 +6,7 @@ import { execute as messageCreateHandler } from './events/messageCreate.js';
 import { registerGiftingCommand } from './commands/gifting.js';
 import prisma, { prismaReady } from './db/prisma.js';
 import { registerCashCommand } from './commands/cash.js';
-import { recoverAllTimers } from './services/timerService.js';
+import { recoverAllTimers, startGlobalRecalcLoop, startOrderTimerGuard } from './services/timerService.js';
 import { handleOrderPriceSelect } from './interactions/buttons/orderPriceSelect.js';
 import { handleAcceptOrder } from './interactions/buttons/acceptOrder.js';
 import { handleDeclineOrder } from './interactions/buttons/declineOrder.js';
@@ -230,6 +230,8 @@ registerInviteReward(client);
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
   await recoverAllTimers();
+  startOrderTimerGuard();
+  startGlobalRecalcLoop();
   try {
     await recoverPendingInvitations();
   } catch (err) {

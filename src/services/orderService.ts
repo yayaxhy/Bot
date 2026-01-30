@@ -468,6 +468,7 @@ async function settle(
   const hostRecharge = new Prisma.Decimal(hostAccount.recharge ?? 0);
   const hostBalanceBefore = new Prisma.Decimal(hostAccount.totalBalance ?? 0);
   let hostBalanceAfter = hostBalanceBefore;
+
   const spendBonus = await consumeSpendBuff(tx, order.hostId, gross);
   const totalSpentIncrement = gross.add(spendBonus.extra);
 
