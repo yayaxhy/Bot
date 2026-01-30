@@ -3,7 +3,6 @@ import { Prisma, OrderStatus, PeiwanStatus, MemberStatus } from '@prisma/client'
 import { round2, minutesBetweenCeil } from '../lib/money.js';
 import { addMinutes, minutesBetweenFloor } from '../lib/time.js';
 import { addHeart } from './heartService.js';
-import { notifyOrderEnded } from './orderNotificationService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
@@ -327,7 +326,9 @@ export async function recalcAllOrdersForHost(hostId: string) {
   for (const o of running) {
     try {
       const { ended } = await recalcOrAutoEnd(o.id);
-      if (ended) await notifyOrderEnded(o.id);
+      if (ended) {
+        // 通知统一由 timerService 触发，避免重复
+      }
     } catch (err) {
       console.error('[recalcAllOrdersForHost] order', o.id, 'failed:', err);
     }
@@ -394,11 +395,7 @@ export async function endOrder(orderId: string, byDiscordId: string) {
       console.error('[endOrder] addHeart failed', { orderId, err });
     }
   }
-  try {
-    await notifyOrderEnded(orderId);
-  } catch (err) {
-    console.error('[endOrder] notifyOrderEnded failed', { orderId, err });
-  }
+  // 通知统一由 timerService 触发，避免重复
   const totalDuration = Date.now() - outerStart;
   console.log('[endOrder] duration', { orderId, txMs: txDuration, totalMs: totalDuration });
   return result.order;
@@ -692,7 +689,7 @@ export async function recoverRunningOrders(): Promise<void> {
     try {
       const { ended } = await recalcOrAutoEnd(o.id);
       if (ended) {
-        await notifyOrderEnded(o.id);
+        // 通知统一由 timerService 触发，避免重复
       }
     } catch (err) {
       console.error('[recoverRunningOrders] order', o.id, 'failed:', err);
