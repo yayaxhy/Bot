@@ -3,6 +3,7 @@ import prisma from '../../db/prisma.js';
 import { OrderStatus } from '@prisma/client';
 import { endOrder } from '../../services/orderService.js';
 import { cancelOrderTimers } from '../../services/timerService.js';
+import { notifyOrderEnded } from '../../services/orderNotificationService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const END_BUTTON_PREFIX = 'order:end:';
@@ -75,7 +76,7 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
 
     if (!alreadyEnded) {
       try {
-        // 通知统一由 timerService 触发，避免重复
+        await notifyOrderEnded(orderId);
       } catch (err) {
         console.error('[handleEndOrderButton] notify failed:', err);
       }
