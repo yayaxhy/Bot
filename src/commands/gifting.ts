@@ -1,5 +1,5 @@
 import { Client, Message, MessageCreateOptions } from 'discord.js';
-import { Prisma, PrismaClient, MemberStatus, LotteryStatus } from '@prisma/client';
+import { Prisma, PrismaClient, MemberStatus, LotteryStatus, CouponType } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 import { postGiftFeed } from '../features/giftFeedHelper.js';
 import { recalcAllOrdersForHost } from '../services/orderService.js';
@@ -20,6 +20,7 @@ import {
   getSpendBuffRemaining,
 } from '../services/buffService.js';
 import { suppressRechargeNotifications } from '../services/rechargeNotifyConfig.js';
+import { isCashAdmin } from './cash.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -27,6 +28,25 @@ const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 const hasSend = (channel: unknown): channel is { send: Function } =>
   !!channel && typeof (channel as any).send === 'function';
+const isMissingAccessError = (err: any) =>
+  err?.code === 50001 || (typeof err?.message === 'string' && err.message.includes('Missing Access'));
+const safeSend = async (action: () => Promise<unknown>, context: string) => {
+  try {
+    await action();
+  } catch (err) {
+    if (isMissingAccessError(err)) return;
+    console.error(`[gifting] ${context} failed:`, err);
+  }
+};
+const safeFetchChannel = async (client: Client, channelId: string, context: string) => {
+  try {
+    return await client.channels.fetch(channelId);
+  } catch (err) {
+    if (isMissingAccessError(err)) return null;
+    console.error(`[gifting] ${context} fetch failed:`, err);
+    return null;
+  }
+};
 const CAKE_GIFT_NAME = '小蛋糕';
 const VOUCHER_GIFT_CONFIGS: Record<string, Array<{ prizeName: string; payRate: number }>> = {
   小蛋糕: [{ prizeName: PRIZE_NAMES.CAKE_VOUCHER, payRate: 0 }],
@@ -56,6 +76,32 @@ const GIFT_VOUCHER_NAMES: Set<string> = new Set([
   PRIZE_NAMES.CROWN_WEEK_90_VOUCHER,
   PRIZE_NAMES.CROWN_MONTH_90_VOUCHER,
 ]);
+const VOUCHER_COUPON_TYPE_BY_PRIZE: Record<string, CouponType> = {
+  [PRIZE_NAMES.CAKE_VOUCHER]: CouponType.CAKE_VOUCHER,
+  [PRIZE_NAMES.LOLLIPOP_VOUCHER]: CouponType.LOLLIPOP_VOUCHER,
+  [PRIZE_NAMES.PERFUME_VOUCHER]: CouponType.PERFUME_VOUCHER,
+  [PRIZE_NAMES.CAROUSEL_VOUCHER]: CouponType.CAROUSEL_VOUCHER,
+  [PRIZE_NAMES.PUMPKIN_CAR_VOUCHER]: CouponType.PUMPKIN_CAR_VOUCHER,
+  [PRIZE_NAMES.PHONOGRAPH_VOUCHER]: CouponType.PHONOGRAPH_VOUCHER,
+  [PRIZE_NAMES.CROWN_75_VOUCHER]: CouponType.CROWN_75_VOUCHER,
+  [PRIZE_NAMES.CROWN_DAY_90_VOUCHER]: CouponType.CROWN_DAY_90_VOUCHER,
+  [PRIZE_NAMES.CROWN_3DAY_90_VOUCHER]: CouponType.CROWN_3DAY_90_VOUCHER,
+  [PRIZE_NAMES.CROWN_WEEK_90_VOUCHER]: CouponType.CROWN_WEEK_90_VOUCHER,
+  [PRIZE_NAMES.CROWN_MONTH_90_VOUCHER]: CouponType.CROWN_MONTH_90_VOUCHER,
+};
+const PRIZE_BY_VOUCHER_COUPON_TYPE: Partial<Record<CouponType, string>> = {
+  [CouponType.CAKE_VOUCHER]: PRIZE_NAMES.CAKE_VOUCHER,
+  [CouponType.LOLLIPOP_VOUCHER]: PRIZE_NAMES.LOLLIPOP_VOUCHER,
+  [CouponType.PERFUME_VOUCHER]: PRIZE_NAMES.PERFUME_VOUCHER,
+  [CouponType.CAROUSEL_VOUCHER]: PRIZE_NAMES.CAROUSEL_VOUCHER,
+  [CouponType.PUMPKIN_CAR_VOUCHER]: PRIZE_NAMES.PUMPKIN_CAR_VOUCHER,
+  [CouponType.PHONOGRAPH_VOUCHER]: PRIZE_NAMES.PHONOGRAPH_VOUCHER,
+  [CouponType.CROWN_75_VOUCHER]: PRIZE_NAMES.CROWN_75_VOUCHER,
+  [CouponType.CROWN_DAY_90_VOUCHER]: PRIZE_NAMES.CROWN_DAY_90_VOUCHER,
+  [CouponType.CROWN_3DAY_90_VOUCHER]: PRIZE_NAMES.CROWN_3DAY_90_VOUCHER,
+  [CouponType.CROWN_WEEK_90_VOUCHER]: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER,
+  [CouponType.CROWN_MONTH_90_VOUCHER]: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER,
+};
 // prizeName -> payRate (优惠后实际支付占比)
 const PRIZE_PAY_RATE = Object.values(VOUCHER_GIFT_CONFIGS).reduce<Record<string, number>>((acc, entries) => {
   for (const e of entries) {
@@ -72,17 +118,20 @@ const computeVoucherConsumeAmount = (prizeName: string, unitPrice: Prisma.Decima
 };
 const REF_RATE = new Prisma.Decimal(0.01);
 
-/** Parse: "!打赏 3/liwu @UserB @UserC" */
-function parseGiftingCommand(msg: Message): { quantity: number; giftName: string; toUserIds: string[] } | null {
+/** Parse: "!打赏 3/liwu @UserB @UserC" or "!客服打赏 3/liwu @UserB @UserC" */
+function parseGiftingCommand(
+  msg: Message,
+  prefix: string
+): { quantity: number; giftName: string; toUserIds: string[] } | null {
   const content = msg.content.trim();
-  if (!content.startsWith('!打赏')) return null;
+  if (!content.startsWith(prefix)) return null;
 
   const mentionedUsers = Array.from(msg.mentions.users.values());
   if (mentionedUsers.length === 0) return null;
   const uniqueMentionIds = Array.from(new Set(mentionedUsers.map((user) => user.id)));
 
   // slice out everything after "!打赏"
-  let rest = content.slice('!打赏'.length).trim();
+  let rest = content.slice(prefix.length).trim();
 
   // Remove all mentions (works for <@id> and <@!id>)
   for (const id of uniqueMentionIds) {
@@ -254,20 +303,19 @@ async function sendAnonGiftLog(
   payload: { giverId: string; receiverId: string; giftName: string; quantity: number; gross: number }
 ) {
   if (!ANON_NOTIFY_CHANNEL_ID) return;
-  try {
-    const channel = await client.channels.fetch(ANON_NOTIFY_CHANNEL_ID).catch(() => null);
-    if (channel && channel.isTextBased() && hasSend(channel)) {
-      const lines = [
-        '【匿名打赏】',
-        `送礼人：<@${payload.giverId}> (${payload.giverId})`,
-        `收礼人：<@${payload.receiverId}> (${payload.receiverId})`,
-        `礼物：${payload.giftName} x ${payload.quantity}`,
-        `总价：¥${payload.gross.toFixed(2)}`,
-      ];
-      await channel.send({ content: lines.join('\n'), allowedMentions: { parse: ['users'] } });
-    }
-  } catch (err) {
-    console.error('[gifting] anon log send failed:', err);
+  const channel = await safeFetchChannel(client, ANON_NOTIFY_CHANNEL_ID, 'anon log channel');
+  if (channel && channel.isTextBased() && hasSend(channel)) {
+    const lines = [
+      '【匿名打赏】',
+      `送礼人：<@${payload.giverId}> (${payload.giverId})`,
+      `收礼人：<@${payload.receiverId}> (${payload.receiverId})`,
+      `礼物：${payload.giftName} x ${payload.quantity}`,
+      `总价：¥${payload.gross.toFixed(2)}`,
+    ];
+    await safeSend(
+      () => channel.send({ content: lines.join('\n'), allowedMentions: { parse: ['users'] } }),
+      'anon log send'
+    );
   }
 }
 
@@ -285,6 +333,7 @@ export async function performGift(
     receiverUsername?: string;
     lotteryVoucherId?: string;
     voucherRequestId?: string;
+    expenseReason?: string;
   }
 ): Promise<GiftTransactionResult> {
   const {
@@ -298,6 +347,7 @@ export async function performGift(
     receiverUsername,
     lotteryVoucherId,
     voucherRequestId,
+    expenseReason,
   } = params;
 
   if (giverId === receiverId) throw new Error('不能给自己打赏。');
@@ -361,30 +411,38 @@ export async function performGift(
   const consumedVoucherIds: string[] = [];
   if (voucherConfigs.length) {
     const allowedPrizeNames = voucherConfigs.map((v) => v.prizeName);
+    const allowedCouponTypes = Array.from(
+      new Set(
+        allowedPrizeNames
+          .map((name) => VOUCHER_COUPON_TYPE_BY_PRIZE[name])
+          .filter((v): v is CouponType => !!v)
+      )
+    );
     // 如果指定了特定券（网站触发），只消耗该券
     if (lotteryVoucherId) {
       const voucher = await tx.lotteryDraw.findFirst({
-          where: {
-            id: lotteryVoucherId,
-            userId: giverId,
-            status: LotteryStatus.UNUSED,
-            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            prize: { name: { in: allowedPrizeNames } },
-          },
-          select: { id: true, prize: { select: { name: true } } },
-        });
-        if (!voucher) {
-          throw new Error('礼物券不可用或已过期。');
-        }
-        const consumeAmount = computeVoucherConsumeAmount(voucher.prize?.name ?? '', unitPrice);
-        await tx.lotteryDraw.update({
-          where: { id: voucher.id },
-          data: {
-            status: LotteryStatus.USED,
-            consumeAt: now,
-            requestId: voucherRequestId ?? undefined,
-            consumeAmount: consumeAmount ?? undefined,
-          },
+        where: {
+          id: lotteryVoucherId,
+          userId: giverId,
+          status: LotteryStatus.UNUSED,
+          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          prize: { name: { in: allowedPrizeNames } },
+        },
+        select: { id: true, prize: { select: { name: true } } },
+      });
+      if (!voucher) {
+        throw new Error('礼物券不可用或已过期。');
+      }
+      const consumeAmount = computeVoucherConsumeAmount(voucher.prize?.name ?? '', unitPrice);
+      await tx.lotteryDraw.update({
+        where: { id: voucher.id },
+        data: {
+          status: LotteryStatus.USED,
+          consumeAt: now,
+          requestId: voucherRequestId ?? undefined,
+          consumeAmount: consumeAmount ?? undefined,
+          consumeTargetId: receiverId,
+        },
       });
       voucherCount = 1;
       consumedVoucherIds.push(voucher.id);
@@ -393,7 +451,53 @@ export async function performGift(
       const discountRate = new Prisma.Decimal(1).sub(payRate);
       voucherValue = voucherValue.add(unitPrice.mul(discountRate));
     } else {
-        // 旧逻辑：按数量取最早券
+      // 先过期掉 coupon 表的代金券
+      if (allowedCouponTypes.length) {
+        await tx.coupon.updateMany({
+          where: {
+            discordId: giverId,
+            type: { in: allowedCouponTypes },
+            status: 'ACTIVE',
+            expiresAt: { lte: now },
+          },
+          data: { status: 'EXPIRED' },
+        });
+      }
+      // 旧逻辑：按数量取最早券（先用 coupon 表，再用 lotteryDraw）
+      const coupons = allowedCouponTypes.length
+        ? await tx.coupon.findMany({
+            where: {
+              discordId: giverId,
+              type: { in: allowedCouponTypes },
+              status: 'ACTIVE',
+              expiresAt: { gt: now },
+            },
+            orderBy: { issuedAt: 'asc' },
+            take: quantity,
+          })
+        : [];
+
+      for (const c of coupons) {
+        const prizeName = PRIZE_BY_VOUCHER_COUPON_TYPE[c.type];
+        const consumeAmount = computeVoucherConsumeAmount(prizeName ?? '', unitPrice);
+        await tx.coupon.update({
+          where: { id: c.id },
+          data: {
+            status: 'USED',
+            consumedAt: now,
+            consumeAmount: consumeAmount ?? undefined,
+            consumeTargetId: receiverId,
+          },
+        });
+        consumedVoucherIds.push(c.id);
+        const cfg = voucherConfigs.find((v) => v.prizeName === prizeName);
+        const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+        const discountRate = new Prisma.Decimal(1).sub(payRate);
+        voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+      }
+
+      const remaining = quantity - coupons.length;
+      if (remaining > 0) {
         await tx.lotteryDraw.updateMany({
           where: {
             userId: giverId,
@@ -412,25 +516,33 @@ export async function performGift(
           },
           select: { id: true, prize: { select: { name: true } } },
           orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-          take: quantity,
-      });
-      voucherCount = vouchers.length;
-      if (voucherCount > 0) {
-        for (const v of vouchers) {
-          const consumeAmount = computeVoucherConsumeAmount(v.prize?.name ?? '', unitPrice);
+          take: remaining,
+        });
+        voucherCount = coupons.length + vouchers.length;
+        if (vouchers.length > 0) {
+          for (const v of vouchers) {
+            const consumeAmount = computeVoucherConsumeAmount(v.prize?.name ?? '', unitPrice);
           await tx.lotteryDraw.update({
             where: { id: v.id },
-            data: { status: LotteryStatus.USED, consumeAt: now, consumeAmount: consumeAmount ?? undefined },
+            data: {
+              status: LotteryStatus.USED,
+              consumeAt: now,
+              consumeAmount: consumeAmount ?? undefined,
+              consumeTargetId: receiverId,
+            },
           });
-          consumedVoucherIds.push(v.id);
-          const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
-          const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
-          const discountRate = new Prisma.Decimal(1).sub(payRate);
-          voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+            consumedVoucherIds.push(v.id);
+            const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
+            const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+            const discountRate = new Prisma.Decimal(1).sub(payRate);
+            voucherValue = voucherValue.add(unitPrice.mul(discountRate));
           }
         }
+      } else {
+        voucherCount = coupons.length;
       }
     }
+  }
     const payableRaw = gross.sub(voucherValue);
     const payable = payableRaw.lt(0) ? DEC(0) : payableRaw;
 
@@ -589,6 +701,17 @@ export async function performGift(
       },
     });
 
+    if (expenseReason) {
+      await tx.expense.create({
+        data: {
+          amount: payable,
+          operatorId: giverId,
+          targetId: receiverId,
+          reason: expenseReason,
+        },
+      });
+    }
+
     return {
       txId: txRow.Transid,
       giftName: gift.GiftName,
@@ -604,16 +727,24 @@ export async function performGift(
     };
   });
 
-  await addHeart(giverId, receiverId, Number(result.heartGain.toString()));
-  await postGiftFeed(client, {
-    giverId,
-    receiverId,
-    giftName: result.giftName,
-    quantity: Number(result.quantity.toString()),
-    totalAmount: Number(result.gross.toString()),
-    imageUrl: result.imageUrl,
-    anonymous,
-  });
+  try {
+    await addHeart(giverId, receiverId, Number(result.heartGain.toString()));
+  } catch (err) {
+    console.error('[performGift] addHeart failed:', err);
+  }
+  try {
+    await postGiftFeed(client, {
+      giverId,
+      receiverId,
+      giftName: result.giftName,
+      quantity: Number(result.quantity.toString()),
+      totalAmount: Number(result.gross.toString()),
+      imageUrl: result.imageUrl,
+      anonymous,
+    });
+  } catch (err) {
+    console.error('[performGift] postGiftFeed failed:', err);
+  }
   if (anonymous) {
     await sendAnonGiftLog(client, {
       giverId,
@@ -623,15 +754,25 @@ export async function performGift(
       gross: Number(result.gross.toString()),
     });
   }
-  await recalcAllOrdersForHost(giverId);
+  try {
+    await recalcAllOrdersForHost(giverId);
+  } catch (err) {
+    console.error('[performGift] recalcAllOrdersForHost failed:', err);
+  }
 
   try {
-    const receiverUser = await client.users.fetch(receiverId);
-    const giverMention = `<@${giverId}>`;
-    const totalPrice = Number(result.gross.toString()).toFixed(2);
-    await receiverUser.send(
-      `你收到了 ${giverMention} 打赏的 ${result.quantity.toString()} 个 ${result.giftName}，总价为 ¥${totalPrice}。`
-    );
+    const receiverUser = await client.users.fetch(receiverId).catch(() => null);
+    if (receiverUser) {
+      const giverMention = `<@${giverId}>`;
+      const totalPrice = Number(result.gross.toString()).toFixed(2);
+      await safeSend(
+        () =>
+          receiverUser.send(
+            `你收到了 ${giverMention} 打赏的 ${result.quantity.toString()} 个 ${result.giftName}，总价为 ¥${totalPrice}。`
+          ),
+        'notify receiver'
+      );
+    }
   } catch (notifyErr) {
     console.error('[performGift] notify receiver failed:', notifyErr);
   }
@@ -643,9 +784,14 @@ export async function performGift(
     });
     if (reward) {
       const rewardText = reward.quantity === 1 ? reward.label : `${reward.label} x${reward.quantity}`;
-      const receiverUser = await client.users.fetch(receiverId);
-      const categoryLabel = reward.category ? `【${reward.category}】` : '该分类';
-      await receiverUser.send(`🎉 恭喜你集齐${categoryLabel}分类礼物，已发放 ${rewardText}！`);
+      const receiverUser = await client.users.fetch(receiverId).catch(() => null);
+      if (receiverUser) {
+        const categoryLabel = reward.category ? `【${reward.category}】` : '该分类';
+        await safeSend(
+          () => receiverUser.send(`🎉 恭喜你集齐${categoryLabel}分类礼物，已发放 ${rewardText}！`),
+          'gift-wall reward notify'
+        );
+      }
     }
   } catch (err) {
     console.error('[gift-wall] reward notify failed:', err);
@@ -665,8 +811,13 @@ export async function performGift(
     });
     const earnedText = Number(result.payable.toString()).toFixed(2);
     const totalText = Number((pointsRow?.points ?? 0).toString()).toFixed(2);
-    const giverUser = await client.users.fetch(giverId);
-    await giverUser.send(`打赏完成：本次获得锦鲤积分 ${earnedText}，累计锦鲤积分 ${totalText}。`);
+    const giverUser = await client.users.fetch(giverId).catch(() => null);
+    if (giverUser) {
+      await safeSend(
+        () => giverUser.send(`打赏完成：本次获得锦鲤积分 ${earnedText}，累计锦鲤积分 ${totalText}。`),
+        'notify giver points'
+      );
+    }
   } catch (err) {
     console.error('[performGift] notify giver points failed:', err);
   }
@@ -686,8 +837,9 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
 
       const content = msg.content.trim();
       const isAnon = content.startsWith('!匿名打赏');
+      const isService = content.startsWith('!客服打赏');
       const isRegular = content.startsWith('!打赏');
-      if (!isAnon && !isRegular) return;
+      if (!isAnon && !isRegular && !isService) return;
 
       if (isAnon) {
         await prisma.interactionLog.create({
@@ -770,12 +922,18 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         return;
       }
 
-      if (!isRegular) return;
+      if (isService) {
+        if (!isCashAdmin(msg)) {
+          await msg.reply('❌ 你没有权限使用该命令。');
+          return;
+        }
+      }
+      if (!isRegular && !isService) return;
 
       await prisma.interactionLog.create({
         data: {
           memberId: msg.author.id,
-          command: '!打赏',
+          command: isService ? '!客服打赏' : '!打赏',
           payload: { content: msg.content } as any,
         },
       });
@@ -785,7 +943,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         return;
       }
 
-      const parsed = parseGiftingCommand(msg);
+      const parsed = parseGiftingCommand(msg, isService ? '!客服打赏' : '!打赏');
       if (!parsed) {
         await msg.reply('用法：`!打赏 数量/礼物名 @对方(可多个)` 例如：`!打赏 3/甜甜圈 @陪玩A @陪玩B`');
         return;
@@ -846,6 +1004,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           giftRecord: gift,
           giverUsername: msg.author.username,
           receiverUsername: receiverUsername,
+          expenseReason: isService ? '客服打赏' : undefined,
         });
         results.push({ receiverId, result });
       }
@@ -857,14 +1016,16 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         const baseContent = successPayload.content ?? '';
         successPayload.content = `${baseContent}`.trim();
         if (channel && typeof channel.send === 'function') {
-          await channel.send(successPayload);
-          if (result.imageUrl) {
-            await channel.send(result.imageUrl);
+          await safeSend(() => channel.send(successPayload), 'gift success send');
+          const imageUrl = result.imageUrl;
+          if (imageUrl) {
+            await safeSend(() => channel.send(imageUrl), 'gift image send');
           }
         } else {
-          await msg.reply(successPayload);
-          if (result.imageUrl) {
-            await msg.reply(result.imageUrl);
+          await safeSend(() => msg.reply(successPayload), 'gift success reply');
+          const imageUrl = result.imageUrl;
+          if (imageUrl) {
+            await safeSend(() => msg.reply(imageUrl), 'gift image reply');
           }
         }
       }
@@ -880,7 +1041,10 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       if (insufficient) {
         const staffPing = makeStaffPing();
         try {
-          await msg.author.send(`打赏失败：余额不足，请联系 ${staffPing} 进行充值后再试。`);
+          await safeSend(
+            () => msg.author.send(`打赏失败：余额不足，请联系 ${staffPing} 进行充值后再试。`),
+            'notify insufficient balance'
+          );
         } catch (dmErr) {
           console.error('[gifting] notify insufficient balance DM failed:', dmErr);
         }

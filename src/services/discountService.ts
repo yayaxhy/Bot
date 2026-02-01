@@ -10,7 +10,7 @@ export type ApplyDiscountResult =
   | {
       status: 'applied';
       kind: DiscountKind;
-      discountAmount: Prisma.Decimal;
+      consumeAmount: Prisma.Decimal;
       couponId?: string;
       lotteryId?: string;
     }
@@ -157,7 +157,8 @@ export async function applyCouponDiscountForOrder(params: {
       data: {
         consumedAt: now,
         orderId: order.id,
-        discountAmount,
+        consumeAmount: discountAmount,
+        consumeTargetId: order.workerId ?? null,
         status: 'USED',
       },
     });
@@ -183,7 +184,7 @@ export async function applyCouponDiscountForOrder(params: {
     return {
       status: 'applied',
       kind: 'coupon',
-      discountAmount,
+      consumeAmount: discountAmount,
       couponId: couponId ?? undefined,
     };
   });

@@ -12,11 +12,18 @@ export type GiftPayload = {
 
 export async function postGiftFeed(client: Client, payload: GiftPayload) {
   const channelId = process.env.GIFT_FEED_CHANNEL_ID;
-  if (!channelId) throw new Error("GIFT_FEED_CHANNEL_ID is not set.");
+  if (!channelId) return;
 
-  const channel = await client.channels.fetch(channelId);
+  let channel: any = null;
+  try {
+    channel = await client.channels.fetch(channelId);
+  } catch (err: any) {
+    if (err?.code === 50001 || err?.message?.includes('Missing Access')) return;
+    console.error('[gift-feed] fetch failed:', err);
+    return;
+  }
   if (!channel || !channel.isTextBased()) {
-    throw new Error("Gift feed channel not found or not text-based.");
+    return;
   }
 
   const giverLabel = payload.anonymous ? '匿名' : userMention(payload.giverId);
@@ -46,5 +53,10 @@ export async function postGiftFeed(client: Client, payload: GiftPayload) {
     embed.setImage(payload.imageUrl);
   }
 
-  await (channel as TextChannel).send({ content, embeds: [embed] });
+  try {
+    await (channel as TextChannel).send({ content, embeds: [embed] });
+  } catch (err: any) {
+    if (err?.code === 50001 || err?.message?.includes('Missing Access')) return;
+    console.error('[gift-feed] send failed:', err);
+  }
 }

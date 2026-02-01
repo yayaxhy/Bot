@@ -1,4 +1,4 @@
-import { LotteryPool, LotteryStatus, Prisma } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryPool, LotteryStatus, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import crypto from 'crypto';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
@@ -328,6 +328,26 @@ export async function performLotteryDraw(params: {
       data: { status: LotteryStatus.EXPIRED },
     });
 
+    // 抽奖代金券：优先使用 coupon 表
+    await tx.coupon.updateMany({
+      where: {
+        discordId: userId,
+        type: CouponType.LOTTERY_VOUCHER,
+        status: CouponStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: { status: CouponStatus.EXPIRED },
+    });
+    const couponVoucher = await tx.coupon.findFirst({
+      where: {
+        discordId: userId,
+        type: CouponType.LOTTERY_VOUCHER,
+        status: CouponStatus.ACTIVE,
+        expiresAt: { gt: now },
+      },
+      orderBy: { issuedAt: 'asc' },
+    });
+
     // 抽奖代金券：按最早优先，如果存在则免扣款
     const freeVoucher = await tx.lotteryDraw.findFirst({
       where: {
@@ -339,9 +359,19 @@ export async function performLotteryDraw(params: {
       orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
     });
 
-    const useFreeVoucher = !!freeVoucher;
+    const useFreeVoucher = !!couponVoucher || !!freeVoucher;
 
-    if (useFreeVoucher) {
+    if (couponVoucher) {
+      await tx.coupon.update({
+        where: { id: couponVoucher.id },
+        data: {
+          status: CouponStatus.USED,
+          consumedAt: now,
+          consumeAmount: DRAW_COST,
+          consumeTargetId: userId,
+        },
+      });
+    } else if (useFreeVoucher) {
       await tx.lotteryDraw.update({
         where: { id: freeVoucher!.id },
         data: {
@@ -349,6 +379,7 @@ export async function performLotteryDraw(params: {
           consumeAt: now,
           requestId,
           consumeAmount: DRAW_COST, // 抽奖代金券固定面额
+          consumeTargetId: userId,
         },
       });
     }

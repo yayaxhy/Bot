@@ -6,6 +6,23 @@ import { PRIZE_NAMES } from './lotteryService.js';
 import { LotteryStatus } from '@prisma/client';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
+const notifiedOrders = new Map<string, number>();
+const NOTIFY_DEDUP_MS = 2 * 60 * 1000;
+
+function shouldNotify(orderId: string): boolean {
+  const now = Date.now();
+  const prev = notifiedOrders.get(orderId);
+  if (prev && now - prev < NOTIFY_DEDUP_MS) return false;
+  notifiedOrders.set(orderId, now);
+  return true;
+}
+
+function cleanupNotified() {
+  const now = Date.now();
+  for (const [orderId, ts] of notifiedOrders.entries()) {
+    if (now - ts > NOTIFY_DEDUP_MS) notifiedOrders.delete(orderId);
+  }
+}
 
 async function fetchOrderSummary(orderId: string) {
   return prisma.order.findUnique({
@@ -25,6 +42,22 @@ async function fetchOrderSummary(orderId: string) {
 }
 
 export async function notifyOrderEnded(orderId: string) {
+  cleanupNotified();
+  if (!shouldNotify(orderId)) {
+    console.log('[notifyOrderEnded] skip duplicate', { orderId });
+    return;
+  }
+
+  // DB-level dedup: only the first caller can set notifiedAt
+  const updated = await prisma.order.updateMany({
+    where: { id: orderId, notifiedAt: null },
+    data: { notifiedAt: new Date() },
+  });
+  if (updated.count === 0) {
+    console.log('[notifyOrderEnded] skip duplicate (db)', { orderId });
+    return;
+  }
+
   const client = (globalThis as any).__CLIENT__ as Client | undefined;
   if (!client) {
     console.warn('[notifyOrderEnded] no client instance', { orderId });
@@ -41,14 +74,41 @@ export async function notifyOrderEnded(orderId: string) {
     console.error('[spent-role] schedule failed for worker', err)
   );
   const now = new Date();
-  const availableCoupons = await prisma.coupon.count({
-    where: {
-      discordId: order.hostId,
-      type: 'DISCOUNT_90',
-      status: 'ACTIVE',
-      expiresAt: { gt: now },
-    },
-  });
+  const [availableCoupons, bazheCouponCount, qizheCouponCount, specialJiuzheCouponCount] =
+    await Promise.all([
+      prisma.coupon.count({
+        where: {
+          discordId: order.hostId,
+          type: 'DISCOUNT_90',
+          status: 'ACTIVE',
+          expiresAt: { gt: now },
+        },
+      }),
+      prisma.coupon.count({
+        where: {
+          discordId: order.hostId,
+          type: 'DISCOUNT_80',
+          status: 'ACTIVE',
+          expiresAt: { gt: now },
+        },
+      }),
+      prisma.coupon.count({
+        where: {
+          discordId: order.hostId,
+          type: 'DISCOUNT_70',
+          status: 'ACTIVE',
+          expiresAt: { gt: now },
+        },
+      }),
+      prisma.coupon.count({
+        where: {
+          discordId: order.hostId,
+          type: 'DISCOUNT_90_LOTTERY',
+          status: 'ACTIVE',
+          expiresAt: { gt: now },
+        },
+      }),
+    ]);
   const existingUsage = await prisma.coupon.findFirst({
     where: { orderId, status: 'USED' },
     select: { id: true },
@@ -69,7 +129,7 @@ export async function notifyOrderEnded(orderId: string) {
     },
     data: { status: LotteryStatus.EXPIRED },
   });
-  const bazheCount = await prisma.lotteryDraw.count({
+  const bazheLotteryCount = await prisma.lotteryDraw.count({
     where: {
       userId: order.hostId,
       status: LotteryStatus.UNUSED,
@@ -77,7 +137,7 @@ export async function notifyOrderEnded(orderId: string) {
       prize: { name: PRIZE_NAMES.DISCOUNT_80 },
     },
   });
-  const qizheCount = await prisma.lotteryDraw.count({
+  const qizheLotteryCount = await prisma.lotteryDraw.count({
     where: {
       userId: order.hostId,
       status: LotteryStatus.UNUSED,
@@ -85,7 +145,7 @@ export async function notifyOrderEnded(orderId: string) {
       prize: { name: PRIZE_NAMES.DISCOUNT_70 },
     },
   });
-  const specialJiuzheCount = await prisma.lotteryDraw.count({
+  const specialJiuzheLotteryCount = await prisma.lotteryDraw.count({
     where: {
       userId: order.hostId,
       status: LotteryStatus.UNUSED,
@@ -93,6 +153,9 @@ export async function notifyOrderEnded(orderId: string) {
       prize: { name: { in: [PRIZE_NAMES.DISCOUNT_90_LOTTERY, '特殊九折券'] } },
     },
   });
+  const bazheCount = bazheLotteryCount + bazheCouponCount;
+  const qizheCount = qizheLotteryCount + qizheCouponCount;
+  const specialJiuzheCount = specialJiuzheLotteryCount + specialJiuzheCouponCount;
 
   const totalMinutes = order.totalMinutes ?? 0;
   const gross = order.grossAmount ? Number(order.grossAmount.toString()) : 0;

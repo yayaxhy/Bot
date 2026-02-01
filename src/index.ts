@@ -22,6 +22,8 @@ import { handleKeywordRedEnvelopeSlash, keywordRedEnvelopeSlashCommand } from '.
 import { customerGangCommand, handleCustomerGangSlash } from './commands/customerGangSlash.js';
 import { handleRevertGiftSlash, revertGiftCommand } from './commands/revertGiftSlash.js';
 import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
+import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
+import { registerBalanceCommands } from './commands/balanceCommands.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
@@ -185,6 +187,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleBulkDmSlash(i);
                 return;
             }
+            if (i.commandName === 'gift') {
+                await handleGiftSlash(i);
+                return;
+            }
         }
 
     // Buttons
@@ -242,6 +248,7 @@ client.once(Events.ClientReady, async () => {
   );
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
+  registerBalanceCommands(client);
   registerTotalEarnCommand(client, prisma);
   registerTotalSpentCommand(client, prisma);
   try {
@@ -253,6 +260,7 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(customerGangCommand);
             await client.application.commands.create(revertGiftCommand);
             await client.application.commands.create(bulkDmCommand);
+            await client.application.commands.create(giftSlashCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);

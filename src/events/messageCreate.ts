@@ -94,6 +94,25 @@ const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const END_ORDER_PATTERN = /^!(?:陪玩|老板)结单(?:\s+(\S+))?$/;
 
 let cachedAnonGuild: Guild | null = null;
+const isMissingAccessError = (err: any) =>
+  err?.code === 50001 || (typeof err?.message === 'string' && err.message.includes('Missing Access'));
+const safeFetchChannel = async (client: Client, channelId: string, context: string) => {
+  try {
+    return await client.channels.fetch(channelId);
+  } catch (err) {
+    if (isMissingAccessError(err)) return null;
+    console.error(`[messageCreate] ${context} fetch failed:`, err);
+    return null;
+  }
+};
+const safeSend = async (action: () => Promise<unknown>, context: string) => {
+  try {
+    await action();
+  } catch (err) {
+    if (isMissingAccessError(err)) return;
+    console.error(`[messageCreate] ${context} send failed:`, err);
+  }
+};
 
 const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q1: 'quotation_Q1',
@@ -136,27 +155,22 @@ async function getMemberBalance(discordUserId: string): Promise<number | null> {
 
 async function sendAnonLogMessage(client: Client, content: string) {
   if (!anonNotifyChannelId) return;
-  try {
-    const channel = await client.channels.fetch(anonNotifyChannelId).catch(() => null);
-    if (channel && channel.isTextBased() && hasSend(channel)) {
-      await channel.send({ content, allowedMentions: { parse: ['users'] } });
-    }
-  } catch (err) {
-    console.error('[anon-log] send failed:', err);
+  const channel = await safeFetchChannel(client, anonNotifyChannelId, 'anon log channel');
+  if (channel && channel.isTextBased() && hasSend(channel)) {
+    await safeSend(
+      () => channel.send({ content, allowedMentions: { parse: ['users'] } }),
+      'anon log'
+    );
   }
 }
 
 async function getAnonGuild(message: Message): Promise<Guild | null> {
   if (cachedAnonGuild) return cachedAnonGuild;
   if (!orderAnonChannelId) return null;
-  try {
-    const channel = await message.client.channels.fetch(orderAnonChannelId);
-    if (channel && channel.isTextBased() && 'guild' in channel && channel.guild) {
-      cachedAnonGuild = channel.guild;
-      return cachedAnonGuild;
-    }
-  } catch (err) {
-    console.error('[messageCreate] fetch anon guild failed:', err);
+  const channel = await safeFetchChannel(message.client, orderAnonChannelId, 'anon order channel');
+  if (channel && channel.isTextBased() && 'guild' in channel && channel.guild) {
+    cachedAnonGuild = channel.guild;
+    return cachedAnonGuild;
   }
   return null;
 }
@@ -816,10 +830,10 @@ export async function execute(message: Message) {
           content: originalMsg,
           ownerDisplayName,
         }).catch(() => {});
-        const channelB = await message.client.channels.fetch(orderAnonChannelId);
-        if (channelB instanceof TextChannel) {
-          const callEmoji =
-            channelB.guild?.emojis.resolve('1422321930043789343')?.toString()
+          const channelB = await safeFetchChannel(message.client, orderAnonChannelId, 'anon order channel');
+          if (channelB instanceof TextChannel) {
+            const callEmoji =
+              channelB.guild?.emojis.resolve('1422321930043789343')?.toString()
             ?? defaultCallEmoji;
           const roleInfo = parseRoleMentions(content);
           if (roleInfo.mentionText) {

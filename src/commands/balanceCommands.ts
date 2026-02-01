@@ -1,0 +1,178 @@
+import { Client, Message } from 'discord.js';
+import { Prisma } from '@prisma/client';
+import prisma from '../db/prisma.js';
+import { isCashAdmin } from './cash.js';
+import { splitIncomeRecharge } from '../lib/balanceMath.js';
+import { recordIndividualTransaction } from '../services/individualTransactionService.js';
+
+const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
+
+function parseAmountAndMentions(
+  msg: Message,
+  prefix: string
+): { amount: Prisma.Decimal; ids: string[] } | null {
+  const content = msg.content.trim();
+  if (!content.startsWith(prefix)) return null;
+
+  const mentionMatches = Array.from(content.matchAll(/<@!?(\d+)>/g));
+  const orderedIds = mentionMatches.map((m) => m[1]).filter(Boolean);
+  const uniqueMentionIds = Array.from(new Set(orderedIds));
+  if (uniqueMentionIds.length === 0) return null;
+
+  let rest = content.slice(prefix.length).trim();
+  for (const id of uniqueMentionIds) {
+    const mentionRegex = new RegExp(`<@!?${id}>`, 'g');
+    rest = rest.replace(mentionRegex, ' ');
+  }
+  rest = rest.replace(/\s+/g, ' ').trim();
+  if (!rest) return null;
+
+  const amountNum = Number(rest.split(/\s+/)[0]);
+  if (!Number.isFinite(amountNum) || amountNum <= 0) return null;
+  return { amount: DEC(amountNum), ids: uniqueMentionIds };
+}
+
+export function registerBalanceCommands(client: Client) {
+  client.on('messageCreate', async (msg) => {
+    try {
+      if (msg.author.bot) return;
+
+      // !扣款 金额 @用户
+      if (msg.content.trim().startsWith('!扣款')) {
+        if (!isCashAdmin(msg)) {
+          await msg.reply('❌ 你没有权限使用该命令。');
+          return;
+        }
+        const parsed = parseAmountAndMentions(msg, '!扣款');
+        if (!parsed || parsed.ids.length !== 1) {
+          await msg.reply('用法：`!扣款 金额 @用户`');
+          return;
+        }
+        const targetId = parsed.ids[0];
+        const amount = parsed.amount;
+
+        await prisma.$transaction(async (tx) => {
+          const member = await tx.member.findUnique({
+            where: { discordUserId: targetId },
+            select: { income: true, recharge: true, totalBalance: true },
+          });
+          if (!member) throw new Error('Member missing');
+
+          const split = splitIncomeRecharge(member.income ?? 0, member.recharge ?? 0, amount);
+          await tx.member.update({
+            where: { discordUserId: targetId },
+            data: {
+              income: { decrement: split.fromIncome },
+              recharge: { decrement: split.fromRecharge },
+              totalBalance: { decrement: amount },
+            },
+          });
+
+          await tx.pureProfit.create({
+            data: {
+              amount,
+              operatorId: msg.author.id,
+              targetId,
+              reason: '扣款',
+            },
+          });
+
+          await recordIndividualTransaction(tx, {
+            discordId: targetId,
+            thirdPartydiscordId: msg.author.id,
+            balanceBefore: split.totalBefore,
+            amountChange: amount.neg(),
+            balanceAfter: split.totalAfter,
+            typeOfTransaction: '扣款',
+          });
+        });
+
+        await msg.reply(`已从 <@${targetId}> 扣除 ${amount.toString()}。`);
+        return;
+      }
+
+      // !转移余额 金额 @用户A @用户B
+      if (msg.content.trim().startsWith('!转移余额')) {
+        if (!isCashAdmin(msg)) {
+          await msg.reply('❌ 你没有权限使用该命令。');
+          return;
+        }
+        const parsed = parseAmountAndMentions(msg, '!转移余额');
+        if (!parsed || parsed.ids.length !== 2) {
+          await msg.reply('用法：`!转移余额 金额 @用户A @用户B`');
+          return;
+        }
+        const [fromId, toId] = parsed.ids;
+        const amount = parsed.amount;
+        if (fromId === toId) {
+          await msg.reply('转出与转入用户不能相同。');
+          return;
+        }
+
+        await prisma.$transaction(async (tx) => {
+          const from = await tx.member.findUnique({
+            where: { discordUserId: fromId },
+            select: { income: true, recharge: true, totalBalance: true },
+          });
+          if (!from) throw new Error('Member missing');
+
+          const split = splitIncomeRecharge(from.income ?? 0, from.recharge ?? 0, amount);
+          await tx.member.update({
+            where: { discordUserId: fromId },
+            data: {
+              income: { decrement: split.fromIncome },
+              recharge: { decrement: split.fromRecharge },
+              totalBalance: { decrement: amount },
+            },
+          });
+
+          const toBeforeRow = await tx.member.upsert({
+            where: { discordUserId: toId },
+            create: { discordUserId: toId },
+            update: {},
+            select: { totalBalance: true },
+          });
+          const toBalanceBefore = new Prisma.Decimal(toBeforeRow.totalBalance ?? 0);
+          const toBalanceAfter = toBalanceBefore.add(amount);
+
+          await tx.member.update({
+            where: { discordUserId: toId },
+            data: {
+              recharge: { increment: amount },
+              totalBalance: { increment: amount },
+            },
+          });
+
+          await recordIndividualTransaction(tx, {
+            discordId: fromId,
+            thirdPartydiscordId: toId,
+            balanceBefore: split.totalBefore,
+            amountChange: amount.neg(),
+            balanceAfter: split.totalAfter,
+            typeOfTransaction: '余额转移-转出',
+          });
+
+          await recordIndividualTransaction(tx, {
+            discordId: toId,
+            thirdPartydiscordId: fromId,
+            balanceBefore: toBalanceBefore,
+            amountChange: amount,
+            balanceAfter: toBalanceAfter,
+            typeOfTransaction: '余额转移-转入',
+          });
+        });
+
+        await msg.reply(`已从 <@${fromId}> 转移 ${amount.toString()} 给 <@${toId}>。`);
+        return;
+      }
+    } catch (err: any) {
+      const msgText = typeof err?.message === 'string' ? err.message : '操作失败';
+      if (msgText.includes('INSUFFICIENT_FUNDS')) {
+        await msg.reply('余额不足，转移/扣款失败。');
+        return;
+      }
+      console.error('[balanceCommands] error', err);
+      try { await msg.reply('操作失败，请稍后再试。'); } catch {}
+    }
+  });
+}

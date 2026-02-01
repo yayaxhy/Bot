@@ -79,7 +79,7 @@ export async function handleDiscountSelect(i: StringSelectMenuInteraction) {
     return;
   }
 
-  const amount = new Prisma.Decimal(result.discountAmount ?? 0);
+  const amount = new Prisma.Decimal(result.consumeAmount ?? 0);
   await i.editReply({ components: [] });
   await i.followUp({
     content: `已使用 ${label}，本单返还 ¥${amount.toFixed(2)}，金额已入账。`,

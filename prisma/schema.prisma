@@ -169,7 +169,15 @@ model Member {
   // Order request logs/clicks
   orderRequestsCreated OrderRequestLog[] @relation("OrderRequestOwner")
   orderRequestClicks   OrderRequestClick[] @relation("OrderRequestWorker")
-}
+
+  // Expense & profit logs
+    expensesAsOperator Expense[] @relation("ExpenseOperator")
+    expensesAsTarget   Expense[] @relation("ExpenseTarget")
+    profitsAsOperator  PureProfit[] @relation("PureProfitOperator")
+    profitsAsTarget    PureProfit[] @relation("PureProfitTarget")
+    couponsAsConsumeTarget Coupon[] @relation("CouponConsumeTarget")
+    lotteryConsumeTargets LotteryDraw[] @relation("LotteryConsumeTarget")
+  }
 
 model LoyaltyPoint {
   discordUserId String   @id
@@ -235,6 +243,28 @@ model WithdrawalAccount {
 enum CouponType {
   DISCOUNT_90
   DISCOUNT_80
+  DISCOUNT_70
+  DISCOUNT_90_LOTTERY
+  CAKE_VOUCHER
+  LOLLIPOP_VOUCHER
+  PERFUME_VOUCHER
+  CAROUSEL_VOUCHER
+  PUMPKIN_CAR_VOUCHER
+  PHONOGRAPH_VOUCHER
+  CROWN_75_VOUCHER
+  CROWN_DAY_90_VOUCHER
+  CROWN_3DAY_90_VOUCHER
+  CROWN_WEEK_90_VOUCHER
+  CROWN_MONTH_90_VOUCHER
+  LOTTERY_VOUCHER
+  CUSTOM_GIFT_VOUCHER
+  CUSTOM_TAG_VOUCHER
+  COMMISSION_MINUS1_VOUCHER
+  DOUBLE_FLOW_5000_VOUCHER
+  DOUBLE_SPEND_5000_VOUCHER
+  RENAME_CARD_3
+  RENAME_CARD
+  RENAME_CARD_5
 }
 
 enum CouponStatus {
@@ -252,7 +282,42 @@ model Coupon {
   expiresAt DateTime
   consumedAt DateTime?
   orderId   String?
-  discountAmount Decimal? @db.Decimal(19, 4)
+  consumeAmount Decimal? @db.Decimal(19, 4)
+  consumeTargetId String?
+
+  consumeTarget Member? @relation("CouponConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+}
+
+model Expense {
+  id         String   @id @default(cuid())
+  amount     Decimal  @db.Decimal(19, 4)
+  operatorId String
+  targetId   String?
+  reason     String
+  createdAt  DateTime @default(now())
+
+  operator Member @relation("ExpenseOperator", fields: [operatorId], references: [discordUserId])
+  target   Member? @relation("ExpenseTarget", fields: [targetId], references: [discordUserId])
+
+  @@index([operatorId])
+  @@index([targetId])
+  @@index([createdAt])
+}
+
+model PureProfit {
+  id         String   @id @default(cuid())
+  amount     Decimal  @db.Decimal(19, 4)
+  operatorId String
+  targetId   String?
+  reason     String
+  createdAt  DateTime @default(now())
+
+  operator Member @relation("PureProfitOperator", fields: [operatorId], references: [discordUserId])
+  target   Member? @relation("PureProfitTarget", fields: [targetId], references: [discordUserId])
+
+  @@index([operatorId])
+  @@index([targetId])
+  @@index([createdAt])
 }
 
 model DailySnapshot {
@@ -506,6 +571,7 @@ model Order {
   chargedGross       Decimal  @default(0) @db.Decimal(19, 4)
 
   endedAt      DateTime?
+  notifiedAt   DateTime?
   totalMinutes Int? // ceil((endedAt - stopwatchStartAt)/60)
 
   // Money (gross two-decimal; payout snapshot is worker share)
@@ -666,13 +732,16 @@ model LotteryDraw {
   consumeAt DateTime?
   consumeAmount Decimal?  @db.Decimal(19, 4) // 奖品使用时带来的金额（折扣/返利等）
   consumeOrderId String?  // 关联使用的订单
+  consumeTargetId String?
 
   prize  LotteryPrize? @relation(fields: [prizeId], references: [id])
   member Member        @relation(fields: [userId], references: [discordUserId])
+  consumeTarget Member? @relation("LotteryConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
 
   @@index([userId, createdAt])
   @@index([pool, createdAt])
   @@index([consumeOrderId])
+  @@index([consumeTargetId])
 }
 
 model LotteryPity {

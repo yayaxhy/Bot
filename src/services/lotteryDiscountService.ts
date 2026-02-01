@@ -1,4 +1,4 @@
-import { LotteryStatus, OrderStatus, Prisma } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryStatus, OrderStatus, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
@@ -15,6 +15,12 @@ const DISCOUNT_PRIZE_CONFIG: Record<string, { rate: Prisma.Decimal; cap: Prisma.
 };
 const DISCOUNT_PRIZE_NAMES = Object.keys(DISCOUNT_PRIZE_CONFIG);
 const FREE_MINUTES = 5;
+const DISCOUNT_COUPON_TYPE_MAP: Record<string, CouponType> = {
+  [PRIZE_NAMES.DISCOUNT_80]: CouponType.DISCOUNT_80,
+  [PRIZE_NAMES.DISCOUNT_70]: CouponType.DISCOUNT_70,
+  [PRIZE_NAMES.DISCOUNT_90_LOTTERY]: CouponType.DISCOUNT_90_LOTTERY,
+  [LEGACY_DISCOUNT_90_NAME]: CouponType.DISCOUNT_90_LOTTERY,
+};
 
 function computeDiscountAmount(params: {
   unitPrice: Prisma.Decimal;
@@ -102,6 +108,106 @@ export async function applyLotteryDiscountForOrder(params: {
       : DISCOUNT_PRIZE_NAMES;
     const prizeFilter: { name: { in: string[] } } = { name: { in: namesFilter } };
 
+    const couponTypes = requestedPrizeName
+      ? Array.from(
+          new Set(
+            [
+              DISCOUNT_COUPON_TYPE_MAP[requestedPrizeName],
+              ...(requestedPrizeName === PRIZE_NAMES.DISCOUNT_90_LOTTERY
+                ? [DISCOUNT_COUPON_TYPE_MAP[LEGACY_DISCOUNT_90_NAME]]
+                : []),
+            ].filter(Boolean)
+          )
+        )
+      : Array.from(new Set(Object.values(DISCOUNT_COUPON_TYPE_MAP)));
+
+    // expire outdated coupons
+    if (couponTypes.length > 0) {
+      await tx.coupon.updateMany({
+        where: { discordId: userId, status: CouponStatus.ACTIVE, expiresAt: { lte: now }, type: { in: couponTypes } },
+        data: { status: CouponStatus.EXPIRED },
+      });
+    }
+
+    const availableCoupon = couponTypes.length
+      ? await tx.coupon.findFirst({
+          where: {
+            discordId: userId,
+            type: { in: couponTypes },
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+          orderBy: { issuedAt: 'asc' },
+        })
+      : null;
+
+    if (!order.unitPrice || order.totalMinutes == null) {
+      return { status: 'insufficient_data' };
+    }
+
+    const unitPrice = new Prisma.Decimal(order.unitPrice);
+
+    if (availableCoupon) {
+      const couponType = availableCoupon.type;
+      const prizeNameUsed = Object.entries(DISCOUNT_COUPON_TYPE_MAP).find(
+        ([, type]) => type === couponType
+      )?.[0] ?? '';
+      const config = DISCOUNT_PRIZE_CONFIG[prizeNameUsed];
+      if (!config) return { status: 'no_lottery' };
+
+      const discountAmount = computeDiscountAmount({
+        unitPrice,
+        totalMinutes: order.totalMinutes,
+        rate: config.rate,
+        cap: config.cap,
+      });
+      if (discountAmount.lte(0)) return { status: 'no_fee' };
+
+      await suppressRechargeNotifications(tx);
+      const hostAccount = await tx.member.findUnique({
+        where: { discordUserId: userId },
+        select: { totalBalance: true },
+      });
+      const balanceBefore = new Prisma.Decimal(hostAccount?.totalBalance ?? 0);
+      const balanceAfter = balanceBefore.add(discountAmount);
+
+      await tx.coupon.update({
+        where: { id: availableCoupon.id },
+        data: {
+          consumedAt: now,
+          orderId: order.id,
+          consumeAmount: discountAmount,
+          consumeTargetId: order.workerId ?? null,
+          status: CouponStatus.USED,
+        },
+      });
+
+      await tx.member.update({
+        where: { discordUserId: userId },
+        data: {
+          recharge: { increment: discountAmount },
+          totalBalance: { increment: discountAmount },
+        },
+      });
+
+      await recordIndividualTransaction(tx, {
+        discordId: userId,
+        thirdPartydiscordId: order.workerId ?? 'SYSTEM',
+        balanceBefore,
+        amountChange: discountAmount,
+        balanceAfter,
+        typeOfTransaction: '优惠返利',
+        timeCreatedAt: now,
+      });
+
+      return {
+        status: 'applied',
+        kind: 'coupon',
+        consumeAmount: discountAmount,
+        couponId: availableCoupon.id,
+      };
+    }
+
     const voucher = lotteryId
       ? await tx.lotteryDraw.findFirst({
           where: {
@@ -128,12 +234,6 @@ export async function applyLotteryDiscountForOrder(params: {
     const prizeNameUsed = voucher.prize?.name ?? '';
     const config = DISCOUNT_PRIZE_CONFIG[prizeNameUsed];
     if (!config) return { status: 'no_lottery' };
-
-    if (!order.unitPrice || order.totalMinutes == null) {
-      return { status: 'insufficient_data' };
-    }
-
-    const unitPrice = new Prisma.Decimal(order.unitPrice);
     const discountAmount = computeDiscountAmount({
       unitPrice,
       totalMinutes: order.totalMinutes,
@@ -158,6 +258,7 @@ export async function applyLotteryDiscountForOrder(params: {
         requestId: order.id,
         consumeAmount: discountAmount,
         consumeOrderId: order.id,
+        consumeTargetId: order.workerId ?? null,
       },
     });
 
@@ -182,7 +283,7 @@ export async function applyLotteryDiscountForOrder(params: {
     return {
       status: 'applied',
       kind: 'lottery',
-      discountAmount,
+      consumeAmount: discountAmount,
       lotteryId: voucher.id,
     };
   });

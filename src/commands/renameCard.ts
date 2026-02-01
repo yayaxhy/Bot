@@ -1,4 +1,4 @@
-import { LotteryStatus } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryStatus } from '@prisma/client';
 import { Message } from 'discord.js';
 import prisma from '../db/prisma.js';
 import { RENAME_CARD_NAMES } from '../services/lotteryService.js';
@@ -14,6 +14,40 @@ export async function handleRenameCardCommand(message: Message): Promise<boolean
   const now = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
+    const couponTypes = [CouponType.RENAME_CARD_3, CouponType.RENAME_CARD, CouponType.RENAME_CARD_5];
+    await tx.coupon.updateMany({
+      where: {
+        discordId: userId,
+        type: { in: couponTypes },
+        status: CouponStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: { status: CouponStatus.EXPIRED },
+    });
+
+    const coupon = await tx.coupon.findFirst({
+      where: {
+        discordId: userId,
+        type: { in: couponTypes },
+        status: CouponStatus.ACTIVE,
+        expiresAt: { gt: now },
+      },
+      select: { id: true },
+      orderBy: { issuedAt: 'asc' },
+    });
+    if (coupon) {
+      await tx.coupon.update({
+        where: { id: coupon.id },
+        data: {
+          status: CouponStatus.USED,
+          consumedAt: now,
+          consumeAmount: 0,
+          consumeTargetId: userId,
+        },
+      });
+      return { used: true };
+    }
+
     await tx.lotteryDraw.updateMany({
       where: {
         userId,
@@ -38,7 +72,7 @@ export async function handleRenameCardCommand(message: Message): Promise<boolean
 
     await tx.lotteryDraw.update({
       where: { id: card.id },
-      data: { status: LotteryStatus.USED, consumeAt: now },
+      data: { status: LotteryStatus.USED, consumeAt: now, consumeTargetId: userId },
     });
     return { used: true };
   });

@@ -6,7 +6,7 @@ import { performGift } from '../commands/gifting.js';
 import prisma from '../db/prisma.js';
 import { applyCouponDiscountForOrder, type DiscountKind } from '../services/discountService.js';
 import { applyLotteryDiscountForOrder } from '../services/lotteryDiscountService.js';
-import { LotteryStatus } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryStatus } from '@prisma/client';
 import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
@@ -25,6 +25,17 @@ const INTERNAL_ALLOWED_IPS = (process.env.INTERNAL_ALLOWED_IPS ?? '43.131.41.173
   .map((s) => s.trim())
   .filter(Boolean);
 const ADMIN_NOTIFY_USER_ID = '1421651539247894549';
+
+const VOUCHER_COUPON_TYPE_BY_PRIZE: Record<string, CouponType> = {
+  [PRIZE_NAMES.CUSTOM_GIFT_VOUCHER]: CouponType.CUSTOM_GIFT_VOUCHER,
+  [PRIZE_NAMES.CUSTOM_TAG_VOUCHER]: CouponType.CUSTOM_TAG_VOUCHER,
+  [PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER]: CouponType.COMMISSION_MINUS1_VOUCHER,
+  [PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER]: CouponType.DOUBLE_FLOW_5000_VOUCHER,
+  [PRIZE_NAMES.DOUBLE_SPEND_5000_VOUCHER]: CouponType.DOUBLE_SPEND_5000_VOUCHER,
+  [PRIZE_NAMES.RENAME_CARD_3]: CouponType.RENAME_CARD_3,
+  [PRIZE_NAMES.RENAME_CARD]: CouponType.RENAME_CARD,
+  [PRIZE_NAMES.RENAME_CARD_5]: CouponType.RENAME_CARD_5,
+};
 
 let serverInstance: http.Server | null = null;
 
@@ -128,6 +139,56 @@ async function consumeVoucher(
 ): Promise<{ voucherId: string } | null> {
   const { userId, prizeName, requestId, voucherId } = params;
   const now = new Date();
+  const couponType = VOUCHER_COUPON_TYPE_BY_PRIZE[prizeName];
+
+  if (couponType) {
+    await tx.coupon.updateMany({
+      where: {
+        discordId: userId,
+        type: couponType,
+        status: CouponStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: { status: CouponStatus.EXPIRED },
+    });
+
+    const coupon = voucherId
+      ? await tx.coupon.findFirst({
+          where: {
+            id: voucherId,
+            discordId: userId,
+            type: couponType,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+          select: { id: true },
+        })
+      : await tx.coupon.findFirst({
+          where: {
+            discordId: userId,
+            type: couponType,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+          select: { id: true },
+          orderBy: { issuedAt: 'asc' },
+        });
+
+    if (coupon) {
+      await tx.coupon.update({
+        where: { id: coupon.id },
+        data: {
+          status: CouponStatus.USED,
+          consumedAt: now,
+          consumeAmount: 0,
+          consumeTargetId: userId,
+          orderId: requestId ?? null,
+        },
+      });
+      return { voucherId: coupon.id };
+    }
+  }
+
   await tx.lotteryDraw.updateMany({
     where: {
       userId,
@@ -163,7 +224,7 @@ async function consumeVoucher(
 
   await tx.lotteryDraw.update({
     where: { id: voucher.id },
-    data: { status: LotteryStatus.USED, consumeAt: now, requestId },
+    data: { status: LotteryStatus.USED, consumeAt: now, requestId, consumeTargetId: userId },
   });
 
   return { voucherId: voucher.id };
@@ -558,7 +619,7 @@ async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
 
     sendJson(res, 200, {
       ok: true,
-      amount: result.discountAmount?.toString?.() ?? null,
+      amount: result.consumeAmount?.toString?.() ?? null,
       kind: result.kind,
     });
   } catch (err) {
@@ -587,6 +648,40 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
   const now = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
+    const couponTypes = [CouponType.RENAME_CARD_3, CouponType.RENAME_CARD, CouponType.RENAME_CARD_5];
+    await tx.coupon.updateMany({
+      where: {
+        discordId: userId,
+        type: { in: couponTypes },
+        status: CouponStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: { status: CouponStatus.EXPIRED },
+    });
+
+    const coupon = await tx.coupon.findFirst({
+      where: {
+        discordId: userId,
+        type: { in: couponTypes },
+        status: CouponStatus.ACTIVE,
+        expiresAt: { gt: now },
+      },
+      select: { id: true },
+      orderBy: { issuedAt: 'asc' },
+    });
+    if (coupon) {
+      await tx.coupon.update({
+        where: { id: coupon.id },
+        data: {
+          status: CouponStatus.USED,
+          consumedAt: now,
+          consumeAmount: 0,
+          consumeTargetId: userId,
+        },
+      });
+      return { used: true, prizeName: '改名卡' };
+    }
+
     await tx.lotteryDraw.updateMany({
       where: {
         userId,
@@ -622,7 +717,7 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
 
     await tx.lotteryDraw.update({
       where: { id: card.id },
-      data: { status: LotteryStatus.USED, consumeAt: now },
+      data: { status: LotteryStatus.USED, consumeAt: now, consumeTargetId: userId },
     });
     return { used: true, prizeName: card.prize?.name ?? '改名卡' };
   });

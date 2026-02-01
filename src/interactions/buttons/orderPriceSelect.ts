@@ -51,6 +51,30 @@ function hasSend(channel: unknown): channel is TextBasedChannel & { send: Functi
   return !!channel && typeof (channel as any).send === 'function';
 }
 
+const isMissingAccessError = (err: any) =>
+  err?.code === 50001 || (typeof err?.message === 'string' && err.message.includes('Missing Access'));
+const safeFetchChannel = async (
+  client: StringSelectMenuInteraction['client'],
+  channelId: string,
+  context: string
+) => {
+  try {
+    return await client.channels.fetch(channelId);
+  } catch (err) {
+    if (isMissingAccessError(err)) return null;
+    console.error(`[orderPriceSelect] ${context} fetch failed:`, err);
+    return null;
+  }
+};
+const safeSend = async (action: () => Promise<unknown>, context: string) => {
+  try {
+    await action();
+  } catch (err) {
+    if (isMissingAccessError(err)) return;
+    console.error(`[orderPriceSelect] ${context} send failed:`, err);
+  }
+};
+
 /**
  * 从 Embed 字段中提取陪玩 ID（兼容旧字段名 "PEIWANID"）
  */
@@ -101,13 +125,12 @@ function getUnitPrice(peiwan: any, code: QuotationCode): number | null {
 
 async function sendAnonLogMessage(i: StringSelectMenuInteraction, content: string) {
   if (!ANON_NOTIFY_CHANNEL_ID) return;
-  try {
-    const channel = await i.client.channels.fetch(ANON_NOTIFY_CHANNEL_ID).catch(() => null);
-    if (channel && channel.isTextBased() && hasSend(channel)) {
-      await channel.send({ content, allowedMentions: { parse: ['users'] } });
-    }
-  } catch (err) {
-    console.error('[orderPriceSelect] anon log send failed:', err);
+  const channel = await safeFetchChannel(i.client, ANON_NOTIFY_CHANNEL_ID, 'anon log channel');
+  if (channel && channel.isTextBased() && hasSend(channel)) {
+    await safeSend(
+      () => channel.send({ content, allowedMentions: { parse: ['users'] } }),
+      'anon log'
+    );
   }
 }
 
