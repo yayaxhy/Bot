@@ -400,6 +400,7 @@ model GiftAudit {
   flowBonusExtra           Decimal  @db.Decimal(19, 4)
   flowRemainingBefore      Decimal  @db.Decimal(19, 4)
   voucherIds               Json?
+  couponIds                Json?
   bossReferralInviterId    String?
   bossReferralAmount       Decimal? @db.Decimal(19, 4)
   workerReferralInviterId  String?

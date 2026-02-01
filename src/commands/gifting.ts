@@ -332,6 +332,7 @@ export async function performGift(
     giverUsername?: string;
     receiverUsername?: string;
     lotteryVoucherId?: string;
+    couponVoucherId?: string;
     voucherRequestId?: string;
     expenseReason?: string;
   }
@@ -346,6 +347,7 @@ export async function performGift(
     giverUsername,
     receiverUsername,
     lotteryVoucherId,
+    couponVoucherId,
     voucherRequestId,
     expenseReason,
   } = params;
@@ -409,6 +411,7 @@ export async function performGift(
   let voucherCount = 0;
   let voucherValue = DEC(0);
   const consumedVoucherIds: string[] = [];
+  const consumedCouponIds: string[] = [];
   if (voucherConfigs.length) {
     const allowedPrizeNames = voucherConfigs.map((v) => v.prizeName);
     const allowedCouponTypes = Array.from(
@@ -447,6 +450,37 @@ export async function performGift(
       voucherCount = 1;
       consumedVoucherIds.push(voucher.id);
       const cfg = voucherConfigs.find((c) => c.prizeName === voucher.prize?.name);
+      const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+      const discountRate = new Prisma.Decimal(1).sub(payRate);
+      voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+    } else if (couponVoucherId) {
+      const coupon = await tx.coupon.findFirst({
+        where: {
+          id: couponVoucherId,
+          discordId: giverId,
+          type: { in: allowedCouponTypes },
+          status: 'ACTIVE',
+          expiresAt: { gt: now },
+        },
+        select: { id: true, type: true },
+      });
+      if (!coupon) {
+        throw new Error('礼物券不可用或已过期。');
+      }
+      const prizeName = PRIZE_BY_VOUCHER_COUPON_TYPE[coupon.type];
+      const consumeAmount = computeVoucherConsumeAmount(prizeName ?? '', unitPrice);
+      await tx.coupon.update({
+        where: { id: coupon.id },
+        data: {
+          status: 'USED',
+          consumedAt: now,
+          consumeAmount: consumeAmount ?? undefined,
+          consumeTargetId: receiverId,
+        },
+      });
+      consumedCouponIds.push(coupon.id);
+      consumedVoucherIds.push(coupon.id);
+      const cfg = voucherConfigs.find((c) => c.prizeName === prizeName);
       const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
       const discountRate = new Prisma.Decimal(1).sub(payRate);
       voucherValue = voucherValue.add(unitPrice.mul(discountRate));
@@ -489,6 +523,7 @@ export async function performGift(
             consumeTargetId: receiverId,
           },
         });
+        consumedCouponIds.push(c.id);
         consumedVoucherIds.push(c.id);
         const cfg = voucherConfigs.find((v) => v.prizeName === prizeName);
         const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
@@ -693,7 +728,8 @@ export async function performGift(
         spendRemainingBefore,
         flowBonusExtra: extraFlow,
         flowRemainingBefore,
-        voucherIds: consumedVoucherIds,
+      voucherIds: consumedVoucherIds,
+      couponIds: consumedCouponIds,
         bossReferralInviterId: referralResult.boss?.inviterId ?? null,
         bossReferralAmount: referralResult.boss?.amount ?? null,
         workerReferralInviterId: referralResult.worker?.inviterId ?? null,

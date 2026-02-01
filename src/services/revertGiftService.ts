@@ -93,6 +93,7 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
     const flowCap = DEC(audit.flowRemainingBefore ?? 0);
     const heartGain = audit.heartGain ?? 0;
     const voucherIds = Array.isArray(audit.voucherIds) ? (audit.voucherIds as any[]) : [];
+    const couponIds = Array.isArray((audit as any).couponIds) ? ((audit as any).couponIds as any[]) : [];
 
     const giver = await tx.member.findUnique({
       where: { discordUserId: audit.giverId },
@@ -175,6 +176,18 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
       await tx.lotteryDraw.updateMany({
         where: { id: { in: voucherIds as string[] } },
         data: { status: LotteryStatus.UNUSED, consumeAt: null, requestId: null },
+      });
+    }
+    if (couponIds.length) {
+      await tx.coupon.updateMany({
+        where: { id: { in: couponIds as string[] } },
+        data: {
+          status: 'ACTIVE',
+          consumedAt: null,
+          consumeAmount: null,
+          consumeTargetId: null,
+          orderId: null,
+        },
       });
     }
 

@@ -334,9 +334,13 @@ async function handleGift(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  const { giverId, receiverId, giftName, quantity, anonymous, lotteryId, requestId } = payload ?? {};
+  const { giverId, receiverId, giftName, quantity, anonymous, lotteryId, couponId, requestId } = payload ?? {};
   if (!giverId || !receiverId || !giftName || !quantity) {
     sendJson(res, 400, { ok: false, error: 'missing_fields' });
+    return;
+  }
+  if (!lotteryId && !couponId) {
+    sendJson(res, 400, { ok: false, error: 'missing_voucher' });
     return;
   }
 
@@ -354,6 +358,7 @@ async function handleGift(req: IncomingMessage, res: ServerResponse) {
       quantity: Number(quantity),
       anonymous: !!anonymous,
       lotteryVoucherId: lotteryId,
+      couponVoucherId: couponId,
       voucherRequestId: requestId,
     });
     sendJson(res, 200, { ok: true, result });

@@ -1,0 +1,1 @@
+ALTER TABLE "gift_audit" ADD COLUMN IF NOT EXISTS "couponIds" JSONB;
