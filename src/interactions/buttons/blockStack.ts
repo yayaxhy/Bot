@@ -314,7 +314,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         balanceBefore,
         amountChange: net,
         balanceAfter,
-        typeOfTransaction: '积木塌掉收益',
+        typeOfTransaction: '捣蛋鬼收益',
       });
 
       reward = { userId: actorId, gross, net, transactionId: txRecord.transactionId };
