@@ -647,6 +647,60 @@ export async function createRedEnvelope(
   });
 }
 
+type CreateSystemEnvelopeParams = {
+  creatorId: string;
+  totalAmount: Prisma.Decimal | number | string;
+  count: number;
+  note?: string;
+  channelId?: string;
+  expiresAt?: Date;
+};
+
+// System-funded envelope: skips balance checks/deductions.
+export async function createSystemRedEnvelope(
+  params: CreateSystemEnvelopeParams,
+  client: PrismaClient = prisma
+) {
+  const totalAmount = asDecimal(params.totalAmount);
+  if (totalAmount.lte(0)) {
+    throw new Error('金额必须大于 0。');
+  }
+  if (!Number.isInteger(params.count) || params.count <= 0) {
+    throw new Error('份数必须为正整数。');
+  }
+  const minTotal = MIN_SLICE.mul(params.count);
+  if (totalAmount.lt(MIN_TOTAL_AMOUNT)) {
+    throw new Error('红包总金额至少 ¥10。');
+  }
+  if (totalAmount.lt(minTotal)) {
+    throw new Error(`总金额不足，每份至少 ¥${MIN_SLICE.toString()}`);
+  }
+
+  const expiresAt =
+    params.expiresAt ??
+    new Date(Date.now() + DEFAULT_EXPIRE_MS);
+  const displayNote = params.note?.trim().slice(0, MAX_NOTE_LENGTH) || undefined;
+  const storedNote = clampNote(displayNote);
+
+  await ensureMemberExists(client as DbClient, params.creatorId);
+
+  return client.redEnvelope.create({
+    data: {
+      creatorId: params.creatorId,
+      totalAmount,
+      remainingAmount: totalAmount,
+      totalCount: params.count,
+      remainingCount: params.count,
+      note: storedNote,
+      status: RedEnvelopeStatus.ACTIVE,
+      expiresAt,
+      channelId: params.channelId,
+      incomePool: asDecimal(0),
+      rechargePool: totalAmount,
+    },
+  });
+}
+
 export async function bindEnvelopeMessage(
   envelopeId: string,
   payload: { messageId: string; channelId: string },

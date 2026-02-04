@@ -11,6 +11,7 @@ import { handleOrderPriceSelect } from './interactions/buttons/orderPriceSelect.
 import { handleAcceptOrder } from './interactions/buttons/acceptOrder.js';
 import { handleDeclineOrder } from './interactions/buttons/declineOrder.js';
 import { handleEndOrderButton } from './interactions/buttons/endOrder.js';
+import { handleBlockStackButton } from './interactions/buttons/blockStack.js';
 import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
 import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
@@ -24,6 +25,7 @@ import { handleRevertGiftSlash, revertGiftCommand } from './commands/revertGiftS
 import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
 import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
 import { registerBalanceCommands } from './commands/balanceCommands.js';
+import { registerBlockStackCommand } from './commands/blockStack.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
@@ -195,6 +197,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
 
     // Buttons
     if (i.isButton()) {
+      if (i.customId?.startsWith('blockstack:')) {
+        await handleBlockStackButton(i);
+        return;
+      }
       // 抢单按钮
       if (i.customId?.startsWith('requestOrder:') || i.customId?.startsWith('play:')) {
         await handlePlayButton(i);
@@ -249,6 +255,7 @@ client.once(Events.ClientReady, async () => {
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerBalanceCommands(client);
+  registerBlockStackCommand(client);
   registerTotalEarnCommand(client, prisma);
   registerTotalSpentCommand(client, prisma);
   try {

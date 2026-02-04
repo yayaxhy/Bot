@@ -759,6 +759,18 @@ enum LotteryStatus {
   EXPIRED
 }
 
+enum BlockStackStatus {
+  ACTIVE
+  COLLAPSED
+  SETTLED
+}
+
+enum BlockStackAction {
+  SINGLE
+  TEN
+  SETTLE
+}
+
 enum ReferralType {
   LAOBAN
   PEIWAN
@@ -789,6 +801,72 @@ model ReferralPayout {
   referral Referral @relation(fields: [referralId], references: [inviteeId], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([referralId, orderId])
+}
+
+model BlockStackGame {
+  id        String           @id @default(cuid())
+  creatorId String
+  channelId String
+  messageId String?
+  status    BlockStackStatus @default(ACTIVE)
+
+  totalBlocks      Int @default(0)
+  totalSingleDraws Int @default(0)
+  totalTenDraws    Int @default(0)
+  totalRevenue     Decimal @default(0) @db.Decimal(19, 4)
+
+  settledAt     DateTime?
+  settledById   String?
+  settledAmount Decimal? @db.Decimal(19, 4)
+
+  collapsedAt            DateTime?
+  collapsedById          String?
+  collapsedByAction      BlockStackAction?
+  collapseChance         Decimal? @db.Decimal(7, 4)
+  collapseRoll           Decimal? @db.Decimal(7, 4)
+  collapseEnvelopeAmount Decimal? @db.Decimal(19, 4)
+
+  collapseRewardUserId   String?
+  collapseRewardGross    Decimal? @db.Decimal(19, 4)
+  collapseRewardNet      Decimal? @db.Decimal(19, 4)
+  collapseRewardTransactionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  players BlockStackPlayer[]
+  draws   BlockStackDraw[]
+
+  @@index([channelId, status])
+}
+
+model BlockStackPlayer {
+  id           String   @id @default(cuid())
+  gameId       String
+  userId       String
+  singlePicked Boolean  @default(false)
+  singleBlocks Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  game BlockStackGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, userId])
+  @@index([userId])
+}
+
+model BlockStackDraw {
+  id          String           @id @default(cuid())
+  gameId      String
+  userId      String
+  action      BlockStackAction
+  blocksAdded Int
+  createdAt   DateTime @default(now())
+
+  game BlockStackGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([gameId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model Revert {
