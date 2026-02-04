@@ -21,6 +21,13 @@ import {
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 const DRAW10_REVENUE = new Prisma.Decimal(10);
 const DRAW10_COST = new Prisma.Decimal(10);
+const MAX_ACTION_LINES = 50;
+
+type ActionCacheEntry = {
+  totalEntries: number;
+  lines: string[];
+};
+const actionLineCache = new Map<string, ActionCacheEntry>();
 
 type ActionKind = 'draw1' | 'draw10' | 'settle';
 
@@ -39,34 +46,118 @@ function rollCollapse(totalBlocks: number) {
   return { chance, roll, collapsed: roll < chance };
 }
 
-async function buildActionLines(game: any) {
-  const rows = await prisma.blockStackDraw.findMany({
-    where: { gameId: game.id },
-    orderBy: { createdAt: 'asc' },
-  });
-  const lines = rows.map((row) => {
-    if (row.action === 'TEN') {
-      return `😈 调皮的 <@${row.userId}> 一次性抽出了 ${row.blocksAdded} 根积木`;
-    }
-    return `🧱 <@${row.userId}> 抽出 ${row.blocksAdded} 根积木`;
-  });
+function resolveDisplayName(name?: string | null, fallback?: string | null) {
+  const trimmed = name?.trim();
+  if (trimmed) return trimmed;
+  if (fallback?.trim()) return fallback.trim();
+  return '玩家';
+}
 
-  if (game.status === 'COLLAPSED') {
-    let collapseLine: string | null = null;
-    if (game.collapsedByAction === 'TEN' && game.collapseRewardGross && game.collapsedById) {
-      collapseLine = `🎉 <@${game.collapsedById}> 搞破坏成功，获得全部收益${game.collapseRewardGross.toString()}。`;
-    } else if (rows.length) {
-      const last = rows[rows.length - 1];
-      collapseLine = `💥善良的 <@${last.userId}> 抽出 ${last.blocksAdded} 根积木导致积木塌方。`;
-    }
-    if (collapseLine) lines.push(collapseLine);
+function trimActionLines(lines: string[]) {
+  return lines.length > MAX_ACTION_LINES ? lines.slice(-MAX_ACTION_LINES) : lines;
+}
+
+function materializeDisplayLines(entry: ActionCacheEntry): string[] {
+  const omitted = Math.max(0, entry.totalEntries - entry.lines.length);
+  if (omitted <= 0) return entry.lines;
+  return [`…前 ${omitted} 条记录已省略`, ...entry.lines];
+}
+
+function formatDrawLine(
+  row: { action: string; userId: string; blocksAdded: number },
+  displayName?: string | null
+) {
+  const label = resolveDisplayName(displayName, row.userId);
+  if (row.action === 'TEN') {
+    return `😈 调皮的 ${label} 一次性抽出了 ${row.blocksAdded} 根积木`;
+  }
+  return `🧱 ${label} 抽出 ${row.blocksAdded} 根积木`;
+}
+
+function buildCollapseSummaryLine(
+  game: any,
+  lastDraw?: { userId: string; blocksAdded: number } | null
+): string | null {
+  if (game.status !== 'COLLAPSED') return null;
+  if (game.collapsedByAction === 'TEN' && game.collapseRewardGross && game.collapsedById) {
+    return `💥 <@${game.collapsedById}> 搞破坏成功，获得全部收益${game.collapseRewardGross.toString()}。`;
+  }
+  if (lastDraw) {
+    return `💥善良的 <@${lastDraw.userId}> 抽出 ${lastDraw.blocksAdded} 根积木导致积木塌方。`;
+  }
+  return null;
+}
+
+function buildSettledSummaryLine(game: any): string | null {
+  if (game.status !== 'SETTLED' || !game.settledAmount) return null;
+  return `🏆 积木已结算，恭喜<@${game.creatorId}>获得总收益${game.settledAmount.toString()}`;
+}
+
+function setActionCache(gameId: string, entry: ActionCacheEntry) {
+  actionLineCache.set(gameId, {
+    totalEntries: entry.totalEntries,
+    lines: trimActionLines(entry.lines),
+  });
+}
+
+function appendActionCache(gameId: string, additions: string[]) {
+  if (!additions.length) return;
+  const current = actionLineCache.get(gameId) ?? { totalEntries: 0, lines: [] };
+  const merged = [...current.lines, ...additions];
+  setActionCache(gameId, {
+    totalEntries: current.totalEntries + additions.length,
+    lines: merged,
+  });
+}
+
+async function hydrateActionCache(game: any) {
+  const [drawCount, latestRowsDesc] = await Promise.all([
+    prisma.blockStackDraw.count({ where: { gameId: game.id } }),
+    prisma.blockStackDraw.findMany({
+      where: { gameId: game.id },
+      orderBy: { createdAt: 'desc' },
+      take: MAX_ACTION_LINES,
+      select: { action: true, userId: true, blocksAdded: true },
+    }),
+  ]);
+  const userIds = Array.from(new Set(latestRowsDesc.map((row) => row.userId)));
+  const memberRows = userIds.length
+    ? await prisma.member.findMany({
+        where: { discordUserId: { in: userIds } },
+        select: { discordUserId: true, serverDisplayName: true },
+      })
+    : [];
+  const displayMap = new Map<string, string>();
+  for (const row of memberRows) {
+    if (row.serverDisplayName) displayMap.set(row.discordUserId, row.serverDisplayName);
   }
 
-  if (game.status === 'SETTLED' && game.settledAmount) {
-    lines.push(`🏆 积木已结算，恭喜<@${game.creatorId}>获得总收益${game.settledAmount.toString()}`);
-  }
+  const latestRows = latestRowsDesc.reverse();
+  const lines = latestRows.map((row) => formatDrawLine(row, displayMap.get(row.userId)));
+  const lastDraw = latestRows[latestRows.length - 1];
+  const collapseSummary = buildCollapseSummaryLine(game, lastDraw);
+  const settledSummary = buildSettledSummaryLine(game);
+  if (collapseSummary) lines.push(collapseSummary);
+  if (settledSummary) lines.push(settledSummary);
 
-  return lines;
+  const summaryCount = (collapseSummary ? 1 : 0) + (settledSummary ? 1 : 0);
+  const entry: ActionCacheEntry = {
+    totalEntries: drawCount + summaryCount,
+    lines: trimActionLines(lines),
+  };
+  setActionCache(game.id, entry);
+  return entry;
+}
+
+async function getActionLinesForDisplay(game: any, additions?: string[]) {
+  let entry = actionLineCache.get(game.id);
+  if (!entry) {
+    entry = await hydrateActionCache(game);
+  } else if (additions?.length) {
+    appendActionCache(game.id, additions);
+    entry = actionLineCache.get(game.id)!;
+  }
+  return materializeDisplayLines(entry);
 }
 
 async function updatePeiwanBalance(
@@ -91,6 +182,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
 
   const { action, gameId } = parsed;
   const actorId = i.user.id;
+  const actorLabel = resolveDisplayName((i.member as any)?.displayName, i.user.username);
   const systemId = i.client.user?.id ?? process.env.BLOCK_STACK_SYSTEM_ID ?? 'block-stack-system';
 
   await i.deferUpdate();
@@ -149,6 +241,8 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         status: 'settled' as const,
         game: updated,
         reply: `结算完成，发起人获得 ¥${amount.toString()}。`,
+        settleLine: buildSettledSummaryLine(updated),
+        actionMessage: `${actorLabel} 收菜结算，游戏结束`,
       };
     }
 
@@ -201,9 +295,13 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       const reply = collapse.collapsed
         ? `哎呀塌啦！你抽出 ${blocks} 根，当前总数 ${totalBlocks}。`
         : `你抽出 ${blocks} 根积木，当前总数 ${totalBlocks}。`;
-      const publicNote = collapse.collapsed
-        ? `💥 <@${actorId}> 抽出 ${blocks} 根积木导致塌掉，最终总数 ${totalBlocks}。`
-        : `🧱 <@${actorId}> 抽出 ${blocks} 根积木，当前总数 ${totalBlocks}。`;
+      const actionLine = `🧱 ${actorLabel} 抽出 ${blocks} 根积木`;
+      const collapseLine = collapse.collapsed
+        ? `💥善良的 <@${actorId}> 抽出 ${blocks} 根积木导致积木塌方。`
+        : null;
+      const actionMessage = collapse.collapsed
+        ? `💥 ${actorLabel} 抽出了积木导致塌方`
+        : `${actorLabel} 抽出了积木`;
       return {
         status: 'ok' as const,
         game: updatedGame,
@@ -211,7 +309,9 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         collapsed: collapse.collapsed,
         needsEnvelope: collapse.collapsed,
         reply,
-        publicNote,
+        actionLine,
+        collapseLine,
+        actionMessage,
       };
     }
 
@@ -361,11 +461,17 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         ? `🎉 搞破坏成功！你获得 ¥${reward.net.toString()}。`
         : `💥 积木塌啦！当前总数 ${totalBlocks}。`
       : `😈 你抽取了 10 根积木，当前总数 ${totalBlocks}。`;
-    const publicNote = collapse.collapsed
+    const actionLine = `😈 调皮的 ${actorLabel} 一次性抽出了 ${blocks} 根积木`;
+    const collapseLine = collapse.collapsed
       ? reward
         ? `💥 <@${actorId}> 搞破坏成功，获得全部收益${reward.gross.toString()}。`
-        : `💥 <@${actorId}> 抽出 10 根积木导致塌掉，最终总数 ${totalBlocks}。`
-      : `😈 <@${actorId}> 一次性抽出 10 根积木，当前总数 ${totalBlocks}。`;
+        : `💥善良的 <@${actorId}> 抽出 ${blocks} 根积木导致积木塌方。`
+      : null;
+    const actionMessage = collapse.collapsed
+      ? reward
+        ? `😈 ${actorLabel} 捣蛋成功`
+        : `💥 ${actorLabel} 进行了捣蛋导致塌方`
+      : `${actorLabel} 进行了捣蛋`;
     return {
       status: 'ok' as const,
       game: updatedGame,
@@ -373,7 +479,9 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       collapsed: collapse.collapsed,
       needsEnvelope: collapse.collapsed && !reward,
       reply,
-      publicNote,
+      actionLine,
+      collapseLine,
+      actionMessage,
       reward,
     };
   });
@@ -394,10 +502,16 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
 
   const game = (result as any).game as any;
   if (game && i.message && 'edit' in i.message) {
-    const actionLines = await buildActionLines(game);
+    const additions: string[] = [];
+    if ((result as any).actionLine) additions.push((result as any).actionLine);
+    if ((result as any).collapseLine) additions.push((result as any).collapseLine);
+    if ((result as any).settleLine) additions.push((result as any).settleLine);
+    const actionLines = await getActionLinesForDisplay(game, additions);
     const embed = buildBlockStackEmbed(game, { actionLines });
     const components = buildBlockStackComponents(game);
-    await i.message.edit({ embeds: [embed], components }).catch(() => {});
+    const actionMessage = (result as any).actionMessage;
+    const content = actionMessage ? `${actionMessage}` : i.message.content;
+    await i.message.edit({ embeds: [embed], components, content }).catch(() => {});
   }
 
   if ((result as any).status === 'settled') {
@@ -471,10 +585,11 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       const updated = await prisma.blockStackGame.findUnique({ where: { id: game.id } });
 
       if (updated && i.message && 'edit' in i.message) {
-        const actionLines = await buildActionLines(updated);
+        const actionLines = await getActionLinesForDisplay(updated);
         const embed = buildBlockStackEmbed(updated, { actionLines });
         const components = buildBlockStackComponents(updated);
-        await i.message.edit({ embeds: [embed], components }).catch(() => {});
+        const content = i.message.content;
+        await i.message.edit({ embeds: [embed], components, content }).catch(() => {});
       }
     } catch (err) {
       console.error('[block-stack] create envelope failed:', err);

@@ -178,14 +178,21 @@ export function registerBlockStackCommand(client: Client) {
       if (!sent) return;
 
       try {
-        await sent.edit({ embeds: [embed], components, content: '', allowedMentions: { parse: [] } });
+        await sent.edit({
+          embeds: [embed],
+          components,
+          content: '等待玩家开工~',
+          allowedMentions: { parse: [] },
+        });
       } catch (err) {
         console.error('[block-stack] clear @here failed:', err);
       }
 
       await prisma.blockStackGame.update({
         where: { id: game.id },
-        data: { messageId: sent.id },
+        data: {
+          messageId: sent.id,
+        },
       });
     } catch (err) {
       console.error('[block-stack] create failed:', err);

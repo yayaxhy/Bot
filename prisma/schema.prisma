@@ -808,6 +808,7 @@ model BlockStackGame {
   creatorId String
   channelId String
   messageId String?
+  actionMessageId String?
   status    BlockStackStatus @default(ACTIVE)
 
   totalBlocks      Int @default(0)
