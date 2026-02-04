@@ -1,12 +1,15 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import prisma from '../db/prisma.js';
-import { CouponStatus, CouponType } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryPool, LotteryStatus } from '@prisma/client';
+import crypto from 'node:crypto';
 import { isUniqueConstraintError, realignCouponSequence } from '../services/sequenceService.js';
 import { isCashAdmin } from './cash.js';
+import { PRIZE_NAMES } from '../services/lotteryService.js';
 
 type GrantItem = {
   label: string;
-  couponType: CouponType;
+  couponType?: CouponType;
+  lotteryPrizeName?: string;
 };
 
 const GRANT_ITEMS: Record<string, GrantItem> = {
@@ -34,6 +37,7 @@ const GRANT_ITEMS: Record<string, GrantItem> = {
   COMMISSION_MINUS1: { label: '抽成降1%券', couponType: CouponType.COMMISSION_MINUS1_VOUCHER },
   DOUBLE_FLOW_5000: { label: '双倍流水5000券', couponType: CouponType.DOUBLE_FLOW_5000_VOUCHER },
   DOUBLE_SPEND_5000: { label: '双倍消费5000券', couponType: CouponType.DOUBLE_SPEND_5000_VOUCHER },
+  BLOCK_STACK_VOUCHER: { label: '积木游戏代金券', lotteryPrizeName: PRIZE_NAMES.BLOCK_STACK_VOUCHER },
 };
 
 const CHOICES = Object.entries(GRANT_ITEMS).map(([value, item]) => ({
@@ -91,27 +95,62 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
   const quantityText = quantity === 1 ? '一张' : `${quantity} 张`;
 
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const data = Array.from({ length: quantity }, () => ({
-    discordId: target.id,
-    type: grantItem.couponType,
-    status: CouponStatus.ACTIVE,
-    expiresAt,
-  }));
+  if (grantItem.couponType) {
+    const data = Array.from({ length: quantity }, () => ({
+      discordId: target.id,
+      type: grantItem.couponType!,
+      status: CouponStatus.ACTIVE,
+      expiresAt,
+    }));
 
-  while (true) {
-    try {
-      await prisma.coupon.createMany({ data });
-      break;
-    } catch (err) {
-      if (isUniqueConstraintError(err, 'id')) {
-        await realignCouponSequence();
-        continue;
+    while (true) {
+      try {
+        await prisma.coupon.createMany({ data });
+        break;
+      } catch (err) {
+        if (isUniqueConstraintError(err, 'id')) {
+          await realignCouponSequence();
+          continue;
+        }
+        throw err;
       }
-      throw err;
+    }
+  } else if (grantItem.lotteryPrizeName) {
+    const prize = await prisma.lotteryPrize.findFirst({
+      where: { name: grantItem.lotteryPrizeName },
+      select: { id: true, pool: true },
+    });
+    if (!prize) {
+      await i.reply({ content: `未找到奖品「${grantItem.lotteryPrizeName}」，请先在奖池创建。`, ephemeral: true });
+      return;
+    }
+
+    for (let idx = 0; idx < quantity; idx++) {
+      const now = new Date();
+      const nonce = `grant:${target.id}:${Date.now()}:${idx}:${crypto.randomBytes(4).toString('hex')}`;
+      const code = `BSTACK-${crypto.randomBytes(4).toString('hex')}`;
+      await prisma.lotteryDraw.create({
+        data: {
+          nonce,
+          requestId: `grant:${i.id}`,
+          userId: target.id,
+          pool: prize.pool ?? LotteryPool.ADVANCED,
+          prizeId: prize.id,
+          cost: '0',
+          random: Math.random(),
+          status: LotteryStatus.UNUSED,
+          code,
+          expiresAt,
+        },
+      });
     }
   }
 
-  const dmContent = `收到${quantityText}${grantItem.label}！感谢老板对锦鲤的大力支持🩷`;
+  const dmLines = [`收到${quantityText}${grantItem.label}！感谢老板对锦鲤的大力支持🩷`];
+  if (grantItem.lotteryPrizeName === PRIZE_NAMES.BLOCK_STACK_VOUCHER) {
+    dmLines.push('使用方法：输入!抽积木消耗该代金券');
+  }
+  const dmContent = dmLines.join('\n');
 
   try {
     await target.send({ content: dmContent });
