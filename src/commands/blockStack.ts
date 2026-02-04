@@ -1,11 +1,12 @@
 import { AttachmentBuilder, Client, Message } from 'discord.js';
-import { Prisma } from '@prisma/client';
+import { LotteryStatus, Prisma } from '@prisma/client';
 import fs from 'node:fs';
 import path from 'node:path';
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { consumeSpendBuff } from '../services/buffService.js';
 import { recordIndividualTransaction } from '../services/individualTransactionService.js';
+import { PRIZE_NAMES } from '../services/lotteryService.js';
 import {
   buildBlockStackComponents,
   buildBlockStackEmbed,
@@ -15,6 +16,7 @@ const COMMAND = '!抽积木';
 const START_COST = new Prisma.Decimal(49);
 const SYSTEM_ID = process.env.BLOCK_STACK_SYSTEM_ID ?? 'block-stack-system';
 const BOT_AVATAR_PATH = path.resolve(process.cwd(), 'src', 'img', 'botAvatar.jpg');
+const LEGACY_BLOCK_STACK_VOUCHER_NAME = '抽积木代金券';
 
 const sendToChannel = async (channel: Message['channel'], payload: any) => {
   if (!channel || typeof (channel as any).send !== 'function') return;
@@ -34,6 +36,51 @@ export function registerBlockStackCommand(client: Client) {
       }
 
       const result = await prisma.$transaction(async (tx) => {
+        const now = new Date();
+        await tx.lotteryDraw.updateMany({
+          where: {
+            userId: msg.author.id,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { lte: now },
+            prize: { name: { in: [PRIZE_NAMES.BLOCK_STACK_VOUCHER, LEGACY_BLOCK_STACK_VOUCHER_NAME] } },
+          },
+          data: { status: LotteryStatus.EXPIRED },
+        });
+
+        const freeVoucher = await tx.lotteryDraw.findFirst({
+          where: {
+            userId: msg.author.id,
+            status: LotteryStatus.UNUSED,
+            expiresAt: { gt: now },
+            prize: { name: { in: [PRIZE_NAMES.BLOCK_STACK_VOUCHER, LEGACY_BLOCK_STACK_VOUCHER_NAME] } },
+          },
+          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+          select: { id: true },
+        });
+
+        if (freeVoucher) {
+          await tx.lotteryDraw.update({
+            where: { id: freeVoucher.id },
+            data: {
+              status: LotteryStatus.USED,
+              consumeAt: now,
+              requestId: msg.id,
+              consumeAmount: START_COST,
+              consumeTargetId: msg.author.id,
+            },
+          });
+
+          const game = await tx.blockStackGame.create({
+            data: {
+              creatorId: msg.author.id,
+              channelId: msg.channel.id,
+              status: 'ACTIVE',
+              totalRevenue: START_COST,
+            },
+          });
+          return { status: 'ok' as const, game };
+        }
+
         await tx.member.upsert({
           where: { discordUserId: msg.author.id },
           create: { discordUserId: msg.author.id },

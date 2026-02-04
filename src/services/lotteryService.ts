@@ -17,6 +17,7 @@ const PITY_THRESHOLD = 149; // 150 抽保底（missCount >= 149 时强制特级�
 export const PRIZE_NAMES = {
   CAKE_VOUCHER: '小蛋糕代金券',
   LOTTERY_VOUCHER: '抽奖代金券',
+  BLOCK_STACK_VOUCHER: '积木游戏代金券',
   DISCOUNT_80: '8折券',
   RENAME_CARD_3: '3位数靓号卡',
   RENAME_CARD: '4位数靓号卡',
@@ -49,6 +50,7 @@ export const RENAME_CARD_NAMES: string[] = [
 const PRIZE_NAME_BY_KIND: Record<PrizeKind, string | null> = {
   CAKE_VOUCHER: PRIZE_NAMES.CAKE_VOUCHER,
   LOTTERY_VOUCHER: PRIZE_NAMES.LOTTERY_VOUCHER,
+  BLOCK_STACK_VOUCHER: PRIZE_NAMES.BLOCK_STACK_VOUCHER,
   DISCOUNT_80: PRIZE_NAMES.DISCOUNT_80,
   RENAME_CARD_3: PRIZE_NAMES.RENAME_CARD_3,
   RENAME_CARD: PRIZE_NAMES.RENAME_CARD,
@@ -76,6 +78,7 @@ const PRIZE_NAME_BY_KIND: Record<PrizeKind, string | null> = {
 export type PrizeKind =
   | 'CAKE_VOUCHER'
   | 'LOTTERY_VOUCHER'
+  | 'BLOCK_STACK_VOUCHER'
   | 'DISCOUNT_80'
   | 'RENAME_CARD_3'
   | 'RENAME_CARD'
@@ -137,6 +140,8 @@ export function classifyPrize(prizeName?: string | null): PrizeKind {
       return 'CAKE_VOUCHER';
     case PRIZE_NAMES.LOTTERY_VOUCHER:
       return 'LOTTERY_VOUCHER';
+    case PRIZE_NAMES.BLOCK_STACK_VOUCHER:
+      return 'BLOCK_STACK_VOUCHER';
     case PRIZE_NAMES.DISCOUNT_80:
       return 'DISCOUNT_80';
     case PRIZE_NAMES.RENAME_CARD_3:
@@ -188,6 +193,7 @@ const generateCode = (kind: PrizeKind): string => {
   const prefixMap: Record<PrizeKind, string> = {
     CAKE_VOUCHER: 'CAKE',
     LOTTERY_VOUCHER: 'DRAW',
+    BLOCK_STACK_VOUCHER: 'BSTACK',
     DISCOUNT_80: 'D80',
     RENAME_CARD_3: 'RENAME3',
     RENAME_CARD: 'RENAME',

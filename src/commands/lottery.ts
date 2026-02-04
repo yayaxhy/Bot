@@ -1,6 +1,6 @@
 import { EmbedBuilder, Message } from 'discord.js';
 import { LotteryPool } from '@prisma/client';
-import { DRAW_COST, LotteryError, POOL_LABEL, performLotteryDraw } from '../services/lotteryService.js';
+import { DRAW_COST, LotteryError, POOL_LABEL, PRIZE_NAMES, performLotteryDraw } from '../services/lotteryService.js';
 
 const LOTTERY_CMD_PATTERN = /^!抽奖$/;
 const LOTTERY_REVEAL_DELAY_MS = 3000; // 动画结束后再揭晓，毫秒
@@ -72,9 +72,14 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
 
   await wait(LOTTERY_REVEAL_DELAY_MS);
 
+  const revealLines = [`恭喜您抽到了${poolLabel}礼物：${prize.name}`];
+  if (prize.name === PRIZE_NAMES.BLOCK_STACK_VOUCHER) {
+    revealLines.push('使用方法：输入!抽积木消耗该代金券');
+  }
+
   const revealEmbed = new EmbedBuilder()
     .setTitle('开始抽奖！')
-    .setDescription(`恭喜您抽到了${poolLabel}礼物：${prize.name}`);
+    .setDescription(revealLines.join('\n'));
   if (poolColor) revealEmbed.setColor(poolColor);
   const prizeImage = prize.imageUrl ?? animationUrl;
   if (prizeImage) revealEmbed.setImage(prizeImage);
