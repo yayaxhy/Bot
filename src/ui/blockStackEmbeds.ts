@@ -12,7 +12,7 @@ export function calcBlockStackCollapseChance(totalBlocks: number): number {
 
   // <= 50: every 10 blocks +0.75%
   const tier1Blocks = Math.min(blocks, 50);
-  chance += Math.floor(tier1Blocks / 10) * 0.01;
+  chance += Math.floor(tier1Blocks / 10) * 0.015;
 
   // 50~100: every 5 blocks +0.75%
   if (blocks > 50) {
