@@ -71,7 +71,7 @@ function formatDrawLine(
   if (row.action === 'TEN') {
     return `😈 调皮的 ${label} 一次性抽出了 ${row.blocksAdded} 根积木`;
   }
-  return `🧱 ${label} 抽出 ${row.blocksAdded} 根积木`;
+  return `${label} 抽出 ${row.blocksAdded} 根积木`;
 }
 
 function buildCollapseSummaryLine(
@@ -295,7 +295,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       const reply = collapse.collapsed
         ? `哎呀塌啦！你抽出 ${blocks} 根，当前总数 ${totalBlocks}。`
         : `你抽出 ${blocks} 根积木，当前总数 ${totalBlocks}。`;
-      const actionLine = `🧱 ${actorLabel} 抽出 ${blocks} 根积木`;
+      const actionLine = `${actorLabel} 抽出 ${blocks} 根积木`;
       const collapseLine = collapse.collapsed
         ? `💥善良的 <@${actorId}> 抽出 ${blocks} 根积木导致积木塌方。`
         : null;

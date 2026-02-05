@@ -117,6 +117,7 @@ const computeVoucherConsumeAmount = (prizeName: string, unitPrice: Prisma.Decima
   return unitPrice.mul(discountRate);
 };
 const REF_RATE = new Prisma.Decimal(0.01);
+const REFERRAL_PAYOUT_CAP = new Prisma.Decimal(1000);
 
 /** Parse: "!打赏 3/liwu @UserB @UserC" or "!客服打赏 3/liwu @UserB @UserC" */
 function parseGiftingCommand(
@@ -213,6 +214,20 @@ async function grantReferralForGift(
     label: string;
   }): Promise<{ inviterId: string; amount: Prisma.Decimal } | null> => {
     if (amount.lte(0)) return null;
+
+    const paidSoFar = await tx.referralPayout.aggregate({
+      _sum: { amount: true },
+      where: {
+        referralId: referral.inviteeId,
+        referral: { inviterId: referral.inviterId },
+      },
+    });
+    const totalPaid = new Prisma.Decimal(paidSoFar._sum.amount ?? 0);
+    const remaining = REFERRAL_PAYOUT_CAP.sub(totalPaid);
+    if (remaining.lte(0)) return null;
+    if (amount.gt(remaining)) {
+      amount = remaining;
+    }
     try {
       await tx.referralPayout.create({
         data: {

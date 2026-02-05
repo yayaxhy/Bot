@@ -582,6 +582,7 @@ async function grantReferralCommission(
 ) {
   const { order, gross, netToWorker, endedAt } = ctx;
   const REF_RATE = new Prisma.Decimal(0.01);
+  const REFERRAL_PAYOUT_CAP = new Prisma.Decimal(1000);
 
   // helper to pay and log
   const payReferral = async ({
@@ -594,6 +595,20 @@ async function grantReferralCommission(
     baseLabel: string;
   }) => {
     if (amount.lte(0)) return;
+
+    const paidSoFar = await tx.referralPayout.aggregate({
+      _sum: { amount: true },
+      where: {
+        referralId: referral.inviteeId,
+        referral: { inviterId: referral.inviterId },
+      },
+    });
+    const totalPaid = new Prisma.Decimal(paidSoFar._sum.amount ?? 0);
+    const remaining = REFERRAL_PAYOUT_CAP.sub(totalPaid);
+    if (remaining.lte(0)) return;
+    if (amount.gt(remaining)) {
+      amount = remaining;
+    }
     try {
       await tx.referralPayout.create({
         data: {
