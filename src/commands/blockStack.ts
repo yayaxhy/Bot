@@ -35,6 +35,9 @@ export function registerBlockStackCommand(client: Client) {
         return;
       }
 
+      const mentionMatch = content.match(/<@!?(\d+)>/);
+      const targetCreatorId = mentionMatch?.[1] ?? msg.author.id;
+
       const result = await prisma.$transaction(async (tx) => {
         const now = new Date();
         await tx.lotteryDraw.updateMany({
@@ -72,7 +75,7 @@ export function registerBlockStackCommand(client: Client) {
 
           const game = await tx.blockStackGame.create({
             data: {
-              creatorId: msg.author.id,
+              creatorId: targetCreatorId,
               channelId: msg.channel.id,
               status: 'ACTIVE',
               totalRevenue: START_COST,
@@ -148,7 +151,7 @@ export function registerBlockStackCommand(client: Client) {
 
         const game = await tx.blockStackGame.create({
           data: {
-            creatorId: msg.author.id,
+            creatorId: targetCreatorId,
             channelId: msg.channel.id,
             status: 'ACTIVE',
             totalRevenue: START_COST,
