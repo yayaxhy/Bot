@@ -80,7 +80,9 @@ export function buildBlockStackEmbed(
       '可能导致塌方，变成随机红包雨掉落。\n' +
       '点击【捣蛋十连】，付费10锦鲤币化身小小捣蛋鬼\n' +
       '有机会拿走所有奖励！\n' +
-      '发起人可以点击【收菜结算】，落袋为安！'
+      '发起人可以点击【收菜结算】，落袋为安！\n'+
+      '\n' +
+      '发送 !抽积木 @对方 可以为TA开启游戏\n' 
     )
     .addFields(
       { name: '发起人', value: `<@${game.creatorId}>`, inline: true },
