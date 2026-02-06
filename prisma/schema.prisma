@@ -826,6 +826,7 @@ model BlockStackGame {
   collapseChance         Decimal? @db.Decimal(7, 4)
   collapseRoll           Decimal? @db.Decimal(7, 4)
   collapseEnvelopeAmount Decimal? @db.Decimal(19, 4)
+  collapseEnvelopeId     String?
 
   collapseRewardUserId   String?
   collapseRewardGross    Decimal? @db.Decimal(19, 4)
@@ -839,6 +840,7 @@ model BlockStackGame {
   draws   BlockStackDraw[]
 
   @@index([channelId, status])
+  @@index([collapseEnvelopeId])
 }
 
 model BlockStackPlayer {

@@ -935,6 +935,7 @@ export async function expireEnvelope(
         creatorId: true,
         status: true,
         expiresAt: true,
+        totalAmount: true,
         remainingAmount: true,
         incomePool: true,
         rechargePool: true,
@@ -961,6 +962,13 @@ export async function expireEnvelope(
         rechargePool: new Prisma.Decimal(0),
         refundedAmount: remainingAmount,
       },
+    });
+
+    const actualSent = asDecimal(envelope.totalAmount ?? 0).sub(remainingAmount);
+    const safeSent = actualSent.lt(0) ? new Prisma.Decimal(0) : actualSent;
+    await tx.blockStackGame.updateMany({
+      where: { collapseEnvelopeId: envelope.id },
+      data: { collapseEnvelopeAmount: safeSent },
     });
 
     if (remainingAmount.gt(0)) {

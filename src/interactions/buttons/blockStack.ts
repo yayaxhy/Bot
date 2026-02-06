@@ -549,6 +549,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         where: { id: game.id },
         data: {
           collapseEnvelopeAmount: envelope.totalAmount,
+          collapseEnvelopeId: envelope.id,
         },
       });
 
