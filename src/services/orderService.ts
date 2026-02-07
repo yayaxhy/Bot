@@ -560,7 +560,7 @@ async function settle(
     },
   });
 
-  // Referral commission: inviter of host (LAOBAN) earns 1% of gross; inviter of worker (PEIWAN) earns 1% of worker net
+  // Referral commission: inviter of host (LAOBAN) and inviter of worker (PEIWAN) both earn 1% of worker net
   await grantReferralCommission(tx, {
     order,
     gross,
@@ -657,13 +657,13 @@ async function grantReferralCommission(
     });
   };
 
-  // boss side
+  // boss side: 1% of worker net
   const bossReferral = await tx.referral.findUnique({
     where: { inviteeId: order.hostId },
     select: { inviterId: true, inviteeId: true, type: true },
   });
   if (bossReferral?.type === 'LAOBAN') {
-    const amount = round2(gross.mul(REF_RATE));
+    const amount = round2(netToWorker.mul(REF_RATE));
     await payReferral({
       referral: {
         inviterId: bossReferral.inviterId,

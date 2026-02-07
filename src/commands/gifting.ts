@@ -277,7 +277,7 @@ async function grantReferralForGift(
   let bossResult: { inviterId: string; amount: Prisma.Decimal } | null = null;
   let workerResult: { inviterId: string; amount: Prisma.Decimal } | null = null;
 
-  // Boss inviter: giver consumes, type=LAOBAN earns 1% of gross
+  // Boss inviter: type=LAOBAN earns 1% of receiver net
   const bossRef = await tx.referral.findUnique({
     where: { inviteeId: giverId },
     select: { inviterId: true, inviteeId: true, type: true },
@@ -285,12 +285,12 @@ async function grantReferralForGift(
   if (bossRef?.type === 'LAOBAN') {
     bossResult = await payReferral({
       referral: { inviterId: bossRef.inviterId, inviteeId: bossRef.inviteeId, type: 'LAOBAN' },
-      amount: gross.mul(REF_RATE),
+      amount: netToReceiver.mul(REF_RATE),
       label: '打赏老板1%',
     });
   }
 
-  // Peiwan inviter: receiver earns, type=PEIWAN earns 1% of netToReceiver
+  // Peiwan inviter: type=PEIWAN earns 1% of receiver net
   const pwRef = await tx.referral.findUnique({
     where: { inviteeId: receiverId },
     select: { inviterId: true, inviteeId: true, type: true },
