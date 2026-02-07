@@ -8,6 +8,7 @@ import {
 } from '../../ui/blockStackEmbeds.js';
 import { round2 } from '../../lib/money.js';
 import { splitIncomeRecharge } from '../../lib/balanceMath.js';
+import { isPityGame, markBlockStackGameEnded } from '../../services/blockStackPityState.js';
 import { recordIndividualTransaction } from '../../services/individualTransactionService.js';
 import { suppressRechargeNotifications } from '../../services/rechargeNotifyConfig.js';
 import {
@@ -23,6 +24,28 @@ const DRAW10_REVENUE = new Prisma.Decimal(10);
 const DRAW10_COST = new Prisma.Decimal(10);
 const MAX_ACTION_LINES = 50;
 
+const FIXED_SPIKE_BASE = 0.06;
+const FIXED_SPIKE_HIT = 0.1;
+
+const TIER_JUMP_T1 = 0.06;
+const TIER_JUMP_T2 = 0.1;
+const TIER_JUMP_T3 = 0.16;
+
+const SAFE_START_DRAW_COUNT = 9;
+const SAFE_START_AFTER_CHANCE = 0.1;
+const PRE_50_COLLAPSE_SCALE = 0.8;
+const POST_50_COLLAPSE_SCALE = 1.3;
+const PITY_UNDER_30_SCALE = 0.2;
+const PITY_31_TO_50_SCALE = 0.5;
+const PITY_OVER_50_SCALE = 0.8;
+const MIN_ENVELOPE_SEND_AMOUNT = new Prisma.Decimal(10);
+
+const UNIQUE_PLAYERS_BASE = 0.025;
+const UNIQUE_PLAYERS_STEP = 0.006;
+
+const RISK_DECAY_BASE = 0.03;
+const RISK_DECAY_STEP = 0.003;
+
 type ActionCacheEntry = {
   totalEntries: number;
   lines: string[];
@@ -30,6 +53,32 @@ type ActionCacheEntry = {
 const actionLineCache = new Map<string, ActionCacheEntry>();
 
 type ActionKind = 'draw1' | 'draw10' | 'settle';
+
+type CollapseAlgorithm =
+  | 'FIXED_SPIKE'
+  | 'TIER_JUMP'
+  | 'SAFE_START'
+  | 'UNIQUE_PLAYERS'
+  | 'RISK_DECAY'
+  | 'WAVE';
+
+const COLLAPSE_ALGOS: CollapseAlgorithm[] = [
+  'FIXED_SPIKE',
+  'TIER_JUMP',
+  'SAFE_START',
+  'UNIQUE_PLAYERS',
+  'RISK_DECAY',
+  'WAVE',
+];
+
+const COLLAPSE_ALGO_WEIGHTS: Record<CollapseAlgorithm, number> = {
+  WAVE: 2.5,
+  RISK_DECAY: 2,
+  UNIQUE_PLAYERS: 2,
+  SAFE_START: 1.5,
+  FIXED_SPIKE: 1,
+  TIER_JUMP: 1,
+};
 
 function parseCustomId(customId: string): { action: ActionKind; gameId: string } | null {
   const parts = customId.split(':');
@@ -40,10 +89,141 @@ function parseCustomId(customId: string): { action: ActionKind; gameId: string }
   return { action, gameId: parts[2] };
 }
 
-function rollCollapse(totalBlocks: number) {
-  const chance = calcBlockStackCollapseChance(totalBlocks);
+function hashSeed(input: string) {
+  let h = 2166136261;
+  for (let i = 0; i < input.length; i += 1) {
+    h ^= input.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function mulberry32(seed: number) {
+  return () => {
+    let t = (seed += 0x6d2b79f5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function seededRandom01(seed: string) {
+  const rand = mulberry32(hashSeed(seed));
+  return rand();
+}
+
+function clampChance(value: number, max = 0.3) {
+  if (value < 0) return 0;
+  return value > max ? max : value;
+}
+
+type CollapseContext = {
+  gameId: string;
+  totalBlocks: number;
+  drawCount: number;
+  uniquePlayers: number;
+  pityActive: boolean;
+};
+
+function calcRiskValue(gameId: string, drawCount: number) {
+  let risk = 0;
+  for (let i = 1; i <= drawCount; i += 1) {
+    const inc = 1 + Math.floor(seededRandom01(`${gameId}:risk:${i}`) * 4);
+    risk += inc;
+    if (i % 3 === 0) {
+      risk = Math.max(0, risk - 1);
+    }
+  }
+  return risk;
+}
+
+function calcWaveFactor(gameId: string, drawCount: number) {
+  const segment = Math.floor((Math.max(drawCount, 1) - 1) / 5);
+  const v = 0.6 + seededRandom01(`${gameId}:wave:${segment}`) * 0.2;
+  return v;
+}
+
+function calcCollapseChanceByAlgo(algo: CollapseAlgorithm, ctx: CollapseContext) {
+  const { gameId, totalBlocks, drawCount, uniquePlayers } = ctx;
+  switch (algo) {
+    case 'FIXED_SPIKE': {
+      const base = FIXED_SPIKE_BASE;
+      const spike = drawCount % 5 === 0 ? FIXED_SPIKE_HIT : base;
+      return clampChance(spike);
+    }
+    case 'TIER_JUMP': {
+      if (totalBlocks <= 50) return TIER_JUMP_T1;
+      if (totalBlocks <= 90) return TIER_JUMP_T2;
+      return TIER_JUMP_T3;
+    }
+    case 'SAFE_START': {
+      if (drawCount <= SAFE_START_DRAW_COUNT) return 0;
+      return SAFE_START_AFTER_CHANCE;
+    }
+    case 'UNIQUE_PLAYERS': {
+      const chance = UNIQUE_PLAYERS_BASE + uniquePlayers * UNIQUE_PLAYERS_STEP;
+      return clampChance(chance);
+    }
+    case 'RISK_DECAY': {
+      const risk = calcRiskValue(gameId, drawCount);
+      const chance = RISK_DECAY_BASE + risk * RISK_DECAY_STEP;
+      return clampChance(chance);
+    }
+    case 'WAVE': {
+      const base = calcBlockStackCollapseChance(totalBlocks);
+      const v = calcWaveFactor(gameId, drawCount);
+      return clampChance(base * v);
+    }
+    default:
+      return clampChance(calcBlockStackCollapseChance(totalBlocks));
+  }
+}
+
+function pickCollapseAlgorithm() {
+  const totalWeight = COLLAPSE_ALGOS.reduce(
+    (sum, algo) => sum + Math.max(0, COLLAPSE_ALGO_WEIGHTS[algo] ?? 0),
+    0
+  );
+  if (totalWeight <= 0) {
+    const idx = Math.floor(Math.random() * COLLAPSE_ALGOS.length);
+    return COLLAPSE_ALGOS[idx];
+  }
+  let roll = Math.random() * totalWeight;
+  for (const algo of COLLAPSE_ALGOS) {
+    roll -= Math.max(0, COLLAPSE_ALGO_WEIGHTS[algo] ?? 0);
+    if (roll <= 0) return algo;
+  }
+  return COLLAPSE_ALGOS[COLLAPSE_ALGOS.length - 1];
+}
+
+function rollCollapse(ctx: CollapseContext) {
+  const algo = pickCollapseAlgorithm();
+  const baseChance = calcCollapseChanceByAlgo(algo, ctx);
+  const scale = ctx.totalBlocks < 50 ? PRE_50_COLLAPSE_SCALE : POST_50_COLLAPSE_SCALE;
+  let chance = clampChance(baseChance * scale);
+  if (ctx.pityActive) {
+    if (ctx.totalBlocks <= 30) {
+      chance = clampChance(chance * PITY_UNDER_30_SCALE);
+    } else if (ctx.totalBlocks <= 50) {
+      chance = clampChance(chance * PITY_31_TO_50_SCALE);
+    } else {
+      chance = clampChance(chance * PITY_OVER_50_SCALE);
+    }
+  }
   const roll = Math.random();
-  return { chance, roll, collapsed: roll < chance };
+  return { chance, roll, collapsed: roll < chance, algo };
+}
+
+function calcCollapseEnvelopeAmount(totalBlocks: number) {
+  let ratio = DEC(0.3).add(DEC(Math.random()).mul(DEC(0.1)));
+  if (totalBlocks < 25) {
+    ratio = DEC(0.5);
+  } else if (totalBlocks <= 30) {
+    ratio = DEC(0.41);
+  }
+  const amount = round2(DEC(totalBlocks).mul(ratio));
+  if (amount.lt(MIN_ENVELOPE_SEND_AMOUNT)) return null;
+  return amount;
 }
 
 function resolveDisplayName(name?: string | null, fallback?: string | null) {
@@ -192,6 +372,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
     const game = await tx.blockStackGame.findUnique({ where: { id: gameId } });
     if (!game) return { status: 'not_found' as const };
     if (game.status !== 'ACTIVE') return { status: 'ended' as const, game };
+    const pityActive = isPityGame(gameId);
 
     if (action === 'settle') {
       if (game.creatorId !== actorId) {
@@ -272,7 +453,15 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       });
 
       const totalBlocks = game.totalBlocks + blocks;
-      const collapse = rollCollapse(totalBlocks);
+      const drawCount = game.totalSingleDraws + game.totalTenDraws + 1;
+      const uniquePlayers = await tx.blockStackPlayer.count({ where: { gameId } });
+      const collapse = rollCollapse({
+        gameId,
+        totalBlocks,
+        drawCount,
+        uniquePlayers,
+        pityActive,
+      });
 
       const updatedGame = await tx.blockStackGame.update({
         where: { id: gameId },
@@ -368,9 +557,23 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       typeOfTransaction: '积木捣蛋鬼',
     });
 
+    await tx.blockStackPlayer.upsert({
+      where: { gameId_userId: { gameId, userId: actorId } },
+      create: { gameId, userId: actorId },
+      update: {},
+    });
+
     const blocks = 10;
     const totalBlocks = game.totalBlocks + blocks;
-    const collapse = rollCollapse(totalBlocks);
+    const drawCount = game.totalSingleDraws + game.totalTenDraws + 1;
+    const uniquePlayers = await tx.blockStackPlayer.count({ where: { gameId } });
+    const collapse = rollCollapse({
+      gameId,
+      totalBlocks,
+      drawCount,
+      uniquePlayers,
+      pityActive,
+    });
 
     let reward: {
       userId: string;
@@ -501,6 +704,16 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
   }
 
   const game = (result as any).game as any;
+  if (result.status === 'settled' && game?.id) {
+    markBlockStackGameEnded(game.id, 'SETTLED');
+  }
+  if ((result as any).status === 'ok' && (result as any).collapsed && game?.id) {
+    if (game.collapsedByAction === 'TEN') {
+      markBlockStackGameEnded(game.id, 'COLLAPSED_TEN');
+    } else {
+      markBlockStackGameEnded(game.id, 'COLLAPSED_SINGLE');
+    }
+  }
   if (game && i.message && 'edit' in i.message) {
     const additions: string[] = [];
     if ((result as any).actionLine) additions.push((result as any).actionLine);
@@ -530,10 +743,10 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
 
   if ((result as any).needsEnvelope && game) {
     try {
-      const ratio = round2(DEC(0.3).add(DEC(Math.random()).mul(DEC(0.1))));
-      const rawAmount = round2(DEC(game.totalBlocks).mul(ratio));
-      const minAmount = DEC(10);
-      const totalAmount = rawAmount.lt(minAmount) ? minAmount : rawAmount;
+      const totalAmount = calcCollapseEnvelopeAmount(game.totalBlocks);
+      if (!totalAmount) {
+        return;
+      }
       const envelope = await createSystemRedEnvelope(
         {
           creatorId: systemId,

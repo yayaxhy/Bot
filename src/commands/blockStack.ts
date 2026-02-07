@@ -5,6 +5,7 @@ import path from 'node:path';
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { consumeSpendBuff } from '../services/buffService.js';
+import { consumePityForNewGame } from '../services/blockStackPityState.js';
 import { recordIndividualTransaction } from '../services/individualTransactionService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 import {
@@ -166,6 +167,7 @@ export function registerBlockStackCommand(client: Client) {
       }
 
       const game = result.game!;
+      consumePityForNewGame(game.id);
       const embed = buildBlockStackEmbed(game);
       const components = buildBlockStackComponents(game);
       const files = fs.existsSync(BOT_AVATAR_PATH)
