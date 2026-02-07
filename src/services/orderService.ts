@@ -632,7 +632,7 @@ async function grantReferralCommission(
       where: { discordUserId: referral.inviterId },
       create: { discordUserId: referral.inviterId },
       update: {},
-      select: { totalBalance: true, income: true, recharge: true },
+      select: { totalBalance: true, recharge: true },
     });
 
     const balanceBefore = new Prisma.Decimal(inviter.totalBalance ?? 0);
@@ -641,7 +641,7 @@ async function grantReferralCommission(
     await tx.member.update({
       where: { discordUserId: referral.inviterId },
       data: {
-        income: { increment: amount },
+        recharge: { increment: amount },
         totalBalance: { increment: amount },
       },
     });

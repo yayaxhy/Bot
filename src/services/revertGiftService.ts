@@ -223,19 +223,19 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
         where: { discordUserId: audit.bossReferralInviterId },
         create: { discordUserId: audit.bossReferralInviterId },
         update: {},
-        select: { totalBalance: true, income: true },
+        select: { totalBalance: true, recharge: true },
       });
 
       const inviterBalanceBefore = DEC(inviter.totalBalance ?? 0);
-      const inviterIncomeBefore = DEC(inviter.income ?? 0);
+      const inviterRechargeBefore = DEC(inviter.recharge ?? 0);
       const inviterBalanceAfter = inviterBalanceBefore.sub(amt);
-      const inviterIncomeAfter = inviterIncomeBefore.sub(amt);
+      const inviterRechargeAfter = inviterRechargeBefore.sub(amt);
 
       await tx.member.update({
         where: { discordUserId: audit.bossReferralInviterId },
         data: {
           totalBalance: inviterBalanceAfter,
-          income: inviterIncomeAfter,
+          recharge: inviterRechargeAfter,
         },
       });
 
@@ -260,19 +260,19 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
         where: { discordUserId: audit.workerReferralInviterId },
         create: { discordUserId: audit.workerReferralInviterId },
         update: {},
-        select: { totalBalance: true, income: true },
+        select: { totalBalance: true, recharge: true },
       });
 
       const inviterBalanceBefore = DEC(inviter.totalBalance ?? 0);
-      const inviterIncomeBefore = DEC(inviter.income ?? 0);
+      const inviterRechargeBefore = DEC(inviter.recharge ?? 0);
       const inviterBalanceAfter = inviterBalanceBefore.sub(amt);
-      const inviterIncomeAfter = inviterIncomeBefore.sub(amt);
+      const inviterRechargeAfter = inviterRechargeBefore.sub(amt);
 
       await tx.member.update({
         where: { discordUserId: audit.workerReferralInviterId },
         data: {
           totalBalance: inviterBalanceAfter,
-          income: inviterIncomeAfter,
+          recharge: inviterRechargeAfter,
         },
       });
 

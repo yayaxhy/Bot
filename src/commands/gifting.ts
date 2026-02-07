@@ -256,7 +256,7 @@ async function grantReferralForGift(
     await tx.member.update({
       where: { discordUserId: referral.inviterId },
       data: {
-        income: { increment: amount },
+        recharge: { increment: amount },
         totalBalance: { increment: amount },
       },
     });
