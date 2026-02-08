@@ -1,0 +1,2 @@
+ALTER TABLE "ScratchTicket"
+DROP COLUMN IF EXISTS "soldAt";

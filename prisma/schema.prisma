@@ -147,6 +147,7 @@ model Member {
   // Lottery draws
   lotteryDraws LotteryDraw[]
   lotteryPity  LotteryPity?
+  scratchTickets ScratchTicket[] @relation("ScratchTicketOwner")
 
   // Gift wall unlocks/rewards
   giftUnlocks      PeiwanGiftUnlock[]
@@ -771,6 +772,26 @@ enum BlockStackAction {
   SETTLE
 }
 
+enum ScratchTicketStatus {
+  UNSOLD
+  SOLD
+  REVEALED
+}
+
+enum ScratchPrizeType {
+  THANKS
+  P5
+  P10
+  P20
+  P30
+  P50
+  P52
+  P100
+  P150
+  P99
+  P200
+}
+
 enum ReferralType {
   LAOBAN
   PEIWAN
@@ -870,6 +891,25 @@ model BlockStackDraw {
 
   @@index([gameId, createdAt])
   @@index([userId, createdAt])
+}
+
+model ScratchTicket {
+  id                    String              @id @default(cuid())
+  code                  String              @unique
+  serialNo              Int                 @unique
+  status                ScratchTicketStatus @default(UNSOLD)
+  prizeType             ScratchPrizeType
+  prizeAmount           Decimal             @default(0) @db.Decimal(19, 4)
+  ownerId               String?
+  revealedAt            DateTime?
+  revealMessageId       String?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  owner Member? @relation("ScratchTicketOwner", fields: [ownerId], references: [discordUserId], onDelete: SetNull)
+
+  @@index([status, serialNo])
+  @@index([ownerId, status])
 }
 
 model Revert {

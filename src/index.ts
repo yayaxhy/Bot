@@ -12,6 +12,7 @@ import { handleAcceptOrder } from './interactions/buttons/acceptOrder.js';
 import { handleDeclineOrder } from './interactions/buttons/declineOrder.js';
 import { handleEndOrderButton } from './interactions/buttons/endOrder.js';
 import { handleBlockStackButton } from './interactions/buttons/blockStack.js';
+import { handleScratchRevealButton } from './interactions/buttons/scratch.js';
 import { handleGiftingSelect } from './interactions/selects/giftingSelect.js';
 import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
@@ -26,6 +27,12 @@ import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
 import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
 import { registerBalanceCommands } from './commands/balanceCommands.js';
 import { registerBlockStackCommand } from './commands/blockStack.js';
+import { registerScratchCommand } from './commands/scratch.js';
+import {
+  handleScratchStockButton,
+  handleScratchStockSlash,
+  scratchStockCommand,
+} from './commands/scratchStockSlash.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
@@ -193,10 +200,22 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleGiftSlash(i);
                 return;
             }
+            if (i.commandName === '刮刮乐库存') {
+                await handleScratchStockSlash(i);
+                return;
+            }
         }
 
     // Buttons
     if (i.isButton()) {
+      if (i.customId?.startsWith('scratchstock:go:')) {
+        await handleScratchStockButton(i);
+        return;
+      }
+      if (i.customId?.startsWith('scratch:reveal:')) {
+        await handleScratchRevealButton(i);
+        return;
+      }
       if (i.customId?.startsWith('blockstack:')) {
         await handleBlockStackButton(i);
         return;
@@ -256,6 +275,7 @@ client.once(Events.ClientReady, async () => {
   registerCashCommand(client, prisma);
   registerBalanceCommands(client);
   registerBlockStackCommand(client);
+  registerScratchCommand(client);
   registerTotalEarnCommand(client, prisma);
   registerTotalSpentCommand(client, prisma);
   try {
@@ -268,6 +288,7 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(revertGiftCommand);
             await client.application.commands.create(bulkDmCommand);
             await client.application.commands.create(giftSlashCommand);
+            await client.application.commands.create(scratchStockCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);
