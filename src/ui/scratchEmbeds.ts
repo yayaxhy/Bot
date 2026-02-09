@@ -52,6 +52,12 @@ export function buildScratchPendingEmbed(params: {
     .setDescription(`花费了${params.amount}，获得了 ${params.code} 号刮刮乐`)
     .addFields(
       { name: '购卡用户', value: `<@${params.buyerId}>`, inline: true },
+      {
+        name: '购买方式',
+        value:
+          '输入 !刮刮乐 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
+        inline: false,
+      },
       { name: '操作', value: '点击下方按钮进行刮开', inline: false },
     );
 }
@@ -85,6 +91,12 @@ export function buildScratchRevealedEmbed(params: {
     );
 
   embed.addFields({ name: '购卡用户', value: `<@${params.buyerId}>`, inline: true });
+  embed.addFields({
+    name: '购买方式',
+    value:
+      '输入 !刮刮乐 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
+    inline: false,
+  });
 
   return embed;
 }
