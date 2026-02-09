@@ -51,6 +51,20 @@ type ActionCacheEntry = {
   lines: string[];
 };
 const actionLineCache = new Map<string, ActionCacheEntry>();
+const uniquePlayerCountCache = new Map<string, number>();
+
+type EditableMessage = {
+  content: string;
+  edit: (payload: any) => Promise<unknown>;
+};
+
+type PendingRenderState = {
+  game: any;
+  message: EditableMessage;
+  content: string;
+  timer: NodeJS.Timeout;
+};
+const pendingRenderByGame = new Map<string, PendingRenderState>();
 
 type ActionKind = 'draw1' | 'draw10' | 'settle';
 
@@ -280,6 +294,10 @@ function setActionCache(gameId: string, entry: ActionCacheEntry) {
   });
 }
 
+function isEditableMessage(message: any): message is EditableMessage {
+  return !!message && typeof message.edit === 'function';
+}
+
 function appendActionCache(gameId: string, additions: string[]) {
   if (!additions.length) return;
   const current = actionLineCache.get(gameId) ?? { totalEntries: 0, lines: [] };
@@ -338,6 +356,50 @@ async function getActionLinesForDisplay(game: any, additions?: string[]) {
     entry = actionLineCache.get(game.id)!;
   }
   return materializeDisplayLines(entry);
+}
+
+async function resolveUniquePlayersCount(
+  tx: Prisma.TransactionClient,
+  gameId: string,
+  isNewPlayer: boolean
+) {
+  const cached = uniquePlayerCountCache.get(gameId);
+  if (cached !== undefined) {
+    return isNewPlayer ? cached + 1 : cached;
+  }
+  return tx.blockStackPlayer.count({ where: { gameId } });
+}
+
+async function renderGameMessageNow(game: any, message: EditableMessage, content: string) {
+  const actionLines = await getActionLinesForDisplay(game);
+  const embed = buildBlockStackEmbed(game, { actionLines });
+  const components = buildBlockStackComponents(game);
+  await message.edit({ embeds: [embed], components, content }).catch(() => {});
+  if (game?.id && game.status !== 'ACTIVE') {
+    uniquePlayerCountCache.delete(game.id);
+    actionLineCache.delete(game.id);
+  }
+}
+
+function queueGameMessageRender(game: any, message: EditableMessage, content: string) {
+  const existing = pendingRenderByGame.get(game.id);
+  if (existing) {
+    existing.game = game;
+    existing.message = message;
+    existing.content = content;
+    return;
+  }
+
+  const state: PendingRenderState = {
+    game,
+    message,
+    content,
+    timer: setTimeout(() => {
+      pendingRenderByGame.delete(game.id);
+      void renderGameMessageNow(state.game, state.message, state.content);
+    }, 120),
+  };
+  pendingRenderByGame.set(game.id, state);
 }
 
 async function updatePeiwanBalance(
@@ -454,7 +516,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
 
       const totalBlocks = game.totalBlocks + blocks;
       const drawCount = game.totalSingleDraws + game.totalTenDraws + 1;
-      const uniquePlayers = await tx.blockStackPlayer.count({ where: { gameId } });
+      const uniquePlayers = await resolveUniquePlayersCount(tx, gameId, !player);
       const collapse = rollCollapse({
         gameId,
         totalBlocks,
@@ -501,6 +563,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         actionLine,
         collapseLine,
         actionMessage,
+        uniquePlayers,
       };
     }
 
@@ -557,6 +620,11 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       typeOfTransaction: '积木捣蛋鬼',
     });
 
+    const existingPlayer = await tx.blockStackPlayer.findUnique({
+      where: { gameId_userId: { gameId, userId: actorId } },
+      select: { userId: true },
+    });
+
     await tx.blockStackPlayer.upsert({
       where: { gameId_userId: { gameId, userId: actorId } },
       create: { gameId, userId: actorId },
@@ -566,7 +634,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
     const blocks = 10;
     const totalBlocks = game.totalBlocks + blocks;
     const drawCount = game.totalSingleDraws + game.totalTenDraws + 1;
-    const uniquePlayers = await tx.blockStackPlayer.count({ where: { gameId } });
+    const uniquePlayers = await resolveUniquePlayersCount(tx, gameId, !existingPlayer);
     const collapse = rollCollapse({
       gameId,
       totalBlocks,
@@ -686,6 +754,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       collapseLine,
       actionMessage,
       reward,
+      uniquePlayers,
     };
   });
 
@@ -714,17 +783,18 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       markBlockStackGameEnded(game.id, 'COLLAPSED_SINGLE');
     }
   }
-  if (game && i.message && 'edit' in i.message) {
+  if (game?.id && typeof (result as any).uniquePlayers === 'number') {
+    uniquePlayerCountCache.set(game.id, (result as any).uniquePlayers);
+  }
+  if (game && isEditableMessage(i.message)) {
     const additions: string[] = [];
     if ((result as any).actionLine) additions.push((result as any).actionLine);
     if ((result as any).collapseLine) additions.push((result as any).collapseLine);
     if ((result as any).settleLine) additions.push((result as any).settleLine);
-    const actionLines = await getActionLinesForDisplay(game, additions);
-    const embed = buildBlockStackEmbed(game, { actionLines });
-    const components = buildBlockStackComponents(game);
+    if (additions.length) appendActionCache(game.id, additions);
     const actionMessage = (result as any).actionMessage;
     const content = actionMessage ? `${actionMessage}` : i.message.content;
-    await i.message.edit({ embeds: [embed], components, content }).catch(() => {});
+    queueGameMessageRender(game, i.message, content);
   }
 
   if ((result as any).status === 'settled') {
@@ -745,6 +815,10 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
     try {
       const totalAmount = calcCollapseEnvelopeAmount(game.totalBlocks);
       if (!totalAmount) {
+        const channel = await i.client.channels.fetch(game.channelId).catch(() => null);
+        if (channel && channel.isTextBased() && typeof (channel as any).send === 'function') {
+          await (channel as any).send('层数不足，没法撒钱').catch(() => {});
+        }
         return;
       }
       const envelope = await createSystemRedEnvelope(
@@ -798,15 +872,13 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
 
       const updated = await prisma.blockStackGame.findUnique({ where: { id: game.id } });
 
-      if (updated && i.message && 'edit' in i.message) {
-        const actionLines = await getActionLinesForDisplay(updated);
-        const embed = buildBlockStackEmbed(updated, { actionLines });
-        const components = buildBlockStackComponents(updated);
+      if (updated && isEditableMessage(i.message)) {
         const content = i.message.content;
-        await i.message.edit({ embeds: [embed], components, content }).catch(() => {});
+        queueGameMessageRender(updated, i.message, content);
       }
     } catch (err) {
       console.error('[block-stack] create envelope failed:', err);
     }
   }
+
 }

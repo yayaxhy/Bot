@@ -60,9 +60,9 @@ const PRIZE_CONFIGS: PrizeConfig[] = [
   },
   {
     type: ScratchPrizeType.P200,
-    amount: DEC(200),
+    amount: DEC(150),
     probability: 0.01,
-    label: '200',
+    label: '150',
   },
 ];
 
