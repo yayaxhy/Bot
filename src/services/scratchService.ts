@@ -9,7 +9,7 @@ const DEC = (value: Prisma.Decimal | number | string) =>
 const SCRATCH_SEED_LOCK_KEY = 180208601;
 const SCRATCH_DEFAULT_TOTAL_TICKETS = 1000;
 const SCRATCH_THANKS_TO_UNLOCK_P200_DEFAULT = 10;
-export const SCRATCH_TICKET_PRICE = new Prisma.Decimal(29);
+export const SCRATCH_TICKET_PRICE = new Prisma.Decimal(19);
 export const SCRATCH_SYSTEM_ID = process.env.SCRATCH_SYSTEM_ID ?? 'scratch-system';
 let scratchRandomThanksCount = 0;
 let scratchPityLock: Promise<void> = Promise.resolve();
@@ -25,43 +25,43 @@ const PRIZE_CONFIGS: PrizeConfig[] = [
   {
     type: ScratchPrizeType.THANKS,
     amount: DEC(0),
-    probability: 0.23,
+    probability: 0.31,
     label: '谢谢惠顾',
   },
   {
     type: ScratchPrizeType.P5,
     amount: DEC(5),
-    probability: 0.23,
+    probability: 0.32,
     label: '5',
   },
   {
     type: ScratchPrizeType.P20,
     amount: DEC(20),
-    probability: 0.22,
+    probability: 0.17,
     label: '20',
   },
   {
     type: ScratchPrizeType.P30,
     amount: DEC(30),
-    probability: 0.18,
+    probability: 0.1,
     label: '30',
   },
   {
     type: ScratchPrizeType.P50,
     amount: DEC(50),
-    probability: 0.09,
+    probability: 0.08,
     label: '50',
   },
   {
     type: ScratchPrizeType.P99,
     amount: DEC(99),
-    probability: 0.04,
+    probability: 0.015,
     label: '99',
   },
   {
     type: ScratchPrizeType.P200,
     amount: DEC(150),
-    probability: 0.01,
+    probability: 0.005,
     label: '150',
   },
 ];

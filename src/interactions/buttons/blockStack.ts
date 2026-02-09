@@ -673,7 +673,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       await tx.member.update({
         where: { discordUserId: actorId },
         data: {
-          recharge: { increment: net },
+          income: { increment: net },
           totalBalance: { increment: net },
         },
       });
