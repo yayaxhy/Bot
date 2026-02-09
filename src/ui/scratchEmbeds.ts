@@ -55,7 +55,7 @@ export function buildScratchPendingEmbed(params: {
       {
         name: '购买方式',
         value:
-          '输入 !刮刮乐 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
+          '输入 !刮刮乐（随机一张） 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
         inline: false,
       },
       { name: '操作', value: '点击下方按钮进行刮开', inline: false },
@@ -94,7 +94,7 @@ export function buildScratchRevealedEmbed(params: {
   embed.addFields({
     name: '购买方式',
     value:
-      '输入 !刮刮乐 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
+      '输入 !刮刮乐（随机一张） 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
     inline: false,
   });
 
