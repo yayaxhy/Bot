@@ -196,13 +196,16 @@ async function grantReferralForGift(
   params: {
     giverId: string;
     receiverId: string;
-    gross: Prisma.Decimal;
     netToReceiver: Prisma.Decimal;
+    actualPaid: Prisma.Decimal;
     txOrderId: number;
     at: Date;
   }
 ) {
-  const { giverId, receiverId, gross, netToReceiver, txOrderId, at } = params;
+  const { giverId, receiverId, netToReceiver, actualPaid, txOrderId, at } = params;
+  if (actualPaid.lte(0)) {
+    return { boss: null, worker: null };
+  }
 
   const payReferral = async ({
     referral,
@@ -712,8 +715,8 @@ export async function performGift(
     const referralResult = await grantReferralForGift(tx, {
       giverId,
       receiverId,
-      gross,
       netToReceiver: netAmount,
+      actualPaid: payable,
       txOrderId: txRow.orderID,
       at: now,
     });
