@@ -812,73 +812,77 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
   }
 
   if ((result as any).needsEnvelope && game) {
-    try {
-      const totalAmount = calcCollapseEnvelopeAmount(game.totalBlocks);
-      if (!totalAmount) {
-        const channel = await i.client.channels.fetch(game.channelId).catch(() => null);
-        if (channel && channel.isTextBased() && typeof (channel as any).send === 'function') {
-          await (channel as any).send('层数不足，没法撒钱').catch(() => {});
-        }
-        return;
-      }
-      const envelope = await createSystemRedEnvelope(
-        {
-          creatorId: systemId,
-          totalAmount,
-          count: 20,
-          note: '积木塌掉红包',
-          channelId: game.channelId,
-        },
-        prisma
-      );
-
-      await prisma.blockStackGame.update({
-        where: { id: game.id },
-        data: {
-          collapseEnvelopeAmount: envelope.totalAmount,
-          collapseEnvelopeId: envelope.id,
-        },
-      });
-
-      const channel = await i.client.channels.fetch(game.channelId).catch(() => null);
-      if (!channel || !channel.isTextBased()) return;
-
-      const payload = buildRedEnvelopeMessagePayload({
-        id: envelope.id,
-        creatorId: envelope.creatorId,
-        totalAmount: envelope.totalAmount,
-        totalCount: envelope.totalCount,
-        remainingCount: envelope.remainingCount,
-        status: envelope.status,
-        expiresAt: envelope.expiresAt,
-        note: envelope.note ?? undefined,
-        refundedAmount: envelope.refundedAmount ?? undefined,
-      });
-
-      if (!channel || typeof (channel as any).send !== 'function') return;
-      const sent = await (channel as any).send({ ...payload });
-      await bindEnvelopeMessage(envelope.id, { messageId: sent.id, channelId: sent.channelId }, prisma);
-
+    const gameId = game.id;
+    const gameChannelId = game.channelId;
+    const messageRef = isEditableMessage(i.message) ? i.message : null;
+    void (async () => {
       try {
-        await sent.react(CLAIM_EMOJI_REACTION);
-      } catch (reactErr) {
-        console.error('[block-stack] add reaction failed:', reactErr);
+        const totalAmount = calcCollapseEnvelopeAmount(game.totalBlocks);
+        if (!totalAmount) {
+          const channel = await i.client.channels.fetch(gameChannelId).catch(() => null);
+          if (channel && channel.isTextBased() && typeof (channel as any).send === 'function') {
+            await (channel as any).send('层数不足，没法撒钱').catch(() => {});
+          }
+          return;
+        }
+        const envelope = await createSystemRedEnvelope(
+          {
+            creatorId: systemId,
+            totalAmount,
+            count: 20,
+            note: '积木塌掉红包',
+            channelId: gameChannelId,
+          },
+          prisma
+        );
+
+        await prisma.blockStackGame.update({
+          where: { id: gameId },
+          data: {
+            collapseEnvelopeAmount: envelope.totalAmount,
+            collapseEnvelopeId: envelope.id,
+          },
+        });
+
+        const channel = await i.client.channels.fetch(gameChannelId).catch(() => null);
+        if (!channel || !channel.isTextBased()) return;
+
+        const payload = buildRedEnvelopeMessagePayload({
+          id: envelope.id,
+          creatorId: envelope.creatorId,
+          totalAmount: envelope.totalAmount,
+          totalCount: envelope.totalCount,
+          remainingCount: envelope.remainingCount,
+          status: envelope.status,
+          expiresAt: envelope.expiresAt,
+          note: envelope.note ?? undefined,
+          refundedAmount: envelope.refundedAmount ?? undefined,
+        });
+
+        if (!channel || typeof (channel as any).send !== 'function') return;
+        const sent = await (channel as any).send({ ...payload });
+        await bindEnvelopeMessage(envelope.id, { messageId: sent.id, channelId: sent.channelId }, prisma);
+
+        try {
+          await sent.react(CLAIM_EMOJI_REACTION);
+        } catch (reactErr) {
+          console.error('[block-stack] add reaction failed:', reactErr);
+        }
+
+        scheduleRedEnvelopeExpiration((globalThis as any).__CLIENT__ ?? i.client, {
+          id: envelope.id,
+          expiresAt: envelope.expiresAt,
+        });
+
+        const updated = await prisma.blockStackGame.findUnique({ where: { id: gameId } });
+        if (updated && messageRef) {
+          const content = messageRef.content;
+          queueGameMessageRender(updated, messageRef, content);
+        }
+      } catch (err) {
+        console.error('[block-stack] create envelope failed:', err);
       }
-
-      scheduleRedEnvelopeExpiration((globalThis as any).__CLIENT__ ?? i.client, {
-        id: envelope.id,
-        expiresAt: envelope.expiresAt,
-      });
-
-      const updated = await prisma.blockStackGame.findUnique({ where: { id: game.id } });
-
-      if (updated && isEditableMessage(i.message)) {
-        const content = i.message.content;
-        queueGameMessageRender(updated, i.message, content);
-      }
-    } catch (err) {
-      console.error('[block-stack] create envelope failed:', err);
-    }
+    })();
   }
 
 }
