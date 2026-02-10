@@ -74,7 +74,8 @@ type CollapseAlgorithm =
   | 'SAFE_START'
   | 'UNIQUE_PLAYERS'
   | 'RISK_DECAY'
-  | 'WAVE';
+  | 'WAVE'
+  | 'FORCE_UNDER_70';
 
 const COLLAPSE_ALGOS: CollapseAlgorithm[] = [
   'FIXED_SPIKE',
@@ -83,6 +84,7 @@ const COLLAPSE_ALGOS: CollapseAlgorithm[] = [
   'UNIQUE_PLAYERS',
   'RISK_DECAY',
   'WAVE',
+  'FORCE_UNDER_70',
 ];
 
 const COLLAPSE_ALGO_WEIGHTS: Record<CollapseAlgorithm, number> = {
@@ -92,6 +94,7 @@ const COLLAPSE_ALGO_WEIGHTS: Record<CollapseAlgorithm, number> = {
   SAFE_START: 1.5,
   FIXED_SPIKE: 1,
   TIER_JUMP: 1,
+  FORCE_UNDER_70: 1,
 };
 
 function parseCustomId(customId: string): { action: ActionKind; gameId: string } | null {
@@ -188,6 +191,8 @@ function calcCollapseChanceByAlgo(algo: CollapseAlgorithm, ctx: CollapseContext)
       const v = calcWaveFactor(gameId, drawCount);
       return clampChance(base * v);
     }
+    case 'FORCE_UNDER_70':
+      return 0;
     default:
       return clampChance(calcBlockStackCollapseChance(totalBlocks));
   }
@@ -212,6 +217,11 @@ function pickCollapseAlgorithm() {
 
 function rollCollapse(ctx: CollapseContext) {
   const algo = pickCollapseAlgorithm();
+  if (algo === 'FORCE_UNDER_70') {
+    const chance = ctx.totalBlocks >= 70 ? 1 : 0;
+    const roll = Math.random();
+    return { chance, roll, collapsed: roll < chance, algo };
+  }
   const baseChance = calcCollapseChanceByAlgo(algo, ctx);
   const scale = ctx.totalBlocks < 50 ? PRE_50_COLLAPSE_SCALE : POST_50_COLLAPSE_SCALE;
   let chance = clampChance(baseChance * scale);

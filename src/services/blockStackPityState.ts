@@ -1,6 +1,6 @@
 type EndKind = 'SETTLED' | 'COLLAPSED_SINGLE' | 'COLLAPSED_TEN';
 
-const STREAK_TRIGGER = 3;
+const STREAK_TRIGGER = 4;
 
 let nonPrankCollapseStreak = 0;
 let pityTokens = 0;
