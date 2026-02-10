@@ -63,8 +63,57 @@ type PendingRenderState = {
   message: EditableMessage;
   content: string;
   timer: NodeJS.Timeout;
+  resolvers: Array<() => void>;
 };
 const pendingRenderByGame = new Map<string, PendingRenderState>();
+
+const ENVELOPE_SEND_TIMEOUT_MS = 8000;
+const ENVELOPE_SEND_INTERVAL_MS = 0;
+const ENVELOPE_SEND_MAX_RETRIES = 2;
+const envelopeQueue: Array<{ run: () => Promise<void>; retries: number }> = [];
+let envelopeQueueRunning = false;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function runWithTimeout<T>(task: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('envelope_send_timeout')), ms);
+    });
+    return await Promise.race([task, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function enqueueEnvelopeTask(run: () => Promise<void>, retries = 0) {
+  envelopeQueue.push({ run, retries });
+  if (!envelopeQueueRunning) {
+    void processEnvelopeQueue();
+  }
+}
+
+async function processEnvelopeQueue() {
+  if (envelopeQueueRunning) return;
+  envelopeQueueRunning = true;
+  while (envelopeQueue.length > 0) {
+    const task = envelopeQueue.shift()!;
+    try {
+      await runWithTimeout(task.run(), ENVELOPE_SEND_TIMEOUT_MS);
+    } catch (err: any) {
+      if (err?.message === 'envelope_send_timeout' && task.retries < ENVELOPE_SEND_MAX_RETRIES) {
+        envelopeQueue.push({ run: task.run, retries: task.retries + 1 });
+      } else {
+        console.error('[block-stack] envelope send failed:', err);
+      }
+    }
+    if (envelopeQueue.length > 0) {
+      await sleep(ENVELOPE_SEND_INTERVAL_MS);
+    }
+  }
+  envelopeQueueRunning = false;
+}
 
 type ActionKind = 'draw1' | 'draw10' | 'settle';
 
@@ -381,6 +430,7 @@ async function resolveUniquePlayersCount(
 }
 
 async function renderGameMessageNow(game: any, message: EditableMessage, content: string) {
+  await message.edit({ content }).catch(() => {});
   const actionLines = await getActionLinesForDisplay(game);
   const embed = buildBlockStackEmbed(game, { actionLines });
   const components = buildBlockStackComponents(game);
@@ -391,12 +441,14 @@ async function renderGameMessageNow(game: any, message: EditableMessage, content
   }
 }
 
-function queueGameMessageRender(game: any, message: EditableMessage, content: string) {
+function queueGameMessageRender(game: any, message: EditableMessage, content: string): Promise<void> {
+  return new Promise((resolve) => {
   const existing = pendingRenderByGame.get(game.id);
   if (existing) {
     existing.game = game;
     existing.message = message;
     existing.content = content;
+    existing.resolvers.push(resolve);
     return;
   }
 
@@ -404,12 +456,16 @@ function queueGameMessageRender(game: any, message: EditableMessage, content: st
     game,
     message,
     content,
+    resolvers: [resolve],
     timer: setTimeout(() => {
       pendingRenderByGame.delete(game.id);
-      void renderGameMessageNow(state.game, state.message, state.content);
+      void renderGameMessageNow(state.game, state.message, state.content).finally(() => {
+        state.resolvers.forEach((fn) => fn());
+      });
     }, 120),
   };
   pendingRenderByGame.set(game.id, state);
+  });
 }
 
 async function updatePeiwanBalance(
@@ -796,6 +852,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
   if (game?.id && typeof (result as any).uniquePlayers === 'number') {
     uniquePlayerCountCache.set(game.id, (result as any).uniquePlayers);
   }
+  let renderPromise: Promise<void> | null = null;
   if (game && isEditableMessage(i.message)) {
     const additions: string[] = [];
     if ((result as any).actionLine) additions.push((result as any).actionLine);
@@ -804,7 +861,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
     if (additions.length) appendActionCache(game.id, additions);
     const actionMessage = (result as any).actionMessage;
     const content = actionMessage ? `${actionMessage}` : i.message.content;
-    queueGameMessageRender(game, i.message, content);
+    renderPromise = queueGameMessageRender(game, i.message, content);
   }
 
   if ((result as any).status === 'settled') {
@@ -825,7 +882,10 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
     const gameId = game.id;
     const gameChannelId = game.channelId;
     const messageRef = isEditableMessage(i.message) ? i.message : null;
-    void (async () => {
+    enqueueEnvelopeTask(async () => {
+      if (renderPromise) {
+        await renderPromise;
+      }
       try {
         const totalAmount = calcCollapseEnvelopeAmount(game.totalBlocks);
         if (!totalAmount) {
@@ -892,7 +952,7 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       } catch (err) {
         console.error('[block-stack] create envelope failed:', err);
       }
-    })();
+    });
   }
 
 }
