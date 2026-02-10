@@ -659,7 +659,7 @@ type CreateSystemEnvelopeParams = {
 // System-funded envelope: skips balance checks/deductions.
 export async function createSystemRedEnvelope(
   params: CreateSystemEnvelopeParams,
-  client: PrismaClient = prisma
+  client: DbClient = prisma
 ) {
   const totalAmount = asDecimal(params.totalAmount);
   if (totalAmount.lte(0)) {

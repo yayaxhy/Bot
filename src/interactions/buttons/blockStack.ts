@@ -115,6 +115,58 @@ async function processEnvelopeQueue() {
   envelopeQueueRunning = false;
 }
 
+type EnvelopePrepareResult =
+  | { status: 'skip' }
+  | { status: 'insufficient' }
+  | { status: 'ready'; envelopeId: string };
+
+async function ensureCollapseEnvelope(params: {
+  gameId: string;
+  totalBlocks: number;
+  systemId: string;
+  channelId: string;
+}): Promise<EnvelopePrepareResult> {
+  const totalAmount = calcCollapseEnvelopeAmount(params.totalBlocks);
+  if (!totalAmount) {
+    return { status: 'insufficient' };
+  }
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT 1 FROM "BlockStackGame" WHERE "id" = ${params.gameId} FOR UPDATE`;
+    const current = await tx.blockStackGame.findUnique({
+      where: { id: params.gameId },
+      select: { status: true, collapseEnvelopeId: true },
+    });
+    if (!current || current.status !== 'COLLAPSED') {
+      return { status: 'skip' };
+    }
+    if (current.collapseEnvelopeId) {
+      return { status: 'ready', envelopeId: current.collapseEnvelopeId };
+    }
+
+    const envelope = await createSystemRedEnvelope(
+      {
+        creatorId: params.systemId,
+        totalAmount,
+        count: 20,
+        note: '积木塌掉红包',
+        channelId: params.channelId,
+      },
+      tx
+    );
+
+    await tx.blockStackGame.update({
+      where: { id: params.gameId },
+      data: {
+        collapseEnvelopeAmount: envelope.totalAmount,
+        collapseEnvelopeId: envelope.id,
+      },
+    });
+
+    return { status: 'ready', envelopeId: envelope.id };
+  });
+}
+
 type ActionKind = 'draw1' | 'draw10' | 'settle';
 
 type CollapseAlgorithm =
@@ -887,32 +939,28 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         await renderPromise;
       }
       try {
-        const totalAmount = calcCollapseEnvelopeAmount(game.totalBlocks);
-        if (!totalAmount) {
+        const prepare = await ensureCollapseEnvelope({
+          gameId,
+          totalBlocks: game.totalBlocks,
+          systemId,
+          channelId: gameChannelId,
+        });
+        if (prepare.status === 'insufficient') {
           const channel = await i.client.channels.fetch(gameChannelId).catch(() => null);
           if (channel && channel.isTextBased() && typeof (channel as any).send === 'function') {
             await (channel as any).send('层数不足，没法撒钱').catch(() => {});
           }
           return;
         }
-        const envelope = await createSystemRedEnvelope(
-          {
-            creatorId: systemId,
-            totalAmount,
-            count: 20,
-            note: '积木塌掉红包',
-            channelId: gameChannelId,
-          },
-          prisma
-        );
+        if (prepare.status !== 'ready') {
+          return;
+        }
 
-        await prisma.blockStackGame.update({
-          where: { id: gameId },
-          data: {
-            collapseEnvelopeAmount: envelope.totalAmount,
-            collapseEnvelopeId: envelope.id,
-          },
+        const envelope = await prisma.redEnvelope.findUnique({
+          where: { id: prepare.envelopeId },
         });
+        if (!envelope) return;
+        if (envelope.messageId) return;
 
         const channel = await i.client.channels.fetch(gameChannelId).catch(() => null);
         if (!channel || !channel.isTextBased()) return;
