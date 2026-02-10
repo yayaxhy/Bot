@@ -8,7 +8,8 @@ const DEC = (value: Prisma.Decimal | number | string) =>
 
 const SCRATCH_SEED_LOCK_KEY = 180208601;
 const SCRATCH_DEFAULT_TOTAL_TICKETS = 1000;
-const SCRATCH_THANKS_TO_UNLOCK_P200_DEFAULT = 10;
+const SCRATCH_THANKS_TO_UNLOCK_P200_DEFAULT = 30;
+const SCRATCH_THANKS_TO_UNLOCK_P99_DEFAULT = 20;
 export const SCRATCH_TICKET_PRICE = new Prisma.Decimal(19);
 export const SCRATCH_SYSTEM_ID = process.env.SCRATCH_SYSTEM_ID ?? 'scratch-system';
 let scratchRandomThanksCount = 0;
@@ -124,6 +125,14 @@ function parseThanksToUnlockP200() {
   if (!raw) return SCRATCH_THANKS_TO_UNLOCK_P200_DEFAULT;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1) return SCRATCH_THANKS_TO_UNLOCK_P200_DEFAULT;
+  return parsed;
+}
+
+function parseThanksToUnlockP99() {
+  const raw = process.env.SCRATCH_THANKS_TO_UNLOCK_P99;
+  if (!raw) return SCRATCH_THANKS_TO_UNLOCK_P99_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) return SCRATCH_THANKS_TO_UNLOCK_P99_DEFAULT;
   return parsed;
 }
 
@@ -275,9 +284,11 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
   const ticketOwnerId = params.ownerId?.trim() || params.userId;
   const isRandomPick = !requestedCode;
   const thanksToUnlockP200 = parseThanksToUnlockP200();
+  const thanksToUnlockP99 = parseThanksToUnlockP99();
 
   const run = async (): Promise<ScratchPurchaseResult> => {
     const canRollP200 = !isRandomPick || scratchRandomThanksCount >= thanksToUnlockP200;
+    const canRollP99 = !isRandomPick || scratchRandomThanksCount >= thanksToUnlockP99;
     const result = await prisma.$transaction(async (tx) => {
     await ensureScratchPoolSeededTx(tx);
 
@@ -345,11 +356,13 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
       ticketId = ticket.id;
     } else {
       const p200Filter = canRollP200 ? Prisma.empty : Prisma.sql`AND "prizeType" <> 'P200'`;
+      const p99Filter = canRollP99 ? Prisma.empty : Prisma.sql`AND "prizeType" <> 'P99'`;
       const rows = await tx.$queryRaw<{ id: string }[]>(
         Prisma.sql`SELECT "id"
                    FROM "ScratchTicket"
                    WHERE "status" = 'UNSOLD'
                    ${p200Filter}
+                   ${p99Filter}
                    ORDER BY random()
                    LIMIT 1
                    FOR UPDATE SKIP LOCKED`,
@@ -405,7 +418,10 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
     if (isRandomPick && result.status === 'ok') {
       if (result.ticket.prizeType === ScratchPrizeType.THANKS) {
         scratchRandomThanksCount += 1;
-      } else if (result.ticket.prizeType === ScratchPrizeType.P200) {
+      } else if (
+        result.ticket.prizeType === ScratchPrizeType.P200 ||
+        result.ticket.prizeType === ScratchPrizeType.P99
+      ) {
         scratchRandomThanksCount = 0;
       }
     }
