@@ -70,7 +70,15 @@ const pendingRenderByGame = new Map<string, PendingRenderState>();
 const ENVELOPE_SEND_TIMEOUT_MS = 8000;
 const ENVELOPE_SEND_INTERVAL_MS = 0;
 const ENVELOPE_SEND_MAX_RETRIES = 2;
-const envelopeQueue: Array<{ run: () => Promise<void>; retries: number }> = [];
+type EnvelopeSendTask = {
+  envelopeId: string;
+  gameId: string;
+  channelId: string;
+  messageRef?: EditableMessage | null;
+  client: any;
+};
+const envelopeQueue: Array<{ task: EnvelopeSendTask; retries: number }> = [];
+const pendingEnvelopeSends = new Set<string>();
 let envelopeQueueRunning = false;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,8 +95,10 @@ async function runWithTimeout<T>(task: Promise<T>, ms: number): Promise<T> {
   }
 }
 
-function enqueueEnvelopeTask(run: () => Promise<void>, retries = 0) {
-  envelopeQueue.push({ run, retries });
+function enqueueEnvelopeTask(task: EnvelopeSendTask, retries = 0) {
+  if (pendingEnvelopeSends.has(task.envelopeId)) return;
+  pendingEnvelopeSends.add(task.envelopeId);
+  envelopeQueue.push({ task, retries });
   if (!envelopeQueueRunning) {
     void processEnvelopeQueue();
   }
@@ -98,15 +108,21 @@ async function processEnvelopeQueue() {
   if (envelopeQueueRunning) return;
   envelopeQueueRunning = true;
   while (envelopeQueue.length > 0) {
-    const task = envelopeQueue.shift()!;
+    const entry = envelopeQueue.shift()!;
+    const task = entry.task;
+    let requeued = false;
     try {
-      await runWithTimeout(task.run(), ENVELOPE_SEND_TIMEOUT_MS);
+      await runWithTimeout(runEnvelopeSend(task), ENVELOPE_SEND_TIMEOUT_MS);
     } catch (err: any) {
-      if (err?.message === 'envelope_send_timeout' && task.retries < ENVELOPE_SEND_MAX_RETRIES) {
-        envelopeQueue.push({ run: task.run, retries: task.retries + 1 });
+      if (err?.message === 'envelope_send_timeout' && entry.retries < ENVELOPE_SEND_MAX_RETRIES) {
+        envelopeQueue.push({ task, retries: entry.retries + 1 });
+        requeued = true;
       } else {
         console.error('[block-stack] envelope send failed:', err);
       }
+    }
+    if (!requeued) {
+      pendingEnvelopeSends.delete(task.envelopeId);
     }
     if (envelopeQueue.length > 0) {
       await sleep(ENVELOPE_SEND_INTERVAL_MS);
@@ -165,6 +181,61 @@ async function ensureCollapseEnvelope(params: {
 
     return { status: 'ready', envelopeId: envelope.id };
   });
+}
+
+async function runEnvelopeSend(task: EnvelopeSendTask) {
+  const envelope = await prisma.redEnvelope.findUnique({
+    where: { id: task.envelopeId },
+  });
+  if (!envelope) return;
+  if (envelope.messageId) {
+    scheduleRedEnvelopeExpiration(task.client, { id: envelope.id, expiresAt: envelope.expiresAt });
+    return;
+  }
+
+  const channel = await task.client.channels.fetch(task.channelId).catch(() => null);
+  const targetChannel = channel && channel.isTextBased() ? channel : null;
+  if (!targetChannel || typeof (targetChannel as any).send !== 'function') return;
+
+  const payload = buildRedEnvelopeMessagePayload({
+    id: envelope.id,
+    creatorId: envelope.creatorId,
+    totalAmount: envelope.totalAmount,
+    totalCount: envelope.totalCount,
+    remainingCount: envelope.remainingCount,
+    status: envelope.status,
+    expiresAt: envelope.expiresAt,
+    note: envelope.note ?? undefined,
+    refundedAmount: envelope.refundedAmount ?? undefined,
+  });
+
+  const sent = await (targetChannel as any).send({ ...payload });
+  const bound = await bindEnvelopeMessage(
+    envelope.id,
+    { messageId: sent.id, channelId: sent.channelId },
+    prisma
+  );
+  if (!bound) {
+    await sent.delete().catch(() => {});
+    return;
+  }
+
+  try {
+    await sent.react(CLAIM_EMOJI_REACTION);
+  } catch (reactErr) {
+    console.error('[block-stack] add reaction failed:', reactErr);
+  }
+
+  scheduleRedEnvelopeExpiration(task.client, {
+    id: envelope.id,
+    expiresAt: envelope.expiresAt,
+  });
+
+  const updated = await prisma.blockStackGame.findUnique({ where: { id: task.gameId } });
+  if (updated && task.messageRef) {
+    const content = task.messageRef.content;
+    queueGameMessageRender(updated, task.messageRef, content);
+  }
 }
 
 type ActionKind = 'draw1' | 'draw10' | 'settle';
@@ -934,73 +1005,34 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
     const gameId = game.id;
     const gameChannelId = game.channelId;
     const messageRef = isEditableMessage(i.message) ? i.message : null;
-    enqueueEnvelopeTask(async () => {
-      if (renderPromise) {
-        await renderPromise;
-      }
-      try {
-        const prepare = await ensureCollapseEnvelope({
-          gameId,
-          totalBlocks: game.totalBlocks,
-          systemId,
-          channelId: gameChannelId,
-        });
-        if (prepare.status === 'insufficient') {
-          const channel = await i.client.channels.fetch(gameChannelId).catch(() => null);
-          if (channel && channel.isTextBased() && typeof (channel as any).send === 'function') {
-            await (channel as any).send('层数不足，没法撒钱').catch(() => {});
-          }
-          return;
-        }
-        if (prepare.status !== 'ready') {
-          return;
-        }
-
-        const envelope = await prisma.redEnvelope.findUnique({
-          where: { id: prepare.envelopeId },
-        });
-        if (!envelope) return;
-        if (envelope.messageId) return;
-
+    try {
+      const prepare = await ensureCollapseEnvelope({
+        gameId,
+        totalBlocks: game.totalBlocks,
+        systemId,
+        channelId: gameChannelId,
+      });
+      if (prepare.status === 'insufficient') {
         const channel = await i.client.channels.fetch(gameChannelId).catch(() => null);
-        if (!channel || !channel.isTextBased()) return;
-
-        const payload = buildRedEnvelopeMessagePayload({
-          id: envelope.id,
-          creatorId: envelope.creatorId,
-          totalAmount: envelope.totalAmount,
-          totalCount: envelope.totalCount,
-          remainingCount: envelope.remainingCount,
-          status: envelope.status,
-          expiresAt: envelope.expiresAt,
-          note: envelope.note ?? undefined,
-          refundedAmount: envelope.refundedAmount ?? undefined,
-        });
-
-        if (!channel || typeof (channel as any).send !== 'function') return;
-        const sent = await (channel as any).send({ ...payload });
-        await bindEnvelopeMessage(envelope.id, { messageId: sent.id, channelId: sent.channelId }, prisma);
-
-        try {
-          await sent.react(CLAIM_EMOJI_REACTION);
-        } catch (reactErr) {
-          console.error('[block-stack] add reaction failed:', reactErr);
+        if (channel && channel.isTextBased() && typeof (channel as any).send === 'function') {
+          await (channel as any).send('层数不足，没法撒钱').catch(() => {});
         }
-
-        scheduleRedEnvelopeExpiration((globalThis as any).__CLIENT__ ?? i.client, {
-          id: envelope.id,
-          expiresAt: envelope.expiresAt,
-        });
-
-        const updated = await prisma.blockStackGame.findUnique({ where: { id: gameId } });
-        if (updated && messageRef) {
-          const content = messageRef.content;
-          queueGameMessageRender(updated, messageRef, content);
-        }
-      } catch (err) {
-        console.error('[block-stack] create envelope failed:', err);
+        return;
       }
-    });
+      if (prepare.status !== 'ready') {
+        return;
+      }
+
+      enqueueEnvelopeTask({
+        envelopeId: prepare.envelopeId,
+        gameId,
+        channelId: gameChannelId,
+        messageRef,
+        client: i.client,
+      });
+    } catch (err) {
+      console.error('[block-stack] create envelope failed:', err);
+    }
   }
 
 }

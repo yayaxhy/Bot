@@ -706,13 +706,14 @@ export async function bindEnvelopeMessage(
   payload: { messageId: string; channelId: string },
   client: PrismaClient = prisma
 ) {
-  await client.redEnvelope.update({
-    where: { id: envelopeId },
+  const result = await client.redEnvelope.updateMany({
+    where: { id: envelopeId, messageId: null },
     data: {
       messageId: payload.messageId,
       channelId: payload.channelId,
     },
   });
+  return result.count > 0;
 }
 
 export async function findEnvelopeByMessage(messageId: string) {
