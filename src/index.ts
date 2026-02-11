@@ -25,6 +25,7 @@ import { customerGangCommand, handleCustomerGangSlash } from './commands/custome
 import { handleRevertGiftSlash, revertGiftCommand } from './commands/revertGiftSlash.js';
 import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
 import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
+import { getAvatarCommand, handleGetAvatarSlash } from './commands/getAvatarSlash.js';
 import { registerBalanceCommands } from './commands/balanceCommands.js';
 import { registerBlockStackCommand } from './commands/blockStack.js';
 import { registerScratchCommand } from './commands/scratch.js';
@@ -204,6 +205,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleScratchStockSlash(i);
                 return;
             }
+            if (i.commandName === '获取头像') {
+                await handleGetAvatarSlash(i);
+                return;
+            }
         }
 
     // Buttons
@@ -289,6 +294,7 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(bulkDmCommand);
             await client.application.commands.create(giftSlashCommand);
             await client.application.commands.create(scratchStockCommand);
+            await client.application.commands.create(getAvatarCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);
