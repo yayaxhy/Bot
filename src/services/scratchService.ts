@@ -71,6 +71,41 @@ const PRIZE_CONFIG_BY_TYPE = new Map<ScratchPrizeType, PrizeConfig>(
   PRIZE_CONFIGS.map((item) => [item.type, item] as const),
 );
 
+const TOP_PRIZE_CONFIG = PRIZE_CONFIGS.reduce((best, cur) =>
+  cur.amount.gt(best.amount) ? cur : best,
+);
+
+export function getScratchTopPrizeMeta() {
+  return {
+    type: TOP_PRIZE_CONFIG.type,
+    label: TOP_PRIZE_CONFIG.label,
+    amount: TOP_PRIZE_CONFIG.amount,
+  };
+}
+
+export async function getScratchTopPrizeRemaining(): Promise<number> {
+  await ensureScratchPoolSeeded();
+  return prisma.scratchTicket.count({
+    where: { status: ScratchTicketStatus.UNSOLD, prizeType: TOP_PRIZE_CONFIG.type },
+  });
+}
+
+type ScratchTopPrizeCache = {
+  value: number;
+  expiresAt: number;
+};
+let topPrizeCache: ScratchTopPrizeCache | null = null;
+
+export async function getScratchTopPrizeRemainingCached(ttlMs = 15_000): Promise<number> {
+  const now = Date.now();
+  if (topPrizeCache && topPrizeCache.expiresAt > now) {
+    return topPrizeCache.value;
+  }
+  const value = await getScratchTopPrizeRemaining();
+  topPrizeCache = { value, expiresAt: now + ttlMs };
+  return value;
+}
+
 export type ScratchInventoryPage = {
   total: number;
   sold: number;

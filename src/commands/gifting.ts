@@ -1099,22 +1099,31 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         }
 
         const results: { receiverId: string; result: GiftTransactionResult }[] = [];
-        for (const receiverId of receivers) {
-          const receiverUsername = msg.mentions.users.get(receiverId)?.username;
-          const bossUsername = msg.mentions.users.get(bossId)?.username;
-          const result = await performGift(msg.client, prisma, {
-            giverId: bossId,
-            receiverId,
-            giftName: gift.GiftName,
-            anonymous: false,
-            feedAnonymous: true,
-            transactionLabel: '客服代打赏',
-            quantity,
-            giftRecord: gift,
-            giverUsername: bossUsername,
-            receiverUsername,
-          });
-          results.push({ receiverId, result });
+        try {
+          for (const receiverId of receivers) {
+            const receiverUsername = msg.mentions.users.get(receiverId)?.username;
+            const bossUsername = msg.mentions.users.get(bossId)?.username;
+            const result = await performGift(msg.client, prisma, {
+              giverId: bossId,
+              receiverId,
+              giftName: gift.GiftName,
+              anonymous: false,
+              feedAnonymous: true,
+              transactionLabel: '客服代打赏',
+              quantity,
+              giftRecord: gift,
+              giverUsername: bossUsername,
+              receiverUsername,
+            });
+            results.push({ receiverId, result });
+          }
+        } catch (err: any) {
+          const plainMessage = err?.message ?? '未知错误';
+          if (typeof plainMessage === 'string' && plainMessage.includes('余额不足，无法完成打赏。')) {
+            await msg.reply('打赏失败，老板余额不足');
+            return;
+          }
+          throw err;
         }
 
         const channel: any = msg.channel;

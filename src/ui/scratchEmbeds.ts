@@ -43,8 +43,10 @@ export function buildScratchPendingEmbed(params: {
   code: string;
   buyerId: string;
   amount: string;
+  topPrizeLabel?: string;
+  topPrizeRemaining?: number;
 }) {
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(SCRATCH_EMBED_COLOR)
     .setTitle('刮刮乐')
     .setThumbnail(SCRATCH_EMBED_THUMBNAIL_URL)
@@ -60,6 +62,15 @@ export function buildScratchPendingEmbed(params: {
       },
       { name: '操作', value: '点击下方按钮进行刮开', inline: false },
     );
+  if (typeof params.topPrizeRemaining === 'number') {
+    const label = params.topPrizeLabel ? `¥${params.topPrizeLabel}` : '最大奖';
+    embed.addFields({
+      name: '最大奖剩余',
+      value: `${label}，还剩 ${params.topPrizeRemaining} 张`,
+      inline: false,
+    });
+  }
+  return embed;
 }
 
 function buildPrizeText(prizeType: ScratchPrizeType, prizeAmount: string) {
@@ -74,6 +85,8 @@ export function buildScratchRevealedEmbed(params: {
   buyerId: string;
   prizeType: ScratchPrizeType;
   prizeAmount: string;
+  topPrizeLabel?: string;
+  topPrizeRemaining?: number;
 }) {
   const label = getScratchPrizeLabel(params.prizeType);
   const isThanks = params.prizeType === ScratchPrizeType.THANKS;
@@ -97,6 +110,14 @@ export function buildScratchRevealedEmbed(params: {
       '输入 !刮刮乐（随机一张） 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
     inline: false,
   });
+  if (typeof params.topPrizeRemaining === 'number') {
+    const label = params.topPrizeLabel ? `¥${params.topPrizeLabel}` : '最大奖';
+    embed.addFields({
+      name: '最大奖剩余',
+      value: `${label}，还剩 ${params.topPrizeRemaining} 张`,
+      inline: false,
+    });
+  }
 
   return embed;
 }

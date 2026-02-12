@@ -1,5 +1,10 @@
 import { ButtonInteraction } from 'discord.js';
-import { SCRATCH_SYSTEM_ID, revealScratchTicket } from '../../services/scratchService.js';
+import {
+  SCRATCH_SYSTEM_ID,
+  revealScratchTicket,
+  getScratchTopPrizeMeta,
+  getScratchTopPrizeRemainingCached,
+} from '../../services/scratchService.js';
 import { buildScratchRevealButton, buildScratchRevealedEmbed } from '../../ui/scratchEmbeds.js';
 
 const PREFIX = 'scratch:reveal:';
@@ -38,6 +43,8 @@ export async function handleScratchRevealButton(i: ButtonInteraction) {
       buyerId: i.user.id,
       prizeType: ticket.prizeType,
       prizeAmount: ticket.prizeAmount.toString(),
+      topPrizeLabel: getScratchTopPrizeMeta().label,
+      topPrizeRemaining: await getScratchTopPrizeRemainingCached(),
     });
     const disabledRow = buildScratchRevealButton(ticket.id, true);
 

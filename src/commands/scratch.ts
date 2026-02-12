@@ -3,6 +3,8 @@ import {
   parseScratchCode,
   purchaseScratchTicket,
   SCRATCH_SYSTEM_ID,
+  getScratchTopPrizeRemainingCached,
+  getScratchTopPrizeMeta,
 } from '../services/scratchService.js';
 import { buildScratchPendingEmbed, buildScratchRevealButton } from '../ui/scratchEmbeds.js';
 
@@ -73,6 +75,8 @@ export function registerScratchCommand(client: Client) {
         code: result.ticket.code,
         buyerId: targetUserId,
         amount: result.purchaseAmount.toString(),
+        topPrizeLabel: getScratchTopPrizeMeta().label,
+        topPrizeRemaining: await getScratchTopPrizeRemainingCached(),
       });
       const buttonRow = buildScratchRevealButton(result.ticket.id, false);
 
