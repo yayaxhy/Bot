@@ -151,6 +151,48 @@ function parseGiftingCommand(
   return { quantity, giftName, toUserIds: uniqueMentionIds };
 }
 
+/** Parse: "!代打赏 3/礼物 @老板 @陪玩A @陪玩B" */
+function parseDelegateGiftingCommand(
+  msg: Message,
+  prefix: string
+): { quantity: number; giftName: string; bossId: string; toUserIds: string[] } | null {
+  const content = msg.content.trim();
+  if (!content.startsWith(prefix)) return null;
+
+  const mentionMatches = Array.from(content.matchAll(/<@!?(\d+)>/g));
+  if (mentionMatches.length < 2) return null;
+
+  const orderedIds: string[] = [];
+  const seen = new Set<string>();
+  for (const match of mentionMatches) {
+    const id = match[1];
+    if (!seen.has(id)) {
+      seen.add(id);
+      orderedIds.push(id);
+    }
+  }
+  if (orderedIds.length < 2) return null;
+
+  const bossId = orderedIds[0];
+  const toUserIds = orderedIds.slice(1);
+
+  let rest = content.slice(prefix.length).trim();
+  for (const id of orderedIds) {
+    const mentionRegex = new RegExp(`<@!?${id}>`, 'g');
+    rest = rest.replace(mentionRegex, ' ');
+  }
+  rest = rest.replace(/\s+/g, ' ').trim();
+
+  const parts = rest.split('/').map((s) => s.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+
+  const quantity = Number(parts[0]);
+  if (!Number.isInteger(quantity) || quantity <= 0) return null;
+
+  const giftName = parts.slice(1).join('/');
+  return { quantity, giftName, bossId, toUserIds };
+}
+
 async function ensureMember(prisma: PrismaClient, discordUserId: string, username?: string) {
   const member = await prisma.member.upsert({
     where: { discordUserId },
@@ -345,6 +387,7 @@ export async function performGift(
     receiverId: string;
     giftName: string;
     anonymous?: boolean;
+    feedAnonymous?: boolean;
     quantity: number;
     giftRecord?: GiftRecord;
     giverUsername?: string;
@@ -360,6 +403,7 @@ export async function performGift(
     receiverId,
     giftName,
     anonymous = false,
+    feedAnonymous,
     quantity,
     giftRecord,
     giverUsername,
@@ -794,7 +838,7 @@ export async function performGift(
       quantity: Number(result.quantity.toString()),
       totalAmount: Number(result.gross.toString()),
       imageUrl: result.imageUrl,
-      anonymous,
+      anonymous: feedAnonymous ?? anonymous,
     });
   } catch (err) {
     console.error('[performGift] postGiftFeed failed:', err);
@@ -893,7 +937,8 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       const isAnon = content.startsWith('!匿名打赏');
       const isService = content.startsWith('!客服打赏');
       const isRegular = content.startsWith('!打赏');
-      if (!isAnon && !isRegular && !isService) return;
+      const isDelegate = content.startsWith('!代打赏');
+      if (!isAnon && !isRegular && !isService && !isDelegate) return;
 
       if (isAnon) {
         await prisma.interactionLog.create({
@@ -982,6 +1027,115 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           return;
         }
       }
+      if (isDelegate) {
+        if (!isCashAdmin(msg)) {
+          await msg.reply('❌ 你没有权限使用该命令。');
+          return;
+        }
+      }
+      if (isDelegate) {
+        await prisma.interactionLog.create({
+          data: {
+            memberId: msg.author.id,
+            command: '!代打赏',
+            payload: { content: msg.content } as any,
+          },
+        });
+
+        if (!msg.guild) {
+          await msg.reply('请在服务器频道内使用该命令。');
+          return;
+        }
+
+        const parsed = parseDelegateGiftingCommand(msg, '!代打赏');
+        if (!parsed) {
+          await msg.reply('用法：`!代打赏 数量/礼物名 @老板 @陪玩A @陪玩B`');
+          return;
+        }
+
+        const { bossId, toUserIds, quantity, giftName } = parsed;
+        const receivers = toUserIds.filter((id) => id !== bossId);
+        if (receivers.length === 0) {
+          await msg.reply('需要至少一个陪玩作为收礼人。');
+          return;
+        }
+
+        await Promise.all([
+          ensureMember(prisma, bossId, msg.mentions.users.get(bossId)?.username),
+          ...receivers.map((id) => ensureMember(prisma, id, msg.mentions.users.get(id)?.username)),
+        ]);
+
+        const bossDisplayName = msg.mentions.members?.get(bossId)?.displayName ?? null;
+        updateMemberServerDisplayName(prisma, bossId, bossDisplayName).catch(() => {});
+        for (const receiverId of receivers) {
+          const receiverDisplayName = msg.mentions.members?.get(receiverId)?.displayName ?? null;
+          updateMemberServerDisplayName(prisma, receiverId, receiverDisplayName).catch(() => {});
+        }
+
+        const normalized = giftName.normalize('NFKC').trim();
+        const gift = await prisma.gift.findFirst({
+          where: { GiftName: { contains: normalized, mode: 'insensitive' } },
+          select: { GiftName: true, price: true, url_link: true, rate: true, active: true },
+        });
+
+        if (!gift) {
+          const suggestions = await prisma.gift.findMany({
+            where: { GiftName: { contains: normalized, mode: 'insensitive' } },
+            take: 5,
+            orderBy: { GiftName: 'asc' },
+            select: { GiftName: true },
+          });
+          const hint = suggestions.length
+            ? `可选：${suggestions.map((s) => s.GiftName).join(', ')}`
+            : '（没有相近名称）';
+          await msg.reply(`礼物不存在：${giftName}。${hint}`);
+          return;
+        }
+        if (!gift.active) {
+          await msg.reply('该礼物已经下架。');
+          return;
+        }
+
+        const results: { receiverId: string; result: GiftTransactionResult }[] = [];
+        for (const receiverId of receivers) {
+          const receiverUsername = msg.mentions.users.get(receiverId)?.username;
+          const bossUsername = msg.mentions.users.get(bossId)?.username;
+          const result = await performGift(msg.client, prisma, {
+            giverId: bossId,
+            receiverId,
+            giftName: gift.GiftName,
+            anonymous: false,
+            feedAnonymous: true,
+            quantity,
+            giftRecord: gift,
+            giverUsername: bossUsername,
+            receiverUsername,
+          });
+          results.push({ receiverId, result });
+        }
+
+        const channel: any = msg.channel;
+        for (const { receiverId, result } of results) {
+          const successPayload = buildPublicGiftSuccessMessage(result);
+          successPayload.content = `${successPayload.content ?? ''}`.trim();
+          if (channel && typeof channel.send === 'function') {
+            await safeSend(() => channel.send(successPayload), 'gift success send');
+            const imageUrl = result.imageUrl;
+            if (imageUrl) {
+              await safeSend(() => channel.send(imageUrl), 'gift image send');
+            }
+          } else {
+            await safeSend(() => msg.reply(successPayload), 'gift success reply');
+            const imageUrl = result.imageUrl;
+            if (imageUrl) {
+              await safeSend(() => msg.reply(imageUrl), 'gift image reply');
+            }
+          }
+        }
+
+        return;
+      }
+
       if (!isRegular && !isService) return;
 
       await prisma.interactionLog.create({
