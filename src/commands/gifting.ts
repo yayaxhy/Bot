@@ -388,6 +388,7 @@ export async function performGift(
     giftName: string;
     anonymous?: boolean;
     feedAnonymous?: boolean;
+    transactionLabel?: string;
     quantity: number;
     giftRecord?: GiftRecord;
     giverUsername?: string;
@@ -404,6 +405,7 @@ export async function performGift(
     giftName,
     anonymous = false,
     feedAnonymous,
+    transactionLabel,
     quantity,
     giftRecord,
     giverUsername,
@@ -691,7 +693,7 @@ export async function performGift(
       balanceBefore: giverSplit.totalBefore,
       amountChange: payable,
       balanceAfter: giverSplit.totalAfter,
-      typeOfTransaction: '打赏',
+      typeOfTransaction: transactionLabel ?? '打赏',
     });
 
     const receiverIncomeBefore = new Prisma.Decimal(receiver.income ?? 0);
@@ -732,7 +734,7 @@ export async function performGift(
       balanceBefore: receiverBalanceBefore,
       amountChange: netAmount,
       balanceAfter: receiverBalanceAfter,
-      typeOfTransaction: '打赏',
+      typeOfTransaction: transactionLabel ?? '打赏',
     });
 
     const txRow = await tx.transaction.create({
@@ -1106,6 +1108,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
             giftName: gift.GiftName,
             anonymous: false,
             feedAnonymous: true,
+            transactionLabel: '客服代打赏',
             quantity,
             giftRecord: gift,
             giverUsername: bossUsername,
