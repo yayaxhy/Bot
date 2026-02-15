@@ -24,6 +24,8 @@ const LOTTERY_COLORS: Record<LotteryPool, number> = {
   ADVANCED: 0x7b68ee,
   SPECIAL: 0xff4500,
 };
+const MYSTERY_CODE_PRIZE_NAME = '神秘代码';
+const MYSTERY_CODE_DM_MESSAGE = '刮刮乐150金额的号码在G900到G999之间有一张';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -72,7 +74,10 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
 
   await wait(LOTTERY_REVEAL_DELAY_MS);
 
-  const revealLines = [`恭喜您抽到了${poolLabel}礼物：${prize.name}`];
+  const revealLines =
+    prize.name === MYSTERY_CODE_PRIZE_NAME
+      ? ['恭喜您抽到了对应颜色礼物：神秘代码', '请查看机器人私信噢']
+      : [`恭喜您抽到了${poolLabel}礼物：${prize.name}`];
   if (prize.name === PRIZE_NAMES.BLOCK_STACK_VOUCHER) {
     revealLines.push('使用方法：输入!抽积木消耗该代金券');
   }
@@ -88,6 +93,17 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
     await sent.edit({ content: '抽奖结束！', embeds: [revealEmbed] });
   } catch (err) {
     console.error('[lottery] reveal edit failed:', err);
+  }
+
+  if (prize.name === MYSTERY_CODE_PRIZE_NAME) {
+    try {
+      await message.author.send({ content: MYSTERY_CODE_DM_MESSAGE });
+    } catch (err) {
+      console.error('[lottery] mystery-code DM failed:', {
+        userId: message.author.id,
+        err,
+      });
+    }
   }
 
   return true;
