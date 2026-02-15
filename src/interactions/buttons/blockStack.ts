@@ -53,6 +53,7 @@ type ActionCacheEntry = {
 };
 const actionLineCache = new Map<string, ActionCacheEntry>();
 const uniquePlayerCountCache = new Map<string, number>();
+const componentStateByGame = new Map<string, 'ACTIVE' | 'INACTIVE'>();
 
 type EditableMessage = {
   content: string;
@@ -554,14 +555,21 @@ async function resolveUniquePlayersCount(
 }
 
 async function renderGameMessageNow(game: any, message: EditableMessage, content: string) {
-  await message.edit({ content }).catch(() => {});
   const actionLines = await getActionLinesForDisplay(game);
   const embed = buildBlockStackEmbed(game, { actionLines });
-  const components = buildBlockStackComponents(game);
-  await message.edit({ embeds: [embed], components, content }).catch(() => {});
+  const nextComponentState: 'ACTIVE' | 'INACTIVE' = game.status === 'ACTIVE' ? 'ACTIVE' : 'INACTIVE';
+  const prevComponentState = componentStateByGame.get(game.id);
+  const shouldUpdateComponents = prevComponentState !== nextComponentState;
+  const payload: any = { embeds: [embed], content };
+  if (shouldUpdateComponents) {
+    payload.components = buildBlockStackComponents(game);
+    componentStateByGame.set(game.id, nextComponentState);
+  }
+  await message.edit(payload).catch(() => {});
   if (game?.id && game.status !== 'ACTIVE') {
     uniquePlayerCountCache.delete(game.id);
     actionLineCache.delete(game.id);
+    componentStateByGame.delete(game.id);
   }
 }
 
