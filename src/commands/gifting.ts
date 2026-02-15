@@ -119,6 +119,79 @@ const computeVoucherConsumeAmount = (prizeName: string, unitPrice: Prisma.Decima
 const REF_RATE = new Prisma.Decimal(0.01);
 const REFERRAL_PAYOUT_CAP = new Prisma.Decimal(1000);
 
+const levenshteinDistance = (leftRaw: string, rightRaw: string): number => {
+  const left = leftRaw.toLowerCase();
+  const right = rightRaw.toLowerCase();
+  const leftLen = left.length;
+  const rightLen = right.length;
+  if (leftLen === 0) return rightLen;
+  if (rightLen === 0) return leftLen;
+
+  const dp: number[][] = Array.from({ length: leftLen + 1 }, () =>
+    Array.from({ length: rightLen + 1 }, () => 0)
+  );
+
+  for (let i = 0; i <= leftLen; i++) dp[i][0] = i;
+  for (let j = 0; j <= rightLen; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= leftLen; i++) {
+    for (let j = 1; j <= rightLen; j++) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return dp[leftLen][rightLen];
+};
+
+const formatGiftPriceForHint = (price: Prisma.Decimal | null): string => {
+  const asNumber = Number((price ?? 0).toString());
+  if (!Number.isFinite(asNumber)) return '0';
+  if (Number.isInteger(asNumber)) return String(asNumber);
+  return asNumber.toFixed(2).replace(/\.?0+$/, '');
+};
+
+async function buildGiftNotFoundHint(prisma: PrismaClient, normalizedGiftName: string): Promise<string> {
+  const target = normalizedGiftName.trim();
+  if (!target) return '（没有相近名称）';
+
+  const activeGifts = await prisma.gift.findMany({
+    where: { active: true },
+    select: { GiftName: true, price: true },
+  });
+
+  if (activeGifts.length === 0) return '（没有相近名称）';
+
+  const ranked = activeGifts
+    .map((gift) => {
+      const name = gift.GiftName.normalize('NFKC').trim();
+      const directContains = name.toLowerCase().includes(target.toLowerCase());
+      const distance = levenshteinDistance(target, name);
+      return { gift, name, directContains, distance };
+    })
+    .sort((a, b) => {
+      if (a.directContains !== b.directContains) return a.directContains ? -1 : 1;
+      if (a.distance !== b.distance) return a.distance - b.distance;
+      if (a.name.length !== b.name.length) return a.name.length - b.name.length;
+      return a.name.localeCompare(b.name, 'zh-Hans-CN');
+    });
+
+  const best = ranked[0];
+  if (!best) return '（没有相近名称）';
+
+  const maxLen = Math.max(target.length, best.name.length);
+  const maxAllowedDistance = Math.max(2, Math.floor(maxLen * 0.6));
+  if (!best.directContains && best.distance > maxAllowedDistance) {
+    return '（没有相近名称）';
+  }
+
+  return `（相近礼物名称：${best.gift.GiftName}，价格为${formatGiftPriceForHint(best.gift.price)}锦鲤币 ）`;
+}
+
 /** Parse: "!打赏 3/liwu @UserB @UserC" or "!客服打赏 3/liwu @UserB @UserC" */
 function parseGiftingCommand(
   msg: Message,
@@ -1081,15 +1154,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         });
 
         if (!gift) {
-          const suggestions = await prisma.gift.findMany({
-            where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-            take: 5,
-            orderBy: { GiftName: 'asc' },
-            select: { GiftName: true },
-          });
-          const hint = suggestions.length
-            ? `可选：${suggestions.map((s) => s.GiftName).join(', ')}`
-            : '（没有相近名称）';
+          const hint = await buildGiftNotFoundHint(prisma, normalized);
           await msg.reply(`礼物不存在：${giftName}。${hint}`);
           return;
         }
@@ -1195,15 +1260,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       });
 
       if (!gift) {
-        const suggestions = await prisma.gift.findMany({
-          where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-          take: 5,
-          orderBy: { GiftName: 'asc' },
-          select: { GiftName: true },
-        });
-        const hint = suggestions.length
-          ? `可选：${suggestions.map((s) => s.GiftName).join(', ')}`
-          : '（没有相近名称）';
+        const hint = await buildGiftNotFoundHint(prisma, normalized);
         await msg.reply(`礼物不存在：${giftName}。${hint}`);
         return;
       }
