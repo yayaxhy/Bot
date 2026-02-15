@@ -72,9 +72,32 @@ export const grantCouponCommand = new SlashCommandBuilder()
 export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
   if (i.commandName !== '送券') return;
 
+  const respond = async (content: string, ephemeral = false) => {
+    if (i.deferred || i.replied) {
+      await i.editReply({ content });
+      return;
+    }
+    await i.reply({ content, ephemeral });
+  };
+
+  console.log('[grantCoupon] slash invoked', {
+    interactionId: i.id,
+    guildId: i.guildId,
+    userId: i.user.id,
+  });
+
   try {
+    if (!i.deferred && !i.replied) {
+      try {
+        // 先确认交互，避免任何后续分支超时
+        await i.deferReply({ ephemeral: false });
+      } catch (err) {
+        console.error('[grantCoupon] defer failed', { interactionId: i.id, err });
+      }
+    }
+
     if (!isCashAdmin(i)) {
-      await i.reply({ content: '❌ 你没有权限使用该命令。', ephemeral: true });
+      await respond('❌ 你没有权限使用该命令。', true);
       return;
     }
 
@@ -83,18 +106,15 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
     const target = i.options.getUser('用户', true);
 
     if (!quantity || quantity <= 0) {
-      await i.reply({ content: '数量必须为正整数。', ephemeral: true });
+      await respond('数量必须为正整数。', true);
       return;
     }
 
     const grantItem = GRANT_ITEMS[couponType];
     if (!grantItem) {
-      await i.reply({ content: '券种无效。', ephemeral: true });
+      await respond('券种无效。', true);
       return;
     }
-
-    // 先确认交互，避免批量发券时超过 Discord 3 秒响应窗口
-    await i.deferReply({ ephemeral: false });
 
     const quantityText = quantity === 1 ? '一张' : `${quantity} 张`;
 
@@ -125,7 +145,7 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
         select: { id: true, pool: true },
       });
       if (!prize) {
-        await i.editReply({ content: `未找到奖品「${grantItem.lotteryPrizeName}」，请先在奖池创建。` });
+        await respond(`未找到奖品「${grantItem.lotteryPrizeName}」，请先在奖池创建。`, true);
         return;
       }
 
@@ -164,9 +184,10 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
       });
     }
 
-    await i.editReply({
-      content: `已为 <@${target.id}> 增加 ${quantity} 张 ${grantItem.label}（有效期 30 天）。`,
-    });
+    await respond(
+      `已为 <@${target.id}> 增加 ${quantity} 张 ${grantItem.label}（有效期 30 天）。`,
+      false
+    );
     return;
   } catch (err) {
     console.error('[grantCoupon] failed to grant coupon', {
@@ -174,11 +195,7 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
       err,
     });
     try {
-      if (i.deferred || i.replied) {
-        await i.editReply({ content: '送券失败，请稍后再试。' });
-      } else {
-        await i.reply({ content: '送券失败，请稍后再试。', ephemeral: true });
-      }
+      await respond('送券失败，请稍后再试。', true);
     } catch {}
     return;
   }
