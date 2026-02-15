@@ -92,78 +92,91 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
     return;
   }
 
-  const quantityText = quantity === 1 ? '一张' : `${quantity} 张`;
-
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  if (grantItem.couponType) {
-    const data = Array.from({ length: quantity }, () => ({
-      discordId: target.id,
-      type: grantItem.couponType!,
-      status: CouponStatus.ACTIVE,
-      expiresAt,
-    }));
-
-    while (true) {
-      try {
-        await prisma.coupon.createMany({ data });
-        break;
-      } catch (err) {
-        if (isUniqueConstraintError(err, 'id')) {
-          await realignCouponSequence();
-          continue;
-        }
-        throw err;
-      }
-    }
-  } else if (grantItem.lotteryPrizeName) {
-    const prize = await prisma.lotteryPrize.findFirst({
-      where: { name: grantItem.lotteryPrizeName },
-      select: { id: true, pool: true },
-    });
-    if (!prize) {
-      await i.reply({ content: `未找到奖品「${grantItem.lotteryPrizeName}」，请先在奖池创建。`, ephemeral: true });
-      return;
-    }
-
-    for (let idx = 0; idx < quantity; idx++) {
-      const now = new Date();
-      const nonce = `grant:${target.id}:${Date.now()}:${idx}:${crypto.randomBytes(4).toString('hex')}`;
-      const code = `BSTACK-${crypto.randomBytes(4).toString('hex')}`;
-      await prisma.lotteryDraw.create({
-        data: {
-          nonce,
-          requestId: `grant:${i.id}`,
-          userId: target.id,
-          pool: prize.pool ?? LotteryPool.ADVANCED,
-          prizeId: prize.id,
-          cost: '0',
-          random: Math.random(),
-          status: LotteryStatus.UNUSED,
-          code,
-          expiresAt,
-        },
-      });
-    }
-  }
-
-  const dmLines = [`收到${quantityText}${grantItem.label}！感谢老板对锦鲤的大力支持🩷`];
-  if (grantItem.lotteryPrizeName === PRIZE_NAMES.BLOCK_STACK_VOUCHER) {
-    dmLines.push('使用方法：输入!抽积木消耗该代金券');
-  }
-  const dmContent = dmLines.join('\n');
+  // 先确认交互，避免批量发券时超过 Discord 3 秒响应窗口
+  await i.deferReply({ ephemeral: false });
 
   try {
-    await target.send({ content: dmContent });
+    const quantityText = quantity === 1 ? '一张' : `${quantity} 张`;
+
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    if (grantItem.couponType) {
+      const data = Array.from({ length: quantity }, () => ({
+        discordId: target.id,
+        type: grantItem.couponType!,
+        status: CouponStatus.ACTIVE,
+        expiresAt,
+      }));
+
+      while (true) {
+        try {
+          await prisma.coupon.createMany({ data });
+          break;
+        } catch (err) {
+          if (isUniqueConstraintError(err, 'id')) {
+            await realignCouponSequence();
+            continue;
+          }
+          throw err;
+        }
+      }
+    } else if (grantItem.lotteryPrizeName) {
+      const prize = await prisma.lotteryPrize.findFirst({
+        where: { name: grantItem.lotteryPrizeName },
+        select: { id: true, pool: true },
+      });
+      if (!prize) {
+        await i.editReply({ content: `未找到奖品「${grantItem.lotteryPrizeName}」，请先在奖池创建。` });
+        return;
+      }
+
+      for (let idx = 0; idx < quantity; idx++) {
+        const nonce = `grant:${target.id}:${Date.now()}:${idx}:${crypto.randomBytes(4).toString('hex')}`;
+        const code = `BSTACK-${crypto.randomBytes(4).toString('hex')}`;
+        await prisma.lotteryDraw.create({
+          data: {
+            nonce,
+            requestId: `grant:${i.id}`,
+            userId: target.id,
+            pool: prize.pool ?? LotteryPool.ADVANCED,
+            prizeId: prize.id,
+            cost: '0',
+            random: Math.random(),
+            status: LotteryStatus.UNUSED,
+            code,
+            expiresAt,
+          },
+        });
+      }
+    }
+
+    const dmLines = [`收到${quantityText}${grantItem.label}！感谢老板对锦鲤的大力支持🩷`];
+    if (grantItem.lotteryPrizeName === PRIZE_NAMES.BLOCK_STACK_VOUCHER) {
+      dmLines.push('使用方法：输入!抽积木消耗该代金券');
+    }
+    const dmContent = dmLines.join('\n');
+
+    try {
+      await target.send({ content: dmContent });
+    } catch (err) {
+      console.error('[grantCoupon] failed to DM user about coupon', {
+        targetId: target.id,
+        err,
+      });
+    }
+
+    await i.editReply({
+      content: `已为 <@${target.id}> 增加 ${quantity} 张 ${grantItem.label}（有效期 30 天）。`,
+    });
+    return;
   } catch (err) {
-    console.error('[grantCoupon] failed to DM user about coupon', {
+    console.error('[grantCoupon] failed to grant coupon', {
+      operatorId: i.user.id,
       targetId: target.id,
+      couponType,
+      quantity,
       err,
     });
+    await i.editReply({ content: '送券失败，请稍后再试。' });
+    return;
   }
-
-  await i.reply({
-    content: `已为 <@${target.id}> 增加 ${quantity} 张 ${grantItem.label}（有效期 30 天）。`,
-    ephemeral: false,
-  });
-  return;
 }
