@@ -72,30 +72,30 @@ export const grantCouponCommand = new SlashCommandBuilder()
 export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
   if (i.commandName !== '送券') return;
 
-  if (!isCashAdmin(i)) {
-    await i.reply({ content: '❌ 你没有权限使用该命令。', ephemeral: true });
-    return;
-  }
-
-  const couponType = i.options.getString('券种', true);
-  const quantity = i.options.getInteger('数量', true);
-  const target = i.options.getUser('用户', true);
-
-  if (!quantity || quantity <= 0) {
-    await i.reply({ content: '数量必须为正整数。', ephemeral: true });
-    return;
-  }
-
-  const grantItem = GRANT_ITEMS[couponType];
-  if (!grantItem) {
-    await i.reply({ content: '券种无效。', ephemeral: true });
-    return;
-  }
-
-  // 先确认交互，避免批量发券时超过 Discord 3 秒响应窗口
-  await i.deferReply({ ephemeral: false });
-
   try {
+    if (!isCashAdmin(i)) {
+      await i.reply({ content: '❌ 你没有权限使用该命令。', ephemeral: true });
+      return;
+    }
+
+    const couponType = i.options.getString('券种', true);
+    const quantity = i.options.getInteger('数量', true);
+    const target = i.options.getUser('用户', true);
+
+    if (!quantity || quantity <= 0) {
+      await i.reply({ content: '数量必须为正整数。', ephemeral: true });
+      return;
+    }
+
+    const grantItem = GRANT_ITEMS[couponType];
+    if (!grantItem) {
+      await i.reply({ content: '券种无效。', ephemeral: true });
+      return;
+    }
+
+    // 先确认交互，避免批量发券时超过 Discord 3 秒响应窗口
+    await i.deferReply({ ephemeral: false });
+
     const quantityText = quantity === 1 ? '一张' : `${quantity} 张`;
 
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -171,12 +171,15 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
   } catch (err) {
     console.error('[grantCoupon] failed to grant coupon', {
       operatorId: i.user.id,
-      targetId: target.id,
-      couponType,
-      quantity,
       err,
     });
-    await i.editReply({ content: '送券失败，请稍后再试。' });
+    try {
+      if (i.deferred || i.replied) {
+        await i.editReply({ content: '送券失败，请稍后再试。' });
+      } else {
+        await i.reply({ content: '送券失败，请稍后再试。', ephemeral: true });
+      }
+    } catch {}
     return;
   }
 }
