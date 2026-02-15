@@ -28,8 +28,18 @@ export function isCashAdmin(msg: CommandActor) {
     .map((s) => s.trim())
     .filter(Boolean);
   if (roleIds.length && msg.inGuild()) {
-    const m = msg.member as GuildMember | null;
-    if (m && roleIds.some((rid) => m.roles.cache.has(rid))) return true;
+    const memberLike = msg.member as GuildMember | { roles?: unknown } | null;
+    const rolesField = (memberLike as any)?.roles;
+
+    // messageCreate: GuildMember.roles.cache
+    if (rolesField?.cache && typeof rolesField.cache.has === 'function') {
+      if (roleIds.some((rid) => rolesField.cache.has(rid))) return true;
+    }
+
+    // interactionCreate(uncached): APIInteractionGuildMember.roles => string[]
+    if (Array.isArray(rolesField)) {
+      if (roleIds.some((rid) => rolesField.includes(rid))) return true;
+    }
   }
   return false;
 }
