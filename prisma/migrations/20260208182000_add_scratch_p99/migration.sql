@@ -1,2 +1,0 @@
-ALTER TYPE "ScratchPrizeType"
-ADD VALUE IF NOT EXISTS 'P99';

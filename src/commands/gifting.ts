@@ -21,6 +21,12 @@ import {
 } from '../services/buffService.js';
 import { suppressRechargeNotifications } from '../services/rechargeNotifyConfig.js';
 import { isCashAdmin } from './cash.js';
+import {
+  GIFT_VOUCHER_CONFIGS,
+  GIFT_VOUCHER_NAMES,
+  PRIZE_BY_VOUCHER_COUPON_TYPE,
+  VOUCHER_COUPON_TYPE_BY_PRIZE,
+} from '../config/voucherCatalog.js';
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
@@ -47,63 +53,8 @@ const safeFetchChannel = async (client: Client, channelId: string, context: stri
     return null;
   }
 };
-const CAKE_GIFT_NAME = '小蛋糕';
-const VOUCHER_GIFT_CONFIGS: Record<string, Array<{ prizeName: string; payRate: number }>> = {
-  小蛋糕: [{ prizeName: PRIZE_NAMES.CAKE_VOUCHER, payRate: 0 }],
-  棒棒糖: [{ prizeName: PRIZE_NAMES.LOLLIPOP_VOUCHER, payRate: 0 }],
-  香水: [{ prizeName: PRIZE_NAMES.PERFUME_VOUCHER, payRate: 0 }],
-  旋转木马: [{ prizeName: PRIZE_NAMES.CAROUSEL_VOUCHER, payRate: 0 }],
-  南瓜车: [{ prizeName: PRIZE_NAMES.PUMPKIN_CAR_VOUCHER, payRate: 0 }],
-  留声机: [{ prizeName: PRIZE_NAMES.PHONOGRAPH_VOUCHER, payRate: 0 }],
-  一日冠: [
-    { prizeName: PRIZE_NAMES.CROWN_DAY_90_VOUCHER, payRate: 0.9 },
-    { prizeName: PRIZE_NAMES.CROWN_75_VOUCHER, payRate: 0.75 },
-  ],
-  三日冠: [{ prizeName: PRIZE_NAMES.CROWN_3DAY_90_VOUCHER, payRate: 0.9 }],
-  一周冠: [{ prizeName: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER, payRate: 0.9 }],
-  月冠名: [{ prizeName: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER, payRate: 0.9 }],
-};
-const GIFT_VOUCHER_NAMES: Set<string> = new Set([
-  PRIZE_NAMES.CAKE_VOUCHER,
-  PRIZE_NAMES.LOLLIPOP_VOUCHER,
-  PRIZE_NAMES.PERFUME_VOUCHER,
-  PRIZE_NAMES.CAROUSEL_VOUCHER,
-  PRIZE_NAMES.PUMPKIN_CAR_VOUCHER,
-  PRIZE_NAMES.PHONOGRAPH_VOUCHER,
-  PRIZE_NAMES.CROWN_DAY_90_VOUCHER,
-  PRIZE_NAMES.CROWN_75_VOUCHER,
-  PRIZE_NAMES.CROWN_3DAY_90_VOUCHER,
-  PRIZE_NAMES.CROWN_WEEK_90_VOUCHER,
-  PRIZE_NAMES.CROWN_MONTH_90_VOUCHER,
-]);
-const VOUCHER_COUPON_TYPE_BY_PRIZE: Record<string, CouponType> = {
-  [PRIZE_NAMES.CAKE_VOUCHER]: CouponType.CAKE_VOUCHER,
-  [PRIZE_NAMES.LOLLIPOP_VOUCHER]: CouponType.LOLLIPOP_VOUCHER,
-  [PRIZE_NAMES.PERFUME_VOUCHER]: CouponType.PERFUME_VOUCHER,
-  [PRIZE_NAMES.CAROUSEL_VOUCHER]: CouponType.CAROUSEL_VOUCHER,
-  [PRIZE_NAMES.PUMPKIN_CAR_VOUCHER]: CouponType.PUMPKIN_CAR_VOUCHER,
-  [PRIZE_NAMES.PHONOGRAPH_VOUCHER]: CouponType.PHONOGRAPH_VOUCHER,
-  [PRIZE_NAMES.CROWN_75_VOUCHER]: CouponType.CROWN_75_VOUCHER,
-  [PRIZE_NAMES.CROWN_DAY_90_VOUCHER]: CouponType.CROWN_DAY_90_VOUCHER,
-  [PRIZE_NAMES.CROWN_3DAY_90_VOUCHER]: CouponType.CROWN_3DAY_90_VOUCHER,
-  [PRIZE_NAMES.CROWN_WEEK_90_VOUCHER]: CouponType.CROWN_WEEK_90_VOUCHER,
-  [PRIZE_NAMES.CROWN_MONTH_90_VOUCHER]: CouponType.CROWN_MONTH_90_VOUCHER,
-};
-const PRIZE_BY_VOUCHER_COUPON_TYPE: Partial<Record<CouponType, string>> = {
-  [CouponType.CAKE_VOUCHER]: PRIZE_NAMES.CAKE_VOUCHER,
-  [CouponType.LOLLIPOP_VOUCHER]: PRIZE_NAMES.LOLLIPOP_VOUCHER,
-  [CouponType.PERFUME_VOUCHER]: PRIZE_NAMES.PERFUME_VOUCHER,
-  [CouponType.CAROUSEL_VOUCHER]: PRIZE_NAMES.CAROUSEL_VOUCHER,
-  [CouponType.PUMPKIN_CAR_VOUCHER]: PRIZE_NAMES.PUMPKIN_CAR_VOUCHER,
-  [CouponType.PHONOGRAPH_VOUCHER]: PRIZE_NAMES.PHONOGRAPH_VOUCHER,
-  [CouponType.CROWN_75_VOUCHER]: PRIZE_NAMES.CROWN_75_VOUCHER,
-  [CouponType.CROWN_DAY_90_VOUCHER]: PRIZE_NAMES.CROWN_DAY_90_VOUCHER,
-  [CouponType.CROWN_3DAY_90_VOUCHER]: PRIZE_NAMES.CROWN_3DAY_90_VOUCHER,
-  [CouponType.CROWN_WEEK_90_VOUCHER]: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER,
-  [CouponType.CROWN_MONTH_90_VOUCHER]: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER,
-};
 // prizeName -> payRate (优惠后实际支付占比)
-const PRIZE_PAY_RATE = Object.values(VOUCHER_GIFT_CONFIGS).reduce<Record<string, number>>((acc, entries) => {
+const PRIZE_PAY_RATE = Object.values(GIFT_VOUCHER_CONFIGS).reduce<Record<string, number>>((acc, entries) => {
   for (const e of entries) {
     acc[e.prizeName] = e.payRate;
   }
@@ -544,7 +495,7 @@ export async function performGift(
     });
 
     // 礼物类代金券：按最早优先，每券对应 giftName，可有多种折扣
-  const voucherConfigs = VOUCHER_GIFT_CONFIGS[normalizedGiftName] ?? [];
+  const voucherConfigs = GIFT_VOUCHER_CONFIGS[normalizedGiftName] ?? [];
   let voucherCount = 0;
   let voucherValue = DEC(0);
   const consumedVoucherIds: string[] = [];
@@ -601,26 +552,74 @@ export async function performGift(
         },
         select: { id: true, type: true },
       });
-      if (!coupon) {
-        throw new Error('礼物券不可用或已过期。');
+      if (coupon) {
+        const prizeName = PRIZE_BY_VOUCHER_COUPON_TYPE[coupon.type];
+        const consumeAmount = computeVoucherConsumeAmount(prizeName ?? '', unitPrice);
+        await tx.coupon.update({
+          where: { id: coupon.id },
+          data: {
+            status: 'USED',
+            consumedAt: now,
+            consumeAmount: consumeAmount ?? undefined,
+            consumeTargetId: receiverId,
+          },
+        });
+        consumedCouponIds.push(coupon.id);
+        consumedVoucherIds.push(coupon.id);
+        const cfg = voucherConfigs.find((c) => c.prizeName === prizeName);
+        const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+        const discountRate = new Prisma.Decimal(1).sub(payRate);
+        voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+      } else {
+        let pointShopPrizeName: string | null = null;
+        if (allowedCouponTypes.length > 0) {
+          const pointShopGrantRows = await tx.$queryRaw<
+            Array<{ id: string; couponType: string | null }>
+          >(
+            Prisma.sql`
+              SELECT "id", "couponType"
+              FROM "PointShopGrant"
+              WHERE "id" = ${couponVoucherId}
+                AND "discordUserId" = ${giverId}
+                AND "deliveryType" = 'COUPON'
+                AND "deliveryStatus" = 'DELIVERED'
+                AND "status" = 'ACTIVE'
+                AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
+                AND "couponType" IN (${Prisma.join(allowedCouponTypes)})
+              LIMIT 1
+            `,
+          );
+          const pointShopGrant = pointShopGrantRows[0];
+          if (pointShopGrant?.couponType) {
+            pointShopPrizeName =
+              PRIZE_BY_VOUCHER_COUPON_TYPE[pointShopGrant.couponType as CouponType] ?? null;
+            if (pointShopPrizeName) {
+              const consumeAmount = computeVoucherConsumeAmount(pointShopPrizeName, unitPrice);
+              await tx.$executeRaw(
+                Prisma.sql`
+                  UPDATE "PointShopGrant"
+                  SET "status" = 'USED',
+                      "consumedAt" = ${now},
+                      "consumeAmount" = ${consumeAmount ?? null},
+                      "consumeTargetId" = ${receiverId}
+                  WHERE "id" = ${pointShopGrant.id}
+                `,
+              );
+              consumedCouponIds.push(pointShopGrant.id);
+              consumedVoucherIds.push(pointShopGrant.id);
+            }
+          }
+        }
+
+        if (!pointShopPrizeName) {
+          throw new Error('礼物券不可用或已过期。');
+        }
+
+        const cfg = voucherConfigs.find((c) => c.prizeName === pointShopPrizeName);
+        const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+        const discountRate = new Prisma.Decimal(1).sub(payRate);
+        voucherValue = voucherValue.add(unitPrice.mul(discountRate));
       }
-      const prizeName = PRIZE_BY_VOUCHER_COUPON_TYPE[coupon.type];
-      const consumeAmount = computeVoucherConsumeAmount(prizeName ?? '', unitPrice);
-      await tx.coupon.update({
-        where: { id: coupon.id },
-        data: {
-          status: 'USED',
-          consumedAt: now,
-          consumeAmount: consumeAmount ?? undefined,
-          consumeTargetId: receiverId,
-        },
-      });
-      consumedCouponIds.push(coupon.id);
-      consumedVoucherIds.push(coupon.id);
-      const cfg = voucherConfigs.find((c) => c.prizeName === prizeName);
-      const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
-      const discountRate = new Prisma.Decimal(1).sub(payRate);
-      voucherValue = voucherValue.add(unitPrice.mul(discountRate));
     } else {
       // 先过期掉 coupon 表的代金券
       if (allowedCouponTypes.length) {

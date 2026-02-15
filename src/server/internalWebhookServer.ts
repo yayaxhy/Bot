@@ -6,10 +6,11 @@ import { performGift } from '../commands/gifting.js';
 import prisma from '../db/prisma.js';
 import { applyCouponDiscountForOrder, type DiscountKind } from '../services/discountService.js';
 import { applyLotteryDiscountForOrder } from '../services/lotteryDiscountService.js';
-import { CouponStatus, CouponType, LotteryStatus } from '@prisma/client';
+import { CouponStatus, LotteryStatus, Prisma } from '@prisma/client';
 import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
+import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -25,17 +26,6 @@ const INTERNAL_ALLOWED_IPS = (process.env.INTERNAL_ALLOWED_IPS ?? '43.131.41.173
   .map((s) => s.trim())
   .filter(Boolean);
 const ADMIN_NOTIFY_USER_ID = '1421651539247894549';
-
-const VOUCHER_COUPON_TYPE_BY_PRIZE: Record<string, CouponType> = {
-  [PRIZE_NAMES.CUSTOM_GIFT_VOUCHER]: CouponType.CUSTOM_GIFT_VOUCHER,
-  [PRIZE_NAMES.CUSTOM_TAG_VOUCHER]: CouponType.CUSTOM_TAG_VOUCHER,
-  [PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER]: CouponType.COMMISSION_MINUS1_VOUCHER,
-  [PRIZE_NAMES.DOUBLE_FLOW_5000_VOUCHER]: CouponType.DOUBLE_FLOW_5000_VOUCHER,
-  [PRIZE_NAMES.DOUBLE_SPEND_5000_VOUCHER]: CouponType.DOUBLE_SPEND_5000_VOUCHER,
-  [PRIZE_NAMES.RENAME_CARD_3]: CouponType.RENAME_CARD_3,
-  [PRIZE_NAMES.RENAME_CARD]: CouponType.RENAME_CARD,
-  [PRIZE_NAMES.RENAME_CARD_5]: CouponType.RENAME_CARD_5,
-};
 
 let serverInstance: http.Server | null = null;
 
@@ -186,6 +176,69 @@ async function consumeVoucher(
         },
       });
       return { voucherId: coupon.id };
+    }
+
+    try {
+      await tx.$executeRaw(
+        Prisma.sql`
+          UPDATE "PointShopGrant"
+          SET "status" = ${CouponStatus.EXPIRED}
+          WHERE "discordUserId" = ${userId}
+            AND "deliveryType" = 'COUPON'
+            AND "deliveryStatus" = 'DELIVERED'
+            AND "couponType" = ${couponType}
+            AND "status" = ${CouponStatus.ACTIVE}
+            AND "expiresAt" <= ${now}
+        `,
+      );
+
+      const pointShopGrantRows = voucherId
+        ? await tx.$queryRaw<Array<{ id: string }>>(
+            Prisma.sql`
+              SELECT "id"
+              FROM "PointShopGrant"
+              WHERE "id" = ${voucherId}
+                AND "discordUserId" = ${userId}
+                AND "deliveryType" = 'COUPON'
+                AND "deliveryStatus" = 'DELIVERED'
+                AND "couponType" = ${couponType}
+                AND "status" = ${CouponStatus.ACTIVE}
+                AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
+              LIMIT 1
+            `,
+          )
+        : await tx.$queryRaw<Array<{ id: string }>>(
+            Prisma.sql`
+              SELECT "id"
+              FROM "PointShopGrant"
+              WHERE "discordUserId" = ${userId}
+                AND "deliveryType" = 'COUPON'
+                AND "deliveryStatus" = 'DELIVERED'
+                AND "couponType" = ${couponType}
+                AND "status" = ${CouponStatus.ACTIVE}
+                AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
+              ORDER BY "issuedAt" ASC
+              LIMIT 1
+            `,
+          );
+
+      const pointShopGrant = pointShopGrantRows[0];
+      if (pointShopGrant) {
+        await tx.$executeRaw(
+          Prisma.sql`
+            UPDATE "PointShopGrant"
+            SET "status" = ${CouponStatus.USED},
+                "consumedAt" = ${now},
+                "consumeAmount" = ${0},
+                "consumeTargetId" = ${userId},
+                "consumeOrderId" = ${requestId ?? null}
+            WHERE "id" = ${pointShopGrant.id}
+          `,
+        );
+        return { voucherId: pointShopGrant.id };
+      }
+    } catch (error) {
+      console.warn('[internal-api] consume point shop voucher fallback failed', error);
     }
   }
 
@@ -653,7 +706,8 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
   const now = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
-    const couponTypes = [CouponType.RENAME_CARD_3, CouponType.RENAME_CARD, CouponType.RENAME_CARD_5];
+    const couponTypes = RENAME_CARD_COUPON_TYPES;
+
     await tx.coupon.updateMany({
       where: {
         discordId: userId,
@@ -664,28 +718,18 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
       data: { status: CouponStatus.EXPIRED },
     });
 
-    const coupon = await tx.coupon.findFirst({
-      where: {
-        discordId: userId,
-        type: { in: couponTypes },
-        status: CouponStatus.ACTIVE,
-        expiresAt: { gt: now },
-      },
-      select: { id: true },
-      orderBy: { issuedAt: 'asc' },
-    });
-    if (coupon) {
-      await tx.coupon.update({
-        where: { id: coupon.id },
-        data: {
-          status: CouponStatus.USED,
-          consumedAt: now,
-          consumeAmount: 0,
-          consumeTargetId: userId,
-        },
-      });
-      return { used: true, prizeName: '改名卡' };
-    }
+    await tx.$executeRaw(
+      Prisma.sql`
+        UPDATE "PointShopGrant"
+        SET "status" = ${CouponStatus.EXPIRED}
+        WHERE "discordUserId" = ${userId}
+          AND "deliveryType" = 'COUPON'
+          AND "deliveryStatus" = 'DELIVERED'
+          AND "couponType" IN (${Prisma.join(couponTypes)})
+          AND "status" = ${CouponStatus.ACTIVE}
+          AND "expiresAt" <= ${now}
+      `,
+    );
 
     await tx.lotteryDraw.updateMany({
       where: {
@@ -697,27 +741,121 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
       data: { status: LotteryStatus.EXPIRED },
     });
 
-      const card = voucherId
-        ? await tx.lotteryDraw.findFirst({
-            where: {
-              id: voucherId,
-              userId,
-              status: LotteryStatus.UNUSED,
-              expiresAt: { gt: now },
-              prize: { name: { in: RENAME_CARD_NAMES } },
-            },
-            select: { id: true, prize: { select: { name: true } } },
-          })
-        : await tx.lotteryDraw.findFirst({
-            where: {
-              userId,
-              status: LotteryStatus.UNUSED,
-              expiresAt: { gt: now },
-              prize: { name: { in: RENAME_CARD_NAMES } },
-            },
-            select: { id: true, prize: { select: { name: true } } },
-            orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-          });
+    const consumeCouponById = async (targetId: string) => {
+      const result = await tx.coupon.updateMany({
+        where: {
+          id: targetId,
+          discordId: userId,
+          type: { in: couponTypes },
+          status: CouponStatus.ACTIVE,
+          expiresAt: { gt: now },
+        },
+        data: {
+          status: CouponStatus.USED,
+          consumedAt: now,
+          consumeAmount: 0,
+          consumeTargetId: userId,
+        },
+      });
+      return result.count === 1;
+    };
+
+    const consumePointShopById = async (targetId: string) => {
+      const result = await tx.$executeRaw(
+        Prisma.sql`
+          UPDATE "PointShopGrant"
+          SET "status" = ${CouponStatus.USED},
+              "consumedAt" = ${now},
+              "consumeAmount" = ${0},
+              "consumeTargetId" = ${userId}
+          WHERE "id" = ${targetId}
+            AND "discordUserId" = ${userId}
+            AND "deliveryType" = 'COUPON'
+            AND "deliveryStatus" = 'DELIVERED'
+            AND "couponType" IN (${Prisma.join(couponTypes)})
+            AND "status" = ${CouponStatus.ACTIVE}
+            AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
+        `,
+      );
+      return Number(result) > 0;
+    };
+
+    if (voucherId) {
+      if (await consumeCouponById(voucherId)) {
+        return { used: true, prizeName: '改名卡' };
+      }
+      if (await consumePointShopById(voucherId)) {
+        return { used: true, prizeName: '改名卡' };
+      }
+    } else {
+      const [couponCandidate, pointShopCandidate] = await Promise.all([
+        tx.coupon.findFirst({
+          where: {
+            discordId: userId,
+            type: { in: couponTypes },
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+          select: { id: true, issuedAt: true },
+          orderBy: { issuedAt: 'asc' },
+        }),
+        tx.$queryRaw<Array<{ id: string; issuedAt: Date }>>(
+          Prisma.sql`
+            SELECT "id", "issuedAt"
+            FROM "PointShopGrant"
+            WHERE "discordUserId" = ${userId}
+              AND "deliveryType" = 'COUPON'
+              AND "deliveryStatus" = 'DELIVERED'
+              AND "couponType" IN (${Prisma.join(couponTypes)})
+              AND "status" = ${CouponStatus.ACTIVE}
+              AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
+            ORDER BY "issuedAt" ASC
+            LIMIT 1
+          `,
+        ),
+      ]);
+
+      const pointShopRow = pointShopCandidate[0];
+      if (couponCandidate && pointShopRow) {
+        if (couponCandidate.issuedAt <= pointShopRow.issuedAt) {
+          if (await consumeCouponById(couponCandidate.id)) {
+            return { used: true, prizeName: '改名卡' };
+          }
+        } else if (await consumePointShopById(pointShopRow.id)) {
+          return { used: true, prizeName: '改名卡' };
+        }
+      } else if (couponCandidate) {
+        if (await consumeCouponById(couponCandidate.id)) {
+          return { used: true, prizeName: '改名卡' };
+        }
+      } else if (pointShopRow) {
+        if (await consumePointShopById(pointShopRow.id)) {
+          return { used: true, prizeName: '改名卡' };
+        }
+      }
+    }
+
+    const card = voucherId
+      ? await tx.lotteryDraw.findFirst({
+          where: {
+            id: voucherId,
+            userId,
+            status: LotteryStatus.UNUSED,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            prize: { name: { in: RENAME_CARD_NAMES } },
+          },
+          select: { id: true, prize: { select: { name: true } } },
+        })
+      : await tx.lotteryDraw.findFirst({
+          where: {
+            userId,
+            status: LotteryStatus.UNUSED,
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            prize: { name: { in: RENAME_CARD_NAMES } },
+          },
+          select: { id: true, prize: { select: { name: true } } },
+          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+        });
     if (!card) return { used: false };
 
     await tx.lotteryDraw.update({

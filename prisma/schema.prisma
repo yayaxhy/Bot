@@ -148,6 +148,11 @@ model Member {
   lotteryDraws LotteryDraw[]
   lotteryPity  LotteryPity?
   scratchTickets ScratchTicket[] @relation("ScratchTicketOwner")
+  pointShopCarts PointShopCart[]
+  pointShopOrders PointShopOrder[]
+  pointShopPointLedgers PointShopPointLedger[]
+  pointShopGrants PointShopGrant[] @relation("PointShopGrantOwner")
+  pointShopGrantConsumes PointShopGrant[] @relation("PointShopGrantConsumeTarget")
 
   // Gift wall unlocks/rewards
   giftUnlocks      PeiwanGiftUnlock[]
@@ -792,6 +797,35 @@ enum ScratchPrizeType {
   P200
 }
 
+enum PointShopCartStatus {
+  OPEN
+  CHECKED_OUT
+  ABANDONED
+}
+
+enum PointShopOrderStatus {
+  SUCCESS
+  FAILED
+}
+
+enum PointShopDeliveryType {
+  COUPON
+  MANUAL
+  BALANCE
+}
+
+enum PointShopDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+enum PointShopPointLedgerType {
+  DEBIT
+  CREDIT
+  ADJUST
+}
+
 enum ReferralType {
   LAOBAN
   PEIWAN
@@ -910,6 +944,160 @@ model ScratchTicket {
 
   @@index([status, serialNo])
   @@index([ownerId, status])
+}
+
+model PointShopItem {
+  id              String                @id @default(cuid())
+  sku             String                @unique
+  name            String
+  description     String?
+  pointsCost      Decimal               @db.Decimal(19, 4)
+  stock           Int?
+  isActive        Boolean               @default(true)
+  deliveryType    PointShopDeliveryType @default(COUPON)
+  couponType      CouponType?
+  couponExpireDays Int?
+  balanceCreditAmount Decimal?          @db.Decimal(19, 4)
+  sortOrder       Int                   @default(0)
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  cartItems  PointShopCartItem[]
+  orderItems PointShopOrderItem[]
+
+  @@index([isActive, sortOrder])
+}
+
+model PointShopCart {
+  id            String              @id @default(cuid())
+  discordUserId String
+  /// One OPEN cart per user is enforced by migration partial unique index.
+  status        PointShopCartStatus @default(OPEN)
+  version       Int                 @default(1)
+  checkedOutAt  DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  items  PointShopCartItem[]
+  orders PointShopOrder[]
+
+  @@index([discordUserId, status, updatedAt])
+}
+
+model PointShopCartItem {
+  id              String   @id @default(cuid())
+  cartId          String
+  itemId          String
+  quantity        Int      @default(1)
+  unitPoints      Decimal  @db.Decimal(19, 4)
+  itemNameSnapshot String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  cart PointShopCart @relation(fields: [cartId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item PointShopItem @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([cartId, itemId])
+  @@index([cartId, createdAt])
+}
+
+model PointShopOrder {
+  id            String               @id @default(cuid())
+  discordUserId String
+  cartId        String?
+  requestKey    String
+  status        PointShopOrderStatus @default(SUCCESS)
+  totalPoints   Decimal              @db.Decimal(19, 4)
+  totalItems    Int                  @default(0)
+  errorCode     String?
+  createdAt     DateTime             @default(now())
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  cart   PointShopCart? @relation(fields: [cartId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items  PointShopOrderItem[]
+  pointLedgers PointShopPointLedger[]
+  grants PointShopGrant[]
+
+  @@unique([discordUserId, requestKey])
+  @@index([discordUserId, createdAt])
+  @@index([cartId])
+}
+
+model PointShopOrderItem {
+  id            String                  @id @default(cuid())
+  orderId       String
+  itemId        String?
+  itemSku       String
+  itemName      String
+  unitPoints    Decimal                 @db.Decimal(19, 4)
+  quantity      Int
+  subtotalPoints Decimal                @db.Decimal(19, 4)
+  deliveryStatus PointShopDeliveryStatus @default(PENDING)
+  deliveryNote  String?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  order PointShopOrder @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item  PointShopItem? @relation(fields: [itemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  grants PointShopGrant[]
+
+  @@index([orderId, createdAt])
+}
+
+model PointShopGrant {
+  id            String       @id @default(cuid())
+  orderId       String
+  orderItemId   String
+  discordUserId String
+  deliveryType  PointShopDeliveryType @default(COUPON)
+  itemSku       String
+  itemName      String
+  quantity      Int          @default(1)
+  unitPoints    Decimal      @db.Decimal(19, 4)
+  subtotalPoints Decimal     @db.Decimal(19, 4)
+  deliveryStatus PointShopDeliveryStatus @default(PENDING)
+  deliveryNote  String?
+  couponType    CouponType?
+  couponStatus  CouponStatus? @map("status")
+  issuedAt      DateTime     @default(now())
+  expiresAt     DateTime?
+  consumedAt    DateTime?
+  consumeAmount Decimal?     @db.Decimal(19, 4)
+  consumeTargetId String?
+  consumeOrderId String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  order       PointShopOrder @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  orderItem   PointShopOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  owner       Member @relation("PointShopGrantOwner", fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  consumeTarget Member? @relation("PointShopGrantConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+
+  @@index([discordUserId, couponStatus, expiresAt])
+  @@index([discordUserId, deliveryType, deliveryStatus, createdAt])
+  @@index([orderId])
+  @@index([orderItemId])
+  @@index([consumeTargetId])
+  @@map("PointShopGrant")
+}
+
+model PointShopPointLedger {
+  id            String                  @id @default(cuid())
+  discordUserId String
+  orderId       String?
+  ledgerType    PointShopPointLedgerType
+  deltaPoints   Decimal                 @db.Decimal(19, 4)
+  balanceBefore Decimal                 @db.Decimal(19, 4)
+  balanceAfter  Decimal                 @db.Decimal(19, 4)
+  reason        String
+  createdAt     DateTime                @default(now())
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  order  PointShopOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([discordUserId, createdAt])
+  @@index([orderId])
 }
 
 model Revert {
