@@ -25,7 +25,7 @@ const LOTTERY_COLORS: Record<LotteryPool, number> = {
   SPECIAL: 0xff4500,
 };
 const MYSTERY_CODE_PRIZE_NAME = '神秘代码';
-const MYSTERY_CODE_DM_MESSAGE = '刮刮乐150金额的号码在G900到G999之间有一张';
+const MYSTERY_CODE_DM_MESSAGE = '刮刮乐150金额的号码在G100到G200之间有一张';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
