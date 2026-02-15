@@ -45,6 +45,7 @@ const UNIQUE_PLAYERS_STEP = 0.006;
 
 const RISK_DECAY_BASE = 0.03;
 const RISK_DECAY_STEP = 0.003;
+const GAME_RENDER_DEBOUNCE_MS = 0;
 
 type ActionCacheEntry = {
   totalEntries: number;
@@ -585,7 +586,7 @@ function queueGameMessageRender(game: any, message: EditableMessage, content: st
       void renderGameMessageNow(state.game, state.message, state.content).finally(() => {
         state.resolvers.forEach((fn) => fn());
       });
-    }, 120),
+    }, GAME_RENDER_DEBOUNCE_MS),
   };
   pendingRenderByGame.set(game.id, state);
   });
