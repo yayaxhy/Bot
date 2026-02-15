@@ -1,4 +1,4 @@
-﻿-- Enforce one OPEN cart per user and clean up any historical duplicates.
+-- Enforce one OPEN cart per user and clean up any historical duplicates.
 WITH ranked AS (
   SELECT
     "id",
