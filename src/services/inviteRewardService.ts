@@ -8,7 +8,7 @@ const INVITE_REWARD_GUILD_ID =
   process.env.INVITE_REWARD_GUILD_ID
   ?? process.env.SPENT_ROLE_GUILD_ID
   ?? '';
-const INVITE_JOIN_FEED_CHANNEL_ID = (process.env.INVITE_JOIN_FEED_CHANNEL_ID ?? '').trim();
+const INVITE_JOIN_FEED_CHANNEL_ID = '1462937613798342696';
 
 const INVITE_REWARD_AMOUNT = new Prisma.Decimal(2);
 
