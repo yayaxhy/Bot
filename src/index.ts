@@ -26,6 +26,7 @@ import { handleRevertGiftSlash, revertGiftCommand } from './commands/revertGiftS
 import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
 import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
 import { getAvatarCommand, handleGetAvatarSlash } from './commands/getAvatarSlash.js';
+import { channelMessageCommand, handleChannelMessageSlash } from './commands/channelMessageSlash.js';
 import { registerBalanceCommands } from './commands/balanceCommands.js';
 import { registerBlockStackCommand } from './commands/blockStack.js';
 import { registerScratchCommand } from './commands/scratch.js';
@@ -209,6 +210,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleGetAvatarSlash(i);
                 return;
             }
+            if (i.commandName === '频道消息') {
+                await handleChannelMessageSlash(i);
+                return;
+            }
         }
 
     // Buttons
@@ -295,6 +300,7 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(giftSlashCommand);
             await client.application.commands.create(scratchStockCommand);
             await client.application.commands.create(getAvatarCommand);
+            await client.application.commands.create(channelMessageCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);
