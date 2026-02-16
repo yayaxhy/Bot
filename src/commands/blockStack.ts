@@ -1,5 +1,5 @@
 import { AttachmentBuilder, Client, Message } from 'discord.js';
-import { LotteryStatus, Prisma } from '@prisma/client';
+import { CouponStatus, LotteryStatus, PointShopDeliveryStatus, PointShopDeliveryType, Prisma } from '@prisma/client';
 import fs from 'node:fs';
 import path from 'node:path';
 import prisma from '../db/prisma.js';
@@ -18,6 +18,7 @@ const START_COST = new Prisma.Decimal(49);
 const SYSTEM_ID = process.env.BLOCK_STACK_SYSTEM_ID ?? 'block-stack-system';
 const BOT_AVATAR_PATH = path.resolve(process.cwd(), 'src', 'img', 'botAvatar.jpg');
 const LEGACY_BLOCK_STACK_VOUCHER_NAME = '抽积木代金券';
+const BLOCK_STACK_POINT_SHOP_SKUS = ['BLOCK_STACK_VOUCHER'] as const;
 
 const sendToChannel = async (channel: Message['channel'], payload: any) => {
   if (!channel || typeof (channel as any).send !== 'function') return;
@@ -41,6 +42,53 @@ export function registerBlockStackCommand(client: Client) {
 
       const result = await prisma.$transaction(async (tx) => {
         const now = new Date();
+        await tx.pointShopGrant.updateMany({
+          where: {
+            discordUserId: msg.author.id,
+            deliveryType: PointShopDeliveryType.COUPON,
+            deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+            couponStatus: CouponStatus.ACTIVE,
+            itemSku: { in: [...BLOCK_STACK_POINT_SHOP_SKUS] },
+            expiresAt: { lte: now },
+          },
+          data: { couponStatus: CouponStatus.EXPIRED },
+        });
+
+        const freePointShopVoucher = await tx.pointShopGrant.findFirst({
+          where: {
+            discordUserId: msg.author.id,
+            deliveryType: PointShopDeliveryType.COUPON,
+            deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+            couponStatus: CouponStatus.ACTIVE,
+            itemSku: { in: [...BLOCK_STACK_POINT_SHOP_SKUS] },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          },
+          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+          select: { id: true },
+        });
+
+        if (freePointShopVoucher) {
+          await tx.pointShopGrant.update({
+            where: { id: freePointShopVoucher.id },
+            data: {
+              couponStatus: CouponStatus.USED,
+              consumedAt: now,
+              consumeAmount: START_COST,
+              consumeTargetId: msg.author.id,
+            },
+          });
+
+          const game = await tx.blockStackGame.create({
+            data: {
+              creatorId: targetCreatorId,
+              channelId: msg.channel.id,
+              status: 'ACTIVE',
+              totalRevenue: START_COST,
+            },
+          });
+          return { status: 'ok' as const, game };
+        }
+
         await tx.lotteryDraw.updateMany({
           where: {
             userId: msg.author.id,
