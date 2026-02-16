@@ -8,20 +8,46 @@ const INVITE_REWARD_GUILD_ID =
   process.env.INVITE_REWARD_GUILD_ID
   ?? process.env.SPENT_ROLE_GUILD_ID
   ?? '';
+const INVITE_JOIN_FEED_CHANNEL_ID = (process.env.INVITE_JOIN_FEED_CHANNEL_ID ?? '').trim();
 
 const INVITE_REWARD_AMOUNT = new Prisma.Decimal(2);
 
 type InviteUses = Map<string, number>;
-const inviteCache = new Map<string, InviteUses>();
+type GuildInviteSnapshot = {
+  invites: InviteUses;
+  vanityCode: string | null;
+  vanityUses: number | null;
+};
+
+const inviteCache = new Map<string, GuildInviteSnapshot>();
+
+async function fetchVanityInfo(guild: Guild): Promise<{ vanityCode: string | null; vanityUses: number | null }> {
+  let vanityCode: string | null = guild.vanityURLCode ?? null;
+  let vanityUses: number | null = null;
+  try {
+    const vanity = await guild.fetchVanityData();
+    vanityCode = vanity.code ?? vanityCode;
+    vanityUses = vanity.uses ?? null;
+  } catch {
+    // Missing permission or no vanity URL.
+  }
+  return { vanityCode, vanityUses };
+}
+
+async function buildInviteSnapshot(guild: Guild): Promise<GuildInviteSnapshot> {
+  const invites = await guild.invites.fetch();
+  const uses: InviteUses = new Map();
+  for (const inv of invites.values()) {
+    uses.set(inv.code, inv.uses ?? 0);
+  }
+  const { vanityCode, vanityUses } = await fetchVanityInfo(guild);
+  return { invites: uses, vanityCode, vanityUses };
+}
 
 async function refreshInvites(guild: Guild) {
   try {
-    const invites = await guild.invites.fetch();
-    const uses: InviteUses = new Map();
-    for (const inv of invites.values()) {
-      uses.set(inv.code, inv.uses ?? 0);
-    }
-    inviteCache.set(guild.id, uses);
+    const snapshot = await buildInviteSnapshot(guild);
+    inviteCache.set(guild.id, snapshot);
   } catch (err) {
     console.error('[invite-reward] fetch invites failed', err);
   }
@@ -41,6 +67,11 @@ function detectUsedInvite(
     }
   }
   return null;
+}
+
+function detectUsedVanity(prev: GuildInviteSnapshot | undefined, current: GuildInviteSnapshot): boolean {
+  if (prev?.vanityUses == null || current.vanityUses == null) return false;
+  return current.vanityUses > prev.vanityUses;
 }
 
 type RewardResult =
@@ -150,12 +181,60 @@ async function sendInviteDm(inviterId: string, balanceAfter: Prisma.Decimal) {
   }
 }
 
+async function sendJoinFeed(
+  member: GuildMember,
+  options:
+    | { kind: 'normal'; inviterName: string; inviterCount: number | null }
+    | { kind: 'vanity'; vanityCode: string }
+    | { kind: 'unknown' },
+) {
+  try {
+    let channel: any = null;
+    if (INVITE_JOIN_FEED_CHANNEL_ID) {
+      channel = await member.guild.channels.fetch(INVITE_JOIN_FEED_CHANNEL_ID).catch(() => null);
+      if (channel && typeof channel.isTextBased === 'function' && !channel.isTextBased()) {
+        channel = null;
+      }
+    }
+
+    if (!channel) {
+      channel = member.guild.systemChannel;
+      if (channel && typeof channel.isTextBased === 'function' && !channel.isTextBased()) {
+        channel = null;
+      }
+    }
+
+    if (!channel || typeof channel.send !== 'function') return;
+
+    if (options.kind === 'normal') {
+      const countText = options.inviterCount == null ? '?' : String(options.inviterCount);
+      await channel.send(
+        `<@${member.id}> 加入了服务器;邀请人： ${options.inviterName} (${countText} 邀请次数)`,
+      );
+      return;
+    }
+
+    if (options.kind === 'vanity') {
+      await channel.send(
+        `<@${member.id}> joined using the vanity invite code ${options.vanityCode}`,
+      );
+      return;
+    }
+
+    await channel.send(`用户进入了服务器：<@${member.id}>`);
+  } catch (err) {
+    console.error('[invite-reward] send join feed failed', { memberId: member.id, err });
+  }
+}
+
 async function handleMemberAdd(member: GuildMember) {
   if (!INVITE_REWARD_GUILD_ID) return;
   if (member.user.bot) return;
   if (member.guild.id !== INVITE_REWARD_GUILD_ID) return;
 
   let usedInvite: Invite | null = null;
+  let usedVanity = false;
+  let vanityCode: string | null = null;
   try {
     const prev = inviteCache.get(member.guild.id);
     const invites = await member.guild.invites.fetch();
@@ -163,13 +242,21 @@ async function handleMemberAdd(member: GuildMember) {
     for (const inv of invites.values()) {
       currentUses.set(inv.code, inv.uses ?? 0);
     }
-    usedInvite = detectUsedInvite(prev, currentUses, invites.values());
-    inviteCache.set(member.guild.id, currentUses);
+    const vanityInfo = await fetchVanityInfo(member.guild);
+    const snapshot: GuildInviteSnapshot = {
+      invites: currentUses,
+      vanityCode: vanityInfo.vanityCode,
+      vanityUses: vanityInfo.vanityUses,
+    };
+    usedInvite = detectUsedInvite(prev?.invites, snapshot.invites, invites.values());
+    usedVanity = !usedInvite && detectUsedVanity(prev, snapshot);
+    vanityCode = snapshot.vanityCode;
+    inviteCache.set(member.guild.id, snapshot);
   } catch (err) {
     console.error('[invite-reward] handleMemberAdd fetch invites failed', err);
   }
 
-  const inviterId = usedInvite?.inviter?.id ?? null;
+  const inviterId = usedVanity ? null : usedInvite?.inviter?.id ?? null;
   const code = usedInvite?.code ?? null;
   const result = await rewardIfEligible({
     guildId: member.guild.id,
@@ -183,6 +270,23 @@ async function handleMemberAdd(member: GuildMember) {
     sendInviteDm(result.inviterId, result.balanceAfter);
   } else if (result.status !== 'already_joined' && result.status !== 'joined_no_inviter') {
     console.log('[invite-reward] skipped', { inviteeId: member.id, status: result.status, inviterId, code });
+  }
+
+  if (usedInvite?.inviter) {
+    const inviterName =
+      usedInvite.inviter.globalName
+      ?? usedInvite.inviter.displayName
+      ?? usedInvite.inviter.username
+      ?? usedInvite.inviter.id;
+    sendJoinFeed(member, {
+      kind: 'normal',
+      inviterName,
+      inviterCount: usedInvite.uses ?? null,
+    });
+  } else if (usedVanity && vanityCode) {
+    sendJoinFeed(member, { kind: 'vanity', vanityCode });
+  } else {
+    sendJoinFeed(member, { kind: 'unknown' });
   }
 }
 
