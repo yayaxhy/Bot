@@ -7,11 +7,12 @@ const DEC = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
 
 const SCRATCH_SEED_LOCK_KEY = 180208601;
-const SCRATCH_DEFAULT_TOTAL_TICKETS = 1000;
+const SCRATCH_DEFAULT_TOTAL_TICKETS = 1500;
 const SCRATCH_THANKS_TO_UNLOCK_P200_DEFAULT = 30;
 const SCRATCH_THANKS_TO_UNLOCK_P99_DEFAULT = 20;
 export const SCRATCH_TICKET_PRICE = new Prisma.Decimal(19);
 export const SCRATCH_SYSTEM_ID = process.env.SCRATCH_SYSTEM_ID ?? 'scratch-system';
+const SCRATCH_DEFAULT_CODE_PREFIX = 'A';
 let scratchRandomThanksCount = 0;
 let scratchPityLock: Promise<void> = Promise.resolve();
 
@@ -26,31 +27,25 @@ const PRIZE_CONFIGS: PrizeConfig[] = [
   {
     type: ScratchPrizeType.THANKS,
     amount: DEC(0),
-    probability: 0.31,
+    probability: 2 / 5,
     label: '谢谢惠顾',
   },
   {
     type: ScratchPrizeType.P5,
     amount: DEC(5),
-    probability: 0.32,
+    probability: 47 / 150,
     label: '5',
-  },
-  {
-    type: ScratchPrizeType.P20,
-    amount: DEC(20),
-    probability: 0.17,
-    label: '20',
   },
   {
     type: ScratchPrizeType.P30,
     amount: DEC(30),
-    probability: 0.1,
+    probability: 1 / 5,
     label: '30',
   },
   {
     type: ScratchPrizeType.P50,
     amount: DEC(50),
-    probability: 0.08,
+    probability: 1 / 15,
     label: '50',
   },
   {
@@ -85,24 +80,31 @@ export function getScratchTopPrizeMeta() {
 
 export async function getScratchTopPrizeRemaining(): Promise<number> {
   await ensureScratchPoolSeeded();
+  const prefix = getScratchCodePrefix();
   return prisma.scratchTicket.count({
-    where: { status: ScratchTicketStatus.UNSOLD, prizeType: TOP_PRIZE_CONFIG.type },
+    where: {
+      status: ScratchTicketStatus.UNSOLD,
+      prizeType: TOP_PRIZE_CONFIG.type,
+      code: { startsWith: prefix },
+    },
   });
 }
 
 type ScratchTopPrizeCache = {
+  prefix: string;
   value: number;
   expiresAt: number;
 };
 let topPrizeCache: ScratchTopPrizeCache | null = null;
 
 export async function getScratchTopPrizeRemainingCached(ttlMs = 15_000): Promise<number> {
+  const prefix = getScratchCodePrefix();
   const now = Date.now();
-  if (topPrizeCache && topPrizeCache.expiresAt > now) {
+  if (topPrizeCache && topPrizeCache.prefix === prefix && topPrizeCache.expiresAt > now) {
     return topPrizeCache.value;
   }
   const value = await getScratchTopPrizeRemaining();
-  topPrizeCache = { value, expiresAt: now + ttlMs };
+  topPrizeCache = { prefix, value, expiresAt: now + ttlMs };
   return value;
 }
 
@@ -145,7 +147,21 @@ export type RevealedTicket = {
   status: ScratchTicketStatus;
 };
 
-const CODE_RE = /^G(\d{1,6})$/i;
+function parseScratchCodePrefixFromEnv() {
+  const raw = process.env.SCRATCH_CODE_PREFIX?.trim().toUpperCase();
+  if (!raw) return SCRATCH_DEFAULT_CODE_PREFIX;
+  const matched = raw.match(/^[A-Z]+$/);
+  if (!matched) return SCRATCH_DEFAULT_CODE_PREFIX;
+  return raw;
+}
+
+export function getScratchCodePrefix() {
+  return parseScratchCodePrefixFromEnv();
+}
+
+export function getScratchCodeExample(serial = 3) {
+  return normalizeScratchCode(serial);
+}
 
 function parseTicketCountFromEnv() {
   const raw = process.env.SCRATCH_TICKET_COUNT;
@@ -239,13 +255,14 @@ function buildPrizeDeck(totalCount: number) {
 }
 
 function normalizeScratchCode(serial: number) {
-  return `G${serial.toString().padStart(3, '0')}`;
+  return `${getScratchCodePrefix()}${serial.toString().padStart(3, '0')}`;
 }
 
 export function parseScratchCode(input: string | null | undefined) {
   if (!input) return null;
   const text = input.trim().toUpperCase();
-  const match = text.match(CODE_RE);
+  const codeRe = new RegExp(`^${getScratchCodePrefix()}(\\d{1,6})$`, 'i');
+  const match = text.match(codeRe);
   if (!match) return null;
   const serial = Number.parseInt(match[1], 10);
   if (!Number.isInteger(serial) || serial <= 0) return null;
@@ -278,18 +295,25 @@ async function updatePeiwanBalance(
 
 async function ensureScratchPoolSeededTx(tx: Prisma.TransactionClient) {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${SCRATCH_SEED_LOCK_KEY})`;
-  const count = await tx.scratchTicket.count();
+  const prefix = getScratchCodePrefix();
+  const count = await tx.scratchTicket.count({
+    where: { code: { startsWith: prefix } },
+  });
   if (count > 0) return;
 
   const total = parseTicketCountFromEnv();
   const deck = buildPrizeDeck(total);
+  const maxSerialResult = await tx.scratchTicket.aggregate({
+    _max: { serialNo: true },
+  });
+  const serialStart = (maxSerialResult._max.serialNo ?? 0) + 1;
   const now = new Date();
 
   await tx.scratchTicket.createMany({
     data: deck.map((type, idx) => {
       const cfg = PRIZE_CONFIG_BY_TYPE.get(type)!;
       return {
-        serialNo: idx + 1,
+        serialNo: serialStart + idx,
         code: normalizeScratchCode(idx + 1),
         status: ScratchTicketStatus.UNSOLD,
         prizeType: type,
@@ -318,6 +342,7 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
   const requestedCode = params.requestedCode?.trim().toUpperCase() ?? null;
   const ticketOwnerId = params.ownerId?.trim() || params.userId;
   const isRandomPick = !requestedCode;
+  const activePrefix = getScratchCodePrefix();
   const thanksToUnlockP200 = parseThanksToUnlockP200();
   const thanksToUnlockP99 = parseThanksToUnlockP99();
 
@@ -396,6 +421,7 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
         Prisma.sql`SELECT "id"
                    FROM "ScratchTicket"
                    WHERE "status" = 'UNSOLD'
+                   AND "code" LIKE ${`${activePrefix}%`}
                    ${p200Filter}
                    ${p99Filter}
                    ORDER BY random()
@@ -573,15 +599,21 @@ export async function revealScratchTicket(params: RevealParams): Promise<Scratch
 
 export async function getScratchInventory(page = 1, pageSize = 50): Promise<ScratchInventoryPage> {
   await ensureScratchPoolSeeded();
+  const prefix = getScratchCodePrefix();
+  const bookWhere = { code: { startsWith: prefix } } as const;
+  const unsoldBookWhere = {
+    status: ScratchTicketStatus.UNSOLD,
+    code: { startsWith: prefix },
+  } as const;
 
   const safePageSize = Math.max(1, Math.min(200, Math.trunc(pageSize)));
   const safePage = Math.max(1, Math.trunc(page));
 
   const [total, unsold, codes] = await Promise.all([
-    prisma.scratchTicket.count(),
-    prisma.scratchTicket.count({ where: { status: ScratchTicketStatus.UNSOLD } }),
+    prisma.scratchTicket.count({ where: bookWhere }),
+    prisma.scratchTicket.count({ where: unsoldBookWhere }),
     prisma.scratchTicket.findMany({
-      where: { status: ScratchTicketStatus.UNSOLD },
+      where: unsoldBookWhere,
       orderBy: { serialNo: 'asc' },
       skip: (safePage - 1) * safePageSize,
       take: safePageSize,
@@ -596,7 +628,7 @@ export async function getScratchInventory(page = 1, pageSize = 50): Promise<Scra
   let pageCodes = codes.map((x) => x.code);
   if (normalizedPage !== safePage) {
     const rows = await prisma.scratchTicket.findMany({
-      where: { status: ScratchTicketStatus.UNSOLD },
+      where: unsoldBookWhere,
       orderBy: { serialNo: 'asc' },
       skip: (normalizedPage - 1) * safePageSize,
       take: safePageSize,

@@ -1,6 +1,7 @@
 import { EmbedBuilder, Message } from 'discord.js';
 import { LotteryPool } from '@prisma/client';
 import { DRAW_COST, LotteryError, POOL_LABEL, PRIZE_NAMES, performLotteryDraw } from '../services/lotteryService.js';
+import { getScratchCodePrefix } from '../services/scratchService.js';
 
 const LOTTERY_CMD_PATTERN = /^!抽奖$/;
 const LOTTERY_REVEAL_DELAY_MS = 3000; // 动画结束后再揭晓，毫秒
@@ -25,7 +26,10 @@ const LOTTERY_COLORS: Record<LotteryPool, number> = {
   SPECIAL: 0xff4500,
 };
 const MYSTERY_CODE_PRIZE_NAME = '神秘代码';
-const MYSTERY_CODE_DM_MESSAGE = '刮刮乐150金额的号码在G600到G700之间有一张';
+const buildMysteryCodeDmMessage = () => {
+  const prefix = getScratchCodePrefix();
+  return `刮刮乐150金额的号码在${prefix}600到${prefix}700之间有一张`;
+};
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -97,7 +101,7 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
 
   if (prize.name === MYSTERY_CODE_PRIZE_NAME) {
     try {
-      await message.author.send({ content: MYSTERY_CODE_DM_MESSAGE });
+      await message.author.send({ content: buildMysteryCodeDmMessage() });
     } catch (err) {
       console.error('[lottery] mystery-code DM failed:', {
         userId: message.author.id,

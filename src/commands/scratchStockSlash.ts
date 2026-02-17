@@ -7,7 +7,7 @@ import {
   EmbedBuilder,
   SlashCommandBuilder,
 } from 'discord.js';
-import { getScratchInventory } from '../services/scratchService.js';
+import { getScratchCodeExample, getScratchInventory } from '../services/scratchService.js';
 
 const PAGE_SIZE = 40;
 const STOCK_BUTTON_PREFIX = 'scratchstock:go:';
@@ -49,6 +49,7 @@ function buildStockButtons(page: number, totalPages: number, ownerId: string) {
 
 async function buildScratchStockPayload(page: number, ownerId: string) {
   const result = await getScratchInventory(page, PAGE_SIZE);
+  const codeExample = getScratchCodeExample(3);
   const embed = new EmbedBuilder().setColor(0xD4AF37).setTitle('刮刮乐库存');
 
   if (result.unsold === 0) {
@@ -66,7 +67,7 @@ async function buildScratchStockPayload(page: number, ownerId: string) {
     .addFields(
       { name: '未售', value: `${result.unsold}`, inline: true },
       { name: '页码', value: `${result.page}/${result.totalPages}`, inline: true },
-      { name: '购买方式', value: '!刮刮乐 或 !刮刮乐 G003', inline: false },
+      { name: '购买方式', value: `!刮刮乐 或 !刮刮乐 ${codeExample}`, inline: false },
     );
 
   return {

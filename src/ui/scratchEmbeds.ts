@@ -5,7 +5,7 @@ import {
   EmbedBuilder,
 } from 'discord.js';
 import { ScratchPrizeType } from '@prisma/client';
-import { getScratchPrizeLabel } from '../services/scratchService.js';
+import { getScratchCodeExample, getScratchPrizeLabel } from '../services/scratchService.js';
 
 const SCRATCH_EMBED_COLOR = 0xD4AF37;
 const SCRATCH_EMBED_THUMBNAIL_URL =
@@ -46,6 +46,7 @@ export function buildScratchPendingEmbed(params: {
   topPrizeLabel?: string;
   topPrizeRemaining?: number;
 }) {
+  const codeExample = getScratchCodeExample(3);
   const embed = new EmbedBuilder()
     .setColor(SCRATCH_EMBED_COLOR)
     .setTitle('刮刮乐')
@@ -57,7 +58,7 @@ export function buildScratchPendingEmbed(params: {
       {
         name: '购买方式',
         value:
-          '输入 !刮刮乐（随机一张） 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
+          `输入 !刮刮乐（随机一张） 或 !刮刮乐 ${codeExample}\n输入 !刮刮乐 @对方 或 !刮刮乐 ${codeExample} @对方 送给TA一张你的心意🩷`,
         inline: false,
       },
       { name: '操作', value: '点击下方按钮进行刮开', inline: false },
@@ -88,6 +89,7 @@ export function buildScratchRevealedEmbed(params: {
   topPrizeLabel?: string;
   topPrizeRemaining?: number;
 }) {
+  const codeExample = getScratchCodeExample(3);
   const label = getScratchPrizeLabel(params.prizeType);
   const isThanks = params.prizeType === ScratchPrizeType.THANKS;
   const prizeText = buildPrizeText(params.prizeType, params.prizeAmount);
@@ -107,7 +109,7 @@ export function buildScratchRevealedEmbed(params: {
   embed.addFields({
     name: '购买方式',
     value:
-      '输入 !刮刮乐（随机一张） 或 !刮刮乐 G003\n输入 !刮刮乐 @对方 或 !刮刮乐 G003 @对方 送给TA一张你的心意🩷',
+      `输入 !刮刮乐（随机一张） 或 !刮刮乐 ${codeExample}\n输入 !刮刮乐 @对方 或 !刮刮乐 ${codeExample} @对方 送给TA一张你的心意🩷`,
     inline: false,
   });
   if (typeof params.topPrizeRemaining === 'number') {
