@@ -1,4 +1,4 @@
-﻿-- Add new coupon type for point-shop-only peiwan review voucher
+-- Add new coupon type for point-shop-only peiwan review voucher
 DO $$
 BEGIN
   ALTER TYPE "CouponType" ADD VALUE IF NOT EXISTS 'PEIWAN_REVIEW_VOUCHER';
