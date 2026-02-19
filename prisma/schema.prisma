@@ -153,6 +153,8 @@ model Member {
   pointShopPointLedgers PointShopPointLedger[]
   pointShopGrants PointShopGrant[] @relation("PointShopGrantOwner")
   pointShopGrantConsumes PointShopGrant[] @relation("PointShopGrantConsumeTarget")
+  authoredPeiwanReviews PeiwanReview[] @relation("PeiwanReviewReviewer")
+  receivedPeiwanReviews PeiwanReview[] @relation("PeiwanReviewPeiwan")
 
   // Gift wall unlocks/rewards
   giftUnlocks      PeiwanGiftUnlock[]
@@ -271,6 +273,7 @@ enum CouponType {
   RENAME_CARD_3
   RENAME_CARD
   RENAME_CARD_5
+  PEIWAN_REVIEW_VOUCHER
 }
 
 enum CouponStatus {
@@ -1098,6 +1101,32 @@ model PointShopPointLedger {
 
   @@index([discordUserId, createdAt])
   @@index([orderId])
+}
+
+enum PeiwanReviewDisplayMode {
+  HIDDEN
+  ANONYMOUS
+  REALNAME
+}
+
+model PeiwanReview {
+  id                String                  @id @default(cuid())
+  sourceGrantId     String?                 @unique
+  reviewerDiscordId String
+  reviewerName      String?
+  peiwanDiscordId   String
+  peiwanName        String?
+  peiwanId          Int?
+  content           String                  @db.VarChar(500)
+  displayMode       PeiwanReviewDisplayMode @default(HIDDEN)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+
+  reviewer Member @relation("PeiwanReviewReviewer", fields: [reviewerDiscordId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  peiwan   Member @relation("PeiwanReviewPeiwan", fields: [peiwanDiscordId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([peiwanDiscordId, displayMode, createdAt])
+  @@index([reviewerDiscordId, createdAt])
 }
 
 model Revert {

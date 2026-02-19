@@ -12,7 +12,7 @@ import prisma from '../../db/prisma.js';
 import { clickStore } from '../../services/clickStore.js';
 import { recordOrderClick } from '../../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
-import { PeiwanStatus, QuotationCode } from '@prisma/client';
+import { PeiwanReviewDisplayMode, PeiwanStatus, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
   buildGiftingSelect,
@@ -348,6 +348,29 @@ export async function handlePlayButton(i: ButtonInteraction) {
     const mpUrl: string | null = peiwan.MP_url ?? null;
     const isTech: boolean = !!peiwan.techTag;
     const orderContent = extractOrderContent(i.message as Message);
+    const reviewRows = await prisma.peiwanReview.findMany({
+      where: {
+        peiwanDiscordId: workerId,
+        displayMode: { in: [PeiwanReviewDisplayMode.ANONYMOUS, PeiwanReviewDisplayMode.REALNAME] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        content: true,
+        displayMode: true,
+        reviewerName: true,
+      },
+    });
+    const bossReviews = reviewRows.map((row: { content: string; displayMode: PeiwanReviewDisplayMode; reviewerName: string | null }) => {
+      const reviewText = String(row.content ?? '').trim();
+      if (row.displayMode === 'ANONYMOUS') {
+        return `匿名老板评语：${reviewText}`;
+      }
+      const reviewerName = (row.reviewerName ?? '').trim();
+      if (reviewerName) {
+        return `老板${reviewerName}评语：${reviewText}`;
+      }
+      return `老板评语：${reviewText}`;
+    });
 
     const { embed, components } = sent_MP_embed(
       isTech,
@@ -355,6 +378,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
       `<@${workerId}>`,
       orderContent,
       mpUrl,
+      bossReviews,
       realnameBox,
       anonymousBox,
       realnameGiftBox,

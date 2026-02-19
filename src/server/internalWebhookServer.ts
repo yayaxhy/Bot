@@ -6,7 +6,7 @@ import { performGift } from '../commands/gifting.js';
 import prisma from '../db/prisma.js';
 import { applyCouponDiscountForOrder, type DiscountKind } from '../services/discountService.js';
 import { applyLotteryDiscountForOrder } from '../services/lotteryDiscountService.js';
-import { CouponStatus, LotteryStatus, PointShopDeliveryStatus, PointShopDeliveryType, Prisma } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryStatus, PointShopDeliveryStatus, PointShopDeliveryType, Prisma } from '@prisma/client';
 import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
@@ -26,6 +26,8 @@ const INTERNAL_ALLOWED_IPS = (process.env.INTERNAL_ALLOWED_IPS ?? '43.131.41.173
   .map((s) => s.trim())
   .filter(Boolean);
 const ADMIN_NOTIFY_USER_ID = '1421651539247894549';
+const PROFILE_PERSONALISATION_URL =
+  process.env.PROFILE_PERSONALISATION_URL ?? 'https://jinleeclub.vip/profile?tab=profile-personalisation';
 
 let serverInstance: http.Server | null = null;
 
@@ -621,6 +623,152 @@ async function handleDoubleSpend(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const reviewerId = payload?.userId != null ? String(payload.userId).trim() : '';
+  const requestId = payload?.requestId != null ? String(payload.requestId).trim() : '';
+  const contentRaw = payload?.content?.toString?.() ?? '';
+  const content = contentRaw.trim();
+  const voucherId = normalizeVoucherId(payload);
+  const targetDiscordId = await resolveDiscordId({
+    discordId: payload?.targetDiscordId,
+    peiwanId: payload?.peiwanId,
+  });
+
+  if (!reviewerId || !targetDiscordId || !content) {
+    sendJson(res, 400, { ok: false, error: 'missing_fields' });
+    return;
+  }
+  if (content.length > 500) {
+    sendJson(res, 400, { ok: false, error: 'review_too_long' });
+    return;
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const now = new Date();
+
+      await tx.pointShopGrant.updateMany({
+        where: {
+          discordUserId: reviewerId,
+          deliveryType: PointShopDeliveryType.COUPON,
+          deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+          couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
+          couponStatus: CouponStatus.ACTIVE,
+          expiresAt: { lte: now },
+        },
+        data: { couponStatus: CouponStatus.EXPIRED },
+      });
+
+      const grant = voucherId
+        ? await tx.pointShopGrant.findFirst({
+            where: {
+              id: voucherId,
+              discordUserId: reviewerId,
+              deliveryType: PointShopDeliveryType.COUPON,
+              deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+              couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
+              couponStatus: CouponStatus.ACTIVE,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+            select: { id: true },
+          })
+        : await tx.pointShopGrant.findFirst({
+            where: {
+              discordUserId: reviewerId,
+              deliveryType: PointShopDeliveryType.COUPON,
+              deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+              couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
+              couponStatus: CouponStatus.ACTIVE,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+            orderBy: { issuedAt: 'asc' },
+            select: { id: true },
+          });
+      if (!grant) return { code: 'no_voucher' as const };
+
+      const targetPeiwan = await tx.pEIWAN.findUnique({
+        where: { discordUserId: targetDiscordId },
+        select: { PEIWANID: true, discordUserId: true, serverDisplayName: true },
+      });
+      if (!targetPeiwan?.discordUserId) {
+        return { code: 'target_not_peiwan' as const };
+      }
+
+      const [reviewerMember, peiwanMember] = await Promise.all([
+        tx.member.findUnique({
+          where: { discordUserId: reviewerId },
+          select: { serverDisplayName: true },
+        }),
+        tx.member.findUnique({
+          where: { discordUserId: targetDiscordId },
+          select: { serverDisplayName: true },
+        }),
+      ]);
+
+      await tx.pointShopGrant.update({
+        where: { id: grant.id },
+        data: {
+          couponStatus: CouponStatus.USED,
+          consumedAt: now,
+          consumeAmount: 0,
+          consumeTargetId: targetDiscordId,
+          consumeOrderId: requestId ?? null,
+        },
+      });
+
+      const review = await tx.peiwanReview.create({
+        data: {
+          sourceGrantId: grant.id,
+          reviewerDiscordId: reviewerId,
+          reviewerName: reviewerMember?.serverDisplayName ?? null,
+          peiwanDiscordId: targetDiscordId,
+          peiwanName: peiwanMember?.serverDisplayName ?? targetPeiwan.serverDisplayName ?? null,
+          peiwanId: targetPeiwan.PEIWANID ?? null,
+          content,
+        },
+      });
+
+      return {
+        code: 'ok' as const,
+        reviewId: review.id,
+        reviewerName: reviewerMember?.serverDisplayName?.trim() ?? '',
+      };
+    });
+
+    if (result.code === 'no_voucher') {
+      sendJson(res, 404, { ok: false, error: 'no_voucher' });
+      return;
+    }
+    if (result.code === 'target_not_peiwan') {
+      sendJson(res, 404, { ok: false, error: 'target_not_peiwan' });
+      return;
+    }
+
+    try {
+      const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+      if (client) {
+        const targetUser = await client.users.fetch(targetDiscordId).catch(() => null);
+        if (targetUser) {
+          const reviewerName = result.reviewerName || reviewerId;
+          await targetUser.send(
+            `${reviewerName}老板给你新增一条评语，请到个人主页的个性化里面查看并添加到名片上面吧\n${PROFILE_PERSONALISATION_URL}`
+          );
+        }
+      }
+    } catch (err) {
+      console.error('[internal-api] peiwan review voucher dm failed', err);
+    }
+
+    sendJson(res, 200, { ok: true, reviewId: result.reviewId });
+  } catch (err) {
+    console.error('[internal-api] peiwan review voucher failed', err);
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+  }
+}
+
 async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
@@ -967,6 +1115,10 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/voucher/double-spend-5000') {
       await handleDoubleSpend(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/voucher/peiwan-review') {
+      await handlePeiwanReviewVoucher(req, res);
       return;
     }
     if (req.method === 'POST' && url.pathname === '/internal/discount') {

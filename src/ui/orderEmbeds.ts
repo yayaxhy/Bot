@@ -238,6 +238,7 @@ export function sent_MP_embed(
   workerMention: string,
   orderContent: string,
   mpUrl: string | null,
+  bossReviews: string[],
   realnameBox: StringSelectMenuBuilder | null,
   anonymousBox: StringSelectMenuBuilder | null,
   realnameGiftBox: StringSelectMenuBuilder | null,
@@ -252,6 +253,32 @@ export function sent_MP_embed(
 
   if (sanitizedOrderContent) {
     e.addFields({ name: ' <a:41:1422335911236206723> 订单内容', value: sanitizedOrderContent, inline: false });
+  }
+
+  if (bossReviews.length === 0) {
+    e.addFields({ name: '老板评语', value: '暂无老板评语', inline: false });
+  } else {
+    const chunks: string[] = [];
+    let current = '';
+    for (const line of bossReviews) {
+      const text = String(line ?? '').trim();
+      if (!text) continue;
+      const candidate = current ? `${current}\n${text}` : text;
+      if (candidate.length > 1024) {
+        if (current) chunks.push(current);
+        current = text.slice(0, 1024);
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) chunks.push(current);
+    if (chunks.length === 0) {
+      e.addFields({ name: '老板评语', value: '暂无老板评语', inline: false });
+    } else {
+      chunks.forEach((chunk, idx) => {
+        e.addFields({ name: idx === 0 ? '老板评语' : `老板评语（续${idx}）`, value: chunk, inline: false });
+      });
+    }
   }
 
   if (mpUrl) e.setImage(mpUrl);

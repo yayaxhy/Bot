@@ -18,6 +18,7 @@ export const PRIZE_NAMES = {
   CAKE_VOUCHER: '小蛋糕代金券',
   LOTTERY_VOUCHER: '抽奖代金券',
   BLOCK_STACK_VOUCHER: '积木游戏代金券',
+  PEIWAN_REVIEW_VOUCHER: '陪玩评语券',
   DISCOUNT_80: '8折券',
   RENAME_CARD_3: '3位数靓号卡',
   RENAME_CARD: '4位数靓号卡',
