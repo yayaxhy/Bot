@@ -41,6 +41,10 @@ import { clickStore } from '../services/clickStore.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 import { getActiveActivities } from '../services/activityService.js';
+import {
+  GENERAL_BROADCAST_CHANNEL_ID,
+  getOrderChannelBindingSnapshot,
+} from '../services/orderChannelBindingService.js';
 
 dotenv.config();
 
@@ -59,35 +63,14 @@ const DEFAULT_ALLOWED_ROLE_IDS = [
   '1430923554852962406', // 男陪陪
   '1430923746830581841', // 技术陪陪
 ];
-const DEFAULT_BROADCAST_CHANNEL_IDS = [
-  '1458089933863387207',
-  '1458149629223768136',
-  '1458303076082520215',
-  '1445226263139582072',
-  '1473760658402185300',
-];
-const GENERAL_BROADCAST_CHANNEL_ID = '1421495114928492604';
-const CHANNEL_OWNER_MAP: Record<string, string> = {
-  '1458089933863387207': '1349899133728587786',
-  '1458149629223768136': '719621775352266932',
-  '1458303076082520215': '539545415687733294',
-  '1445226263139582072': '525770714574225408',
-  '1473760658402185300': '1406682067852595291',
-};
 const configuredRoleIds = process.env.ALLOWED_ROLE_IDS
   ? process.env.ALLOWED_ROLE_IDS.split(',').map((id) => id.trim()).filter(Boolean)
   : [];
 const allowedRoleIds = Array.from(new Set([...configuredRoleIds, ...DEFAULT_ALLOWED_ROLE_IDS]));
-const orderBroadcastChannelIds = Array.from(
-  new Set([
-    ...(process.env.ORDER_BROADCAST_CHANNEL_ID ?? '')
-      .split(',')
-      .map((id) => id.trim())
-      .filter(Boolean),
-    ...DEFAULT_BROADCAST_CHANNEL_IDS,
-    GENERAL_BROADCAST_CHANNEL_ID,
-  ])
-);
+const configuredBroadcastChannelIds = (process.env.ORDER_BROADCAST_CHANNEL_ID ?? '')
+  .split(',')
+  .map((id) => id.trim())
+  .filter(Boolean);
 const orderAnonChannelId = process.env.ORDER_ANON_CHANNEL_ID;
 const anonNotifyChannelId = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
 const DEFAULT_EMBED_COLOR = 0xf5a623;
@@ -495,6 +478,10 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
   }
 
   const isDm = !message.guild;
+  const { channelIds: exclusiveChannelIds } = await getOrderChannelBindingSnapshot();
+  const orderBroadcastChannelIds = Array.from(
+    new Set([...configuredBroadcastChannelIds, ...exclusiveChannelIds, GENERAL_BROADCAST_CHANNEL_ID]),
+  );
   if (
     !isDm &&
     orderBroadcastChannelIds.length > 0 &&
@@ -754,10 +741,15 @@ export async function execute(message: Message) {
   if (!orderAnonChannelId) return;
 
   const hasAllowedRole = await messageMentionsAllowedRole(message);
+  const { ownerMap: exclusiveOwnerMap, channelIds: exclusiveChannelIds } =
+    await getOrderChannelBindingSnapshot();
+  const orderBroadcastChannelIds = Array.from(
+    new Set([...configuredBroadcastChannelIds, ...exclusiveChannelIds, GENERAL_BROADCAST_CHANNEL_ID]),
+  );
 
   // 专属派单区：仅允许指定老板发单
-    if (message.guild && CHANNEL_OWNER_MAP[message.channel.id]) {
-      const expectedOwnerId = CHANNEL_OWNER_MAP[message.channel.id];
+    if (message.guild && exclusiveOwnerMap[message.channel.id]) {
+      const expectedOwnerId = exclusiveOwnerMap[message.channel.id];
       if (userA.id !== expectedOwnerId) {
         return;
       }
@@ -801,7 +793,7 @@ export async function execute(message: Message) {
       if (
         GENERAL_BROADCAST_CHANNEL_ID &&
         message.guild &&
-        CHANNEL_OWNER_MAP[message.channel.id] &&
+        exclusiveOwnerMap[message.channel.id] &&
         message.channel.id !== GENERAL_BROADCAST_CHANNEL_ID
       ) {
         const generalChannel = await message.client.channels
