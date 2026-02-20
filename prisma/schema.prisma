@@ -627,6 +627,18 @@ model OrderRequestClick {
   @@index([workerId])
 }
 
+model BossChannelBinding {
+  channelId String  @id
+  ownerId   String
+  enabled   Boolean @default(true)
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ownerId, enabled])
+  @@index([enabled, updatedAt])
+}
+
 model PeiwanDeletion {
   peiwanId      Int      @id
   discordUserId String
