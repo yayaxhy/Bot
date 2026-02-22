@@ -6,8 +6,10 @@ import prisma from '../db/prisma.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 
 const DEC_ZERO = new Prisma.Decimal(0);
-const DEFAULT_SECONDS_PER_POINT = 60;
+const DEFAULT_SECONDS_PER_POINT = 300;
 const DEFAULT_MIN_SESSION_SECONDS = 60;
+const DEFAULT_DAILY_CAP_POINTS = new Prisma.Decimal(120);
+const DEFAULT_DAILY_CAP_OFFSET_MINUTES = 480; // Asia/Shanghai
 const RULE_VERSION = 'voice-v1';
 const BOT_AVATAR_PATH = path.resolve(process.cwd(), 'src', 'img', 'botAvatar.jpg');
 
@@ -23,6 +25,14 @@ const VOICE_POINTS_SECONDS_PER_POINT = parsePositiveInt(
 const VOICE_POINTS_MIN_SESSION_SECONDS = parsePositiveInt(
   process.env.VOICE_POINTS_MIN_SESSION_SECONDS,
   DEFAULT_MIN_SESSION_SECONDS,
+);
+const VOICE_POINTS_DAILY_CAP_POINTS = parsePositiveDecimal(
+  process.env.VOICE_POINTS_DAILY_CAP_POINTS,
+  DEFAULT_DAILY_CAP_POINTS,
+);
+const VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES = parseIntOrFallback(
+  process.env.VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES,
+  DEFAULT_DAILY_CAP_OFFSET_MINUTES,
 );
 const VOICE_POINTS_GUILD_IDS = new Set(
   (process.env.VOICE_POINTS_GUILD_IDS ?? '')
@@ -45,6 +55,39 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? '', 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed;
+}
+
+function parseIntOrFallback(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return parsed;
+}
+
+function parsePositiveDecimal(raw: string | undefined, fallback: Prisma.Decimal): Prisma.Decimal {
+  if (!raw?.trim()) return fallback;
+  try {
+    const val = new Prisma.Decimal(raw.trim());
+    if (val.lte(0)) return fallback;
+    return val;
+  } catch {
+    return fallback;
+  }
+}
+
+function getDayWindowUtcByOffset(base: Date, offsetMinutes: number): { startUtc: Date; endUtc: Date } {
+  const shifted = new Date(base.getTime() + offsetMinutes * 60_000);
+  const shiftedMidnightUtcMs = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate(),
+    0,
+    0,
+    0,
+    0,
+  );
+  const startUtc = new Date(shiftedMidnightUtcMs - offsetMinutes * 60_000);
+  const endUtc = new Date(startUtc.getTime() + 24 * 60 * 60 * 1000);
+  return { startUtc, endUtc };
 }
 
 function isGuildAllowed(guildId: string | null | undefined): guildId is string {
@@ -129,14 +172,38 @@ async function closeSession(
 ): Promise<void> {
   const { eligibleSeconds, points } = computeAward(session.joinedAt, endedAt);
   let settled = false;
+  let awardedPoints = DEC_ZERO;
 
   await prisma.$transaction(async (tx) => {
+    if (points.gt(0)) {
+      // Serialize per user to keep daily cap accurate under concurrent settles.
+      await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${session.discordUserId} FOR UPDATE`;
+      const { startUtc, endUtc } = getDayWindowUtcByOffset(
+        endedAt,
+        VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES,
+      );
+      const todayAwarded = await tx.voicePointLedger.aggregate({
+        where: {
+          discordUserId: session.discordUserId,
+          createdAt: { gte: startUtc, lt: endUtc },
+        },
+        _sum: { points: true },
+      });
+      const usedToday = new Prisma.Decimal(todayAwarded._sum.points ?? 0);
+      const remaining = VOICE_POINTS_DAILY_CAP_POINTS.sub(usedToday);
+      if (remaining.lte(0)) {
+        awardedPoints = DEC_ZERO;
+      } else {
+        awardedPoints = points.gt(remaining) ? remaining : points;
+      }
+    }
+
     const updated = await tx.voicePointSession.updateMany({
       where: { id: session.id, leftAt: null },
       data: {
         leftAt: endedAt,
         eligibleSeconds,
-        pointsAwarded: points,
+        pointsAwarded: awardedPoints,
         closeReason,
       },
     });
@@ -144,8 +211,8 @@ async function closeSession(
     if (updated.count === 0) return;
     settled = true;
 
-    if (points.gt(0)) {
-      await adjustLoyaltyPointsTx(tx, session.discordUserId, points);
+    if (awardedPoints.gt(0)) {
+      await adjustLoyaltyPointsTx(tx, session.discordUserId, awardedPoints);
       await tx.voicePointLedger.create({
         data: {
           sessionId: session.id,
@@ -153,7 +220,7 @@ async function closeSession(
           guildId: session.guildId,
           channelId: session.channelId,
           durationSeconds: eligibleSeconds,
-          points,
+          points: awardedPoints,
           ruleVersion: RULE_VERSION,
         },
       });
@@ -162,7 +229,7 @@ async function closeSession(
 
   activeSessionCache.delete(session.discordUserId);
   if (settled) {
-    await sendSettleDm(client, session.discordUserId, points);
+    await sendSettleDm(client, session.discordUserId, awardedPoints);
   }
 }
 
@@ -311,7 +378,7 @@ export function registerVoicePointService(client: Client): void {
   }
 
   console.log(
-    `[voice-points] enabled (secondsPerPoint=${VOICE_POINTS_SECONDS_PER_POINT}, minSessionSeconds=${VOICE_POINTS_MIN_SESSION_SECONDS}, excludeAfk=${VOICE_POINTS_EXCLUDE_AFK}, excludeMutedDeafened=${VOICE_POINTS_EXCLUDE_MUTED_DEAFENED})`,
+    `[voice-points] enabled (secondsPerPoint=${VOICE_POINTS_SECONDS_PER_POINT}, minSessionSeconds=${VOICE_POINTS_MIN_SESSION_SECONDS}, dailyCap=${VOICE_POINTS_DAILY_CAP_POINTS.toString()}, capOffsetMinutes=${VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES}, excludeAfk=${VOICE_POINTS_EXCLUDE_AFK}, excludeMutedDeafened=${VOICE_POINTS_EXCLUDE_MUTED_DEAFENED})`,
   );
 
   client.on(Events.VoiceStateUpdate, (oldState, newState) => {
