@@ -155,6 +155,8 @@ model Member {
   pointShopGrantConsumes PointShopGrant[] @relation("PointShopGrantConsumeTarget")
   authoredPeiwanReviews PeiwanReview[] @relation("PeiwanReviewReviewer")
   receivedPeiwanReviews PeiwanReview[] @relation("PeiwanReviewPeiwan")
+  voicePointSessions VoicePointSession[]
+  voicePointLedgers VoicePointLedger[]
 
   // Gift wall unlocks/rewards
   giftUnlocks      PeiwanGiftUnlock[]
@@ -194,6 +196,45 @@ model LoyaltyPoint {
   updatedAt     DateTime @updatedAt
 
   member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+}
+
+model VoicePointSession {
+  id              String   @id @default(cuid())
+  discordUserId   String
+  guildId         String
+  channelId       String
+  joinedAt        DateTime @default(now())
+  leftAt          DateTime?
+  eligibleSeconds Int      @default(0)
+  pointsAwarded   Decimal  @default(0) @db.Decimal(19, 4)
+  closeReason     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  ledger VoicePointLedger?
+
+  @@index([discordUserId, joinedAt])
+  @@index([discordUserId, leftAt])
+  @@index([guildId, channelId, joinedAt])
+}
+
+model VoicePointLedger {
+  id              String   @id @default(cuid())
+  sessionId       String   @unique
+  discordUserId   String
+  guildId         String
+  channelId       String
+  durationSeconds Int
+  points          Decimal  @db.Decimal(19, 4)
+  ruleVersion     String?
+  createdAt       DateTime @default(now())
+
+  member  Member            @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  session VoicePointSession @relation(fields: [sessionId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([discordUserId, createdAt])
+  @@index([guildId, channelId, createdAt])
 }
 
 model Transaction {

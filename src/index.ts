@@ -41,6 +41,7 @@ import { startPeiwanWatcher } from './services/peiwanWatcher.js';
 import { registerTechTagSync } from './services/techTagService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
 import { registerInviteReward } from './services/inviteRewardService.js';
+import { registerVoicePointService } from './services/voicePointService.js';
 import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
 import { startCommissionBuffWatcher } from './services/buffService.js';
 import { startLeaderboardScheduler } from './services/leaderboardService.js';
@@ -74,6 +75,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.GuildInvites,
     GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildVoiceStates,
   ],
   partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User],
 });
@@ -267,6 +269,7 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
 
 registerTechTagSync(client);
 registerInviteReward(client);
+registerVoicePointService(client);
 
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
