@@ -120,7 +120,7 @@ function computeAward(joinedAt: Date, endedAt: Date): { eligibleSeconds: number;
 
   const points = new Prisma.Decimal(elapsedSeconds)
     .div(VOICE_POINTS_SECONDS_PER_POINT)
-    .toDecimalPlaces(4, Prisma.Decimal.ROUND_DOWN);
+    .toDecimalPlaces(0, Prisma.Decimal.ROUND_DOWN);
   return { eligibleSeconds: elapsedSeconds, points: points.lt(0) ? DEC_ZERO : points };
 }
 
@@ -151,7 +151,7 @@ async function sendSettleDm(
     const user = await client.users.fetch(discordUserId);
     const embed = new EmbedBuilder()
       .setTitle('语音频道挂机积分结算')
-      .setDescription(`+${points.toFixed(4)} 积分`);
+      .setDescription(`+${points.toFixed(0)} 积分`);
     const files = fs.existsSync(BOT_AVATAR_PATH)
       ? [new AttachmentBuilder(BOT_AVATAR_PATH, { name: 'botAvatar.jpg' })]
       : [];
