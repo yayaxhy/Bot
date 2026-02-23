@@ -8,6 +8,7 @@ import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 const DEC_ZERO = new Prisma.Decimal(0);
 const DEFAULT_SECONDS_PER_POINT = 300;
 const DEFAULT_MIN_SESSION_SECONDS = 60;
+const DEFAULT_MIN_PARTICIPANTS_IN_CHANNEL = 2;
 const DEFAULT_DAILY_CAP_POINTS = new Prisma.Decimal(120);
 const DEFAULT_DAILY_CAP_OFFSET_MINUTES = 480; // Asia/Shanghai
 const RULE_VERSION = 'voice-v1';
@@ -25,6 +26,10 @@ const VOICE_POINTS_SECONDS_PER_POINT = parsePositiveInt(
 const VOICE_POINTS_MIN_SESSION_SECONDS = parsePositiveInt(
   process.env.VOICE_POINTS_MIN_SESSION_SECONDS,
   DEFAULT_MIN_SESSION_SECONDS,
+);
+const VOICE_POINTS_MIN_PARTICIPANTS_IN_CHANNEL = parsePositiveInt(
+  process.env.VOICE_POINTS_MIN_PARTICIPANTS_IN_CHANNEL,
+  DEFAULT_MIN_PARTICIPANTS_IN_CHANNEL,
 );
 const VOICE_POINTS_DAILY_CAP_POINTS = parsePositiveDecimal(
   process.env.VOICE_POINTS_DAILY_CAP_POINTS,
@@ -102,12 +107,29 @@ function isEligibleChannel(guild: Guild, channelId: string | null): channelId is
   return guild.afkChannelId !== channelId;
 }
 
+function countHumanMembersInChannel(guild: Guild, channelId: string): number {
+  let count = 0;
+  for (const state of guild.voiceStates.cache.values()) {
+    if (state.channelId !== channelId) continue;
+    const isBot = state.member?.user.bot ?? guild.members.cache.get(state.id)?.user.bot ?? false;
+    if (isBot) continue;
+    if (VOICE_POINTS_EXCLUDE_MUTED_DEAFENED && isMutedOrDeafened(state)) continue;
+    count += 1;
+  }
+  return count;
+}
+
+function hasEnoughParticipants(guild: Guild, channelId: string): boolean {
+  return countHumanMembersInChannel(guild, channelId) >= VOICE_POINTS_MIN_PARTICIPANTS_IN_CHANNEL;
+}
+
 function isMutedOrDeafened(state: VoiceState): boolean {
   return Boolean(state.selfMute || state.serverMute || state.selfDeaf || state.serverDeaf);
 }
 
 function isStateEligible(state: VoiceState): boolean {
   if (!isEligibleChannel(state.guild, state.channelId)) return false;
+  if (!hasEnoughParticipants(state.guild, state.channelId)) return false;
   if (VOICE_POINTS_EXCLUDE_MUTED_DEAFENED && isMutedOrDeafened(state)) return false;
   return true;
 }
@@ -284,6 +306,48 @@ function deriveCloseReason(session: OpenSession, newState: VoiceState): string {
   return 'not_eligible';
 }
 
+async function reconcileImpactedChannelPeers(
+  client: Client,
+  guild: Guild,
+  actorUserId: string,
+  impactedChannelIds: Set<string>,
+  now: Date,
+): Promise<void> {
+  for (const channelId of impactedChannelIds) {
+    for (const state of guild.voiceStates.cache.values()) {
+      if (state.channelId !== channelId) continue;
+
+      const peerMember = state.member ?? guild.members.cache.get(state.id);
+      if (!peerMember || peerMember.user.bot) continue;
+      if (peerMember.id === actorUserId) continue;
+
+      const peerCurrent = await fetchOpenSession(peerMember.id);
+      const peerShouldBeOpen = isGuildAllowed(guild.id) && isStateEligible(state);
+
+      if (peerCurrent) {
+        const stillSameChannel =
+          peerCurrent.guildId === guild.id &&
+          peerCurrent.channelId === channelId;
+
+        if (!peerShouldBeOpen) {
+          await closeSession(client, peerCurrent, deriveCloseReason(peerCurrent, state), now);
+          continue;
+        }
+
+        if (!stillSameChannel) {
+          await closeSession(client, peerCurrent, 'channel_switch', now);
+          await openSession(client, peerMember.id, guild.id, channelId, now);
+        }
+        continue;
+      }
+
+      if (peerShouldBeOpen) {
+        await openSession(client, peerMember.id, guild.id, channelId, now);
+      }
+    }
+  }
+}
+
 async function handleVoiceStateUpdate(client: Client, oldState: VoiceState, newState: VoiceState): Promise<void> {
   const member = newState.member ?? oldState.member;
   if (!member || member.user.bot) return;
@@ -291,6 +355,9 @@ async function handleVoiceStateUpdate(client: Client, oldState: VoiceState, newS
   const guild = newState.guild ?? oldState.guild;
   if (!guild?.id) return;
   const endedAt = new Date();
+  const impactedChannelIds = new Set<string>();
+  if (oldState.channelId) impactedChannelIds.add(oldState.channelId);
+  if (newState.channelId) impactedChannelIds.add(newState.channelId);
   const guildAllowed = isGuildAllowed(guild.id);
   const shouldBeOpen = guildAllowed && isStateEligible(newState);
   const current = await fetchOpenSession(member.id);
@@ -302,23 +369,16 @@ async function handleVoiceStateUpdate(client: Client, oldState: VoiceState, newS
 
     if (!shouldBeOpen) {
       await closeSession(client, current, deriveCloseReason(current, newState), endedAt);
-      return;
-    }
-
-    if (!stillSameChannel) {
+    } else if (!stillSameChannel) {
       await closeSession(client, current, 'channel_switch', endedAt);
       if (newState.channelId) {
         await openSession(client, member.id, guild.id, newState.channelId, endedAt);
       }
-      return;
     }
-
-    return;
-  }
-
-  if (shouldBeOpen && newState.channelId) {
+  } else if (shouldBeOpen && newState.channelId) {
     await openSession(client, member.id, guild.id, newState.channelId, endedAt);
   }
+  await reconcileImpactedChannelPeers(client, guild, member.id, impactedChannelIds, endedAt);
 }
 
 async function resetOpenSessions(): Promise<void> {
@@ -378,7 +438,7 @@ export function registerVoicePointService(client: Client): void {
   }
 
   console.log(
-    `[voice-points] enabled (secondsPerPoint=${VOICE_POINTS_SECONDS_PER_POINT}, minSessionSeconds=${VOICE_POINTS_MIN_SESSION_SECONDS}, dailyCap=${VOICE_POINTS_DAILY_CAP_POINTS.toString()}, capOffsetMinutes=${VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES}, excludeAfk=${VOICE_POINTS_EXCLUDE_AFK}, excludeMutedDeafened=${VOICE_POINTS_EXCLUDE_MUTED_DEAFENED})`,
+    `[voice-points] enabled (secondsPerPoint=${VOICE_POINTS_SECONDS_PER_POINT}, minSessionSeconds=${VOICE_POINTS_MIN_SESSION_SECONDS}, minParticipantsInChannel=${VOICE_POINTS_MIN_PARTICIPANTS_IN_CHANNEL}, dailyCap=${VOICE_POINTS_DAILY_CAP_POINTS.toString()}, capOffsetMinutes=${VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES}, excludeAfk=${VOICE_POINTS_EXCLUDE_AFK}, excludeMutedDeafened=${VOICE_POINTS_EXCLUDE_MUTED_DEAFENED})`,
   );
 
   client.on(Events.VoiceStateUpdate, (oldState, newState) => {
