@@ -157,6 +157,7 @@ model Member {
   receivedPeiwanReviews PeiwanReview[] @relation("PeiwanReviewPeiwan")
   voicePointSessions VoicePointSession[]
   voicePointLedgers VoicePointLedger[]
+  pageViewEvents PageViewEvent[]
 
   // Gift wall unlocks/rewards
   giftUnlocks      PeiwanGiftUnlock[]
@@ -235,6 +236,23 @@ model VoicePointLedger {
 
   @@index([discordUserId, createdAt])
   @@index([guildId, channelId, createdAt])
+}
+
+model PageViewEvent {
+  id            String   @id @default(cuid())
+  path          String
+  visitorId     String
+  discordUserId String?
+  referrer      String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  member Member? @relation(fields: [discordUserId], references: [discordUserId], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([createdAt])
+  @@index([path, createdAt])
+  @@index([visitorId, createdAt])
+  @@index([discordUserId, createdAt])
 }
 
 model Transaction {

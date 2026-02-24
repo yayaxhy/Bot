@@ -10,8 +10,14 @@ export type GiftPayload = {
   anonymous?: boolean;
 };
 
-export async function postGiftFeed(client: Client, payload: GiftPayload) {
-  const channelId = process.env.GIFT_FEED_CHANNEL_ID;
+const HIGH_VALUE_GIFT_FEED_CHANNEL_ID = '1475724021709668414';
+const HIGH_VALUE_GIFT_THRESHOLD = 800;
+
+async function sendGiftFeedMessage(
+  client: Client,
+  channelId: string,
+  payload: GiftPayload,
+) {
   if (!channelId) return;
 
   let channel: any = null;
@@ -19,7 +25,7 @@ export async function postGiftFeed(client: Client, payload: GiftPayload) {
     channel = await client.channels.fetch(channelId);
   } catch (err: any) {
     if (err?.code === 50001 || err?.message?.includes('Missing Access')) return;
-    console.error('[gift-feed] fetch failed:', err);
+    console.error('[gift-feed] fetch failed:', { channelId, err });
     return;
   }
   if (!channel || !channel.isTextBased()) {
@@ -27,28 +33,18 @@ export async function postGiftFeed(client: Client, payload: GiftPayload) {
   }
 
   const giverLabel = payload.anonymous ? '匿名' : userMention(payload.giverId);
-  const adminMentions = (process.env.ADMIN_USER_IDS ?? '')
-    .split(',')
-    .map((id) => id.trim())
-    .filter(Boolean)
-    .map((id) => `<@${id}>`)
-    .join(' ');
-  const everyonePrefix = payload.totalAmount >= 888 && adminMentions
-    ? `${adminMentions} `
-    : '';
   const content =
-    `${everyonePrefix} 感谢${giverLabel} 老板送给陪玩 ` +
+    `感谢${giverLabel} 老板送给陪玩 ` +
     `${userMention(payload.receiverId)} "${payload.giftName}", 感谢老板对陪陪的喜爱`;
 
   const embed = new EmbedBuilder()
     .setColor(0xfee9a8)
     .setDescription([
-      `**${payload.giftName}**`,               // first line: name
-      `数量：**${payload.quantity}**`,          // second line: quantity
-      `总金额：**${payload.totalAmount}**`,     // third line: total
+      `**${payload.giftName}**`,
+      `数量：**${payload.quantity}**`,
+      `总金额：**${payload.totalAmount}**`,
     ].join("\n"));
 
-  // Only attach the picture (don’t print its URL in description)
   if (payload.imageUrl && /^https?:\/\/\S+$/i.test(payload.imageUrl)) {
     embed.setImage(payload.imageUrl);
   }
@@ -57,6 +53,21 @@ export async function postGiftFeed(client: Client, payload: GiftPayload) {
     await (channel as TextChannel).send({ content, embeds: [embed] });
   } catch (err: any) {
     if (err?.code === 50001 || err?.message?.includes('Missing Access')) return;
-    console.error('[gift-feed] send failed:', err);
+    console.error('[gift-feed] send failed:', { channelId, err });
+  }
+}
+
+export async function postGiftFeed(client: Client, payload: GiftPayload) {
+  const channelId = process.env.GIFT_FEED_CHANNEL_ID;
+  if (!channelId) return;
+
+  await sendGiftFeedMessage(client, channelId, payload);
+
+  if (
+    payload.totalAmount >= HIGH_VALUE_GIFT_THRESHOLD &&
+    HIGH_VALUE_GIFT_FEED_CHANNEL_ID &&
+    HIGH_VALUE_GIFT_FEED_CHANNEL_ID !== channelId
+  ) {
+    await sendGiftFeedMessage(client, HIGH_VALUE_GIFT_FEED_CHANNEL_ID, payload);
   }
 }
