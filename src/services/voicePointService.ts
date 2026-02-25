@@ -55,6 +55,7 @@ type OpenSession = {
 };
 
 const activeSessionCache = new Map<string, OpenSession>();
+const pendingSettleDmPoints = new Map<string, Prisma.Decimal>();
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? '', 10);
@@ -186,6 +187,19 @@ async function sendSettleDm(
   }
 }
 
+function queuePendingSettleDm(discordUserId: string, points: Prisma.Decimal) {
+  if (points.lte(0)) return;
+  const existing = pendingSettleDmPoints.get(discordUserId) ?? DEC_ZERO;
+  pendingSettleDmPoints.set(discordUserId, existing.add(points));
+}
+
+async function flushPendingSettleDm(client: Client, discordUserId: string) {
+  const pending = pendingSettleDmPoints.get(discordUserId);
+  if (!pending || pending.lte(0)) return;
+  pendingSettleDmPoints.delete(discordUserId);
+  await sendSettleDm(client, discordUserId, pending);
+}
+
 async function closeSession(
   client: Client,
   session: OpenSession,
@@ -250,8 +264,11 @@ async function closeSession(
   });
 
   activeSessionCache.delete(session.discordUserId);
-  if (settled) {
-    await sendSettleDm(client, session.discordUserId, awardedPoints);
+  if (settled && awardedPoints.gt(0)) {
+    queuePendingSettleDm(session.discordUserId, awardedPoints);
+    if (closeReason === 'leave_voice') {
+      await flushPendingSettleDm(client, session.discordUserId);
+    }
   }
 }
 
@@ -379,6 +396,9 @@ async function handleVoiceStateUpdate(client: Client, oldState: VoiceState, newS
     await openSession(client, member.id, guild.id, newState.channelId, endedAt);
   }
   await reconcileImpactedChannelPeers(client, guild, member.id, impactedChannelIds, endedAt);
+  if (!newState.channelId) {
+    await flushPendingSettleDm(client, member.id);
+  }
 }
 
 async function resetOpenSessions(): Promise<void> {
