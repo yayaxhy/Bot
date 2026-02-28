@@ -32,6 +32,7 @@ async function fetchOrderSummary(orderId: string) {
       displayNo: true,
       peiwanId: true,
       totalMinutes: true,
+      chargedMinutes: true,
       grossAmount: true,
       netAmount: true,
       hostId: true,
@@ -158,6 +159,7 @@ export async function notifyOrderEnded(orderId: string) {
   const specialJiuzheCount = specialJiuzheLotteryCount + specialJiuzheCouponCount;
 
   const totalMinutes = order.totalMinutes ?? 0;
+  const chargedMinutes = order.chargedMinutes ?? 0;
   const gross = order.grossAmount ? Number(order.grossAmount.toString()) : 0;
   const net = order.netAmount ? Number(order.netAmount.toString()) : 0;
   const hostBalance = order.host?.totalBalance ? Number(order.host.totalBalance.toString()) : 0;
@@ -189,6 +191,7 @@ export async function notifyOrderEnded(orderId: string) {
         order.workerId,
         order.peiwanId ?? '—',
         totalMinutes,
+        chargedMinutes,
         gross,
         hostBalance,
         heartInc,
@@ -256,6 +259,7 @@ export async function notifyOrderEnded(orderId: string) {
           displayNo,
           order.hostId,
           totalMinutes,
+          chargedMinutes,
           gross,
           net,
           heartInc,

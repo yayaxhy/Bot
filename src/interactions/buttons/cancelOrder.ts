@@ -24,7 +24,7 @@ export const cancelOrder = async (interaction: ButtonInteraction) => {
 
   // Send cancel confirmation to user
   await interaction.channel.send({
-    embeds: [order_end_boss_embed(updated.displayNo, null, '—', 0, 0, 0, 0, 0, 0, 0)] // Provide default values for the embed (or fetch relevant data)
+    embeds: [order_end_boss_embed(updated.displayNo, null, '—', 0, 0, 0, 0, 0, 0, 0, 0)] // Provide default values for the embed (or fetch relevant data)
   });
 
   interaction.reply('You have canceled the order.');

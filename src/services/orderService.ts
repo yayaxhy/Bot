@@ -150,8 +150,10 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
     });
     if (!order || order.status !== OrderStatus.RUNNING) return { charged: false, insufficient: false };
 
-    const billableAnchor =
-      order.billableStartAt ?? order.stopwatchStartAt ?? order.acceptedAt ?? order.createdAt ?? null;
+    const baseStart = order.stopwatchStartAt ?? order.acceptedAt ?? order.createdAt ?? null;
+    // Backward compatibility: old RUNNING orders may not have billableStartAt persisted.
+    // In that case still honor the 5-minute free window from the session start.
+    const billableAnchor = order.billableStartAt ?? (baseStart ? addMinutes(baseStart, 5) : null);
     if (!billableAnchor) return { charged: false, insufficient: false };
 
     const now = new Date();
@@ -408,7 +410,8 @@ async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTim
   const stopwatchStart =
     order.stopwatchStartAt ?? order.acceptedAt ?? order.createdAt ?? endTime;
   const totalMinutes = minutesBetweenCeil(stopwatchStart, endTime);
-  const billableStart = order.billableStartAt ?? stopwatchStart;
+  // Backward compatibility for legacy rows without billableStartAt.
+  const billableStart = order.billableStartAt ?? addMinutes(stopwatchStart, 5);
   const billableMinutes = Math.max(0, minutesBetweenCeil(billableStart, endTime));
 
   const gross = round2(unitPrice.mul(billableMinutes).div(60));

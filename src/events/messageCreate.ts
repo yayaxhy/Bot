@@ -375,6 +375,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
       displayNo: true,
       peiwanId: true,
       totalMinutes: true,
+      chargedMinutes: true,
       grossAmount: true,
       netAmount: true,
       hostId: true,
@@ -390,6 +391,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
   }
 
   const totalMinutes = ended.totalMinutes ?? 0;
+  const chargedMinutes = ended.chargedMinutes ?? 0;
   const gross = ended.grossAmount ? Number(ended.grossAmount.toString()) : 0;
   const net = ended.netAmount ? Number(ended.netAmount.toString()) : 0;
   const hostBalance = ended.host?.totalBalance ? Number(ended.host.totalBalance.toString()) : 0;
@@ -425,6 +427,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
           ended.workerId,
           ended.peiwanId ?? '—',
           totalMinutes,
+          chargedMinutes,
           gross,
           hostBalance,
           heartInc,
@@ -446,6 +449,7 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
           ended.displayNo ?? ended.id,
           ended.hostId,
           totalMinutes,
+          chargedMinutes,
           gross,
           net,
           heartInc,

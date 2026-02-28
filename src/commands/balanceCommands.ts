@@ -4,6 +4,7 @@ import prisma from '../db/prisma.js';
 import { isCashAdmin } from './cash.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from '../services/individualTransactionService.js';
+import { suppressRechargeNotifications } from '../services/rechargeNotifyConfig.js';
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
@@ -32,10 +33,118 @@ function parseAmountAndMentions(
   return { amount: DEC(amountNum), ids: uniqueMentionIds };
 }
 
+function parseRealCashCommand(
+  msg: Message
+): { sign: '+' | '-'; amount: Prisma.Decimal; targetId: string } | null {
+  const content = msg.content.trim();
+  if (!content.toLowerCase().startsWith('!realcash')) return null;
+
+  const mentionMatches = Array.from(content.matchAll(/<@!?(\d+)>/g));
+  const uniqueMentionIds = Array.from(new Set(mentionMatches.map((m) => m[1]).filter(Boolean)));
+  if (uniqueMentionIds.length !== 1) return null;
+
+  let rest = content.slice('!realcash'.length).trim();
+  const mentionRegex = new RegExp(`<@!?${uniqueMentionIds[0]}>`, 'g');
+  rest = rest.replace(mentionRegex, ' ').replace(/\s+/g, ' ').trim();
+
+  const m = rest.match(/^([+-])\s*([0-9]+(?:\.[0-9]{1,4})?)$/);
+  if (!m) return null;
+
+  const sign = m[1] as '+' | '-';
+  const amount = DEC(m[2]);
+  if (amount.lte(0)) return null;
+
+  return { sign, amount, targetId: uniqueMentionIds[0] };
+}
+
 export function registerBalanceCommands(client: Client) {
   client.on('messageCreate', async (msg) => {
     try {
       if (msg.author.bot) return;
+
+      // !realcash +100 @用户  （recharge -> income）
+      // !realcash -100 @用户  （income -> recharge）
+      if (msg.content.trim().toLowerCase().startsWith('!realcash')) {
+        try {
+          if (!isCashAdmin(msg)) {
+            await msg.channel.send('❌ 你没有权限使用该命令。');
+            return;
+          }
+
+          const parsed = parseRealCashCommand(msg);
+          if (!parsed) {
+            await msg.channel.send('用法：`!realcash +金额 @用户` 或 `!realcash -金额 @用户`');
+            return;
+          }
+
+          const { sign, amount, targetId } = parsed;
+
+          const updated = await prisma.$transaction(async (tx) => {
+            await suppressRechargeNotifications(tx);
+
+            const before = await tx.member.findUnique({
+              where: { discordUserId: targetId },
+              select: { income: true, recharge: true, totalBalance: true },
+            });
+            if (!before) {
+              throw new Error('TARGET_NOT_FOUND');
+            }
+
+            const incomeBefore = DEC(before.income ?? 0);
+            const rechargeBefore = DEC(before.recharge ?? 0);
+
+            if (sign === '+') {
+              if (rechargeBefore.lt(amount)) {
+                throw new Error('INSUFFICIENT_RECHARGE');
+              }
+
+              return tx.member.update({
+                where: { discordUserId: targetId },
+                data: {
+                  recharge: { decrement: amount },
+                  income: { increment: amount },
+                },
+                select: { income: true, recharge: true, totalBalance: true },
+              });
+            }
+
+            if (incomeBefore.lt(amount)) {
+              throw new Error('INSUFFICIENT_INCOME');
+            }
+
+            return tx.member.update({
+              where: { discordUserId: targetId },
+              data: {
+                income: { decrement: amount },
+                recharge: { increment: amount },
+              },
+              select: { income: true, recharge: true, totalBalance: true },
+            });
+          });
+
+          await msg.channel.send(
+            `调账成功，可以提现余额：${DEC(updated.income ?? 0).toFixed(2)}，充值余额：${DEC(updated.recharge ?? 0).toFixed(2)}，总余额：${DEC(updated.totalBalance ?? 0).toFixed(2)}`
+          );
+          return;
+        } catch (err: any) {
+          const code = String(err?.message ?? '');
+          if (code === 'TARGET_NOT_FOUND') {
+            await msg.channel.send('调账失败：用户不存在。');
+            return;
+          }
+          if (code === 'INSUFFICIENT_RECHARGE') {
+            await msg.channel.send('调账失败：充值余额不足。');
+            return;
+          }
+          if (code === 'INSUFFICIENT_INCOME') {
+            await msg.channel.send('调账失败：可提现余额不足。');
+            return;
+          }
+          console.error('[realcash] error', err);
+          await msg.channel.send('调账失败，请稍后再试。');
+          return;
+        }
+      }
 
       // !扣款 金额 @用户
       if (msg.content.trim().startsWith('!扣款')) {
