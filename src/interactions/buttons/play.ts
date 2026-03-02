@@ -10,9 +10,8 @@ import {
 } from 'discord.js';
 import prisma from '../../db/prisma.js';
 import { clickStore } from '../../services/clickStore.js';
-import { recordOrderClick } from '../../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
-import { PeiwanReviewDisplayMode, PeiwanStatus, QuotationCode } from '@prisma/client';
+import { Prisma, PeiwanReviewDisplayMode, PeiwanStatus, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
   buildGiftingSelect,
@@ -275,49 +274,66 @@ export async function handlePlayButton(i: ButtonInteraction) {
       return;
     }
 
-    // 首次点击：先标记，后续点击将静默
+    const workerDisplayName =
+      i.member && typeof i.member === 'object' && 'displayName' in i.member
+        ? (i.member.displayName as string | undefined)
+        : null;
+    updateMemberServerDisplayName(prisma, workerId, workerDisplayName).catch(() => {});
+
+    // Authoritative dedupe by DB unique(orderId, workerId), avoids in-memory counter drift after restart.
+    try {
+      await prisma.orderRequestClick.create({
+        data: {
+          orderId,
+          workerId,
+          workerDisplayName: workerDisplayName?.trim() || null,
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && (err.code === 'P2002' || err.code === 'P2003')) {
+        // already clicked or order row missing; keep silent by design
+        return;
+      }
+      throw err;
+    }
+
+    // 首次点击成功：本进程做快速去重标记
     markClicked(orderId, workerId);
 
-    // 计数并更新按钮（记得把 ownerId 写回 customId）
+    // 计数和展示以数据库为准
     clickStore.init(orderId, ownerId);
-    const res = clickStore.addClick(orderId, workerId);
-    if (res) {
-      const workerDisplayName =
-        i.member && typeof i.member === 'object' && 'displayName' in i.member
-          ? (i.member.displayName as string | undefined)
-          : null;
-      updateMemberServerDisplayName(prisma, workerId, workerDisplayName).catch(() => {});
-      recordOrderClick({ orderId, workerId, workerDisplayName }).catch(() => {});
-      try {
-        const row = makePlayRow(res.count, orderId, ownerId);
-        const targets = clickStore.getMessages(orderId, 'body');
-        const updatedIds = new Set<string>();
+    clickStore.addClick(orderId, workerId);
+    const dbCount = await prisma.orderRequestClick.count({ where: { orderId } });
+    const row = makePlayRow(dbCount, orderId, ownerId);
 
-        // update the message where the click happened
-        if (i.message.editable) {
-          await i.message.edit({ components: [row] });
-          updatedIds.add(`${i.channelId ?? ''}:${i.message.id}`);
-        }
+    try {
+      const targets = clickStore.getMessages(orderId, 'body');
+      const updatedIds = new Set<string>();
 
-        // update other posted copies for the same order
-        for (const m of targets) {
-          const key = `${m.channelId}:${m.messageId}`;
-          if (updatedIds.has(key)) continue;
-          try {
-            const ch = await i.client.channels.fetch(m.channelId).catch(() => null);
-            if (ch && ch.isTextBased() && 'messages' in ch) {
-              const msg = await (ch as TextChannel).messages.fetch(m.messageId).catch(() => null);
-              if (msg?.editable) {
-                await msg.edit({ components: [row] });
-              }
-            }
-          } catch (err) {
-            console.error('[handlePlayButton] sync label failed', { channelId: m.channelId, messageId: m.messageId, err });
-          }
-        }
-      } catch (e) {
-        console.error('[handlePlayButton] edit components failed:', e);
+      // update the message where the click happened
+      if (i.message.editable) {
+        await i.message.edit({ components: [row] });
+        updatedIds.add(`${i.channelId ?? ''}:${i.message.id}`);
       }
+
+      // update other posted copies for the same order
+      for (const m of targets) {
+        const key = `${m.channelId}:${m.messageId}`;
+        if (updatedIds.has(key)) continue;
+        try {
+          const ch = await i.client.channels.fetch(m.channelId).catch(() => null);
+          if (ch && ch.isTextBased() && 'messages' in ch) {
+            const msg = await (ch as TextChannel).messages.fetch(m.messageId).catch(() => null);
+            if (msg?.editable) {
+              await msg.edit({ components: [row] });
+            }
+          }
+        } catch (err) {
+          console.error('[handlePlayButton] sync label failed', { channelId: m.channelId, messageId: m.messageId, err });
+        }
+      }
+    } catch (e) {
+      console.error('[handlePlayButton] edit components failed:', e);
     }
 
     // 取陪玩档案

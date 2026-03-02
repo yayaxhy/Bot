@@ -12,6 +12,7 @@ export type GiftPayload = {
 
 const HIGH_VALUE_GIFT_FEED_CHANNEL_ID = '1475724021709668414';
 const HIGH_VALUE_GIFT_THRESHOLD = 800;
+const HIGH_VALUE_NOTIFY_USER_ID = '1421651539247894549';
 
 async function sendGiftFeedMessage(
   client: Client,
@@ -33,7 +34,12 @@ async function sendGiftFeedMessage(
   }
 
   const giverLabel = payload.anonymous ? '匿名' : userMention(payload.giverId);
+  const mentionPrefix =
+    channelId === HIGH_VALUE_GIFT_FEED_CHANNEL_ID && HIGH_VALUE_NOTIFY_USER_ID
+      ? `${userMention(HIGH_VALUE_NOTIFY_USER_ID)} `
+      : '';
   const content =
+    mentionPrefix +
     `感谢${giverLabel} 老板送给陪玩 ` +
     `${userMention(payload.receiverId)} "${payload.giftName}", 感谢老板对陪陪的喜爱`;
 

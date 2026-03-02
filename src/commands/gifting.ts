@@ -1,5 +1,5 @@
 import { Client, Message, MessageCreateOptions } from 'discord.js';
-import { Prisma, PrismaClient, MemberStatus, LotteryStatus, CouponType } from '@prisma/client';
+import { Prisma, PrismaClient, MemberStatus, LotteryStatus, CouponType, OrderStatus } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 import { postGiftFeed } from '../features/giftFeedHelper.js';
 import { recalcAllOrdersForHost } from '../services/orderService.js';
@@ -30,6 +30,15 @@ import {
 
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
+const INSUFFICIENT_BALANCE_ERROR = '余额不足，无法完成打赏。';
+const INSUFFICIENT_RESERVED_ERROR = '可用余额不足（存在进行中的订单已计费预留）。';
+
+function resolveInsufficientReason(message: unknown): string | null {
+  if (typeof message !== 'string') return null;
+  if (message.includes(INSUFFICIENT_RESERVED_ERROR)) return INSUFFICIENT_RESERVED_ERROR;
+  if (message.includes(INSUFFICIENT_BALANCE_ERROR)) return INSUFFICIENT_BALANCE_ERROR;
+  return null;
+}
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 const hasSend = (channel: unknown): channel is { send: Function } =>
@@ -466,18 +475,19 @@ export async function performGift(
     await suppressRechargeNotifications(tx);
 
     const now = new Date();
-    const [giverAccount, receiver] = await Promise.all([
-      tx.member.findUnique({
-        where: { discordUserId: giverId },
-        select: { income: true, recharge: true, totalBalance: true },
-      }),
-      tx.member.findUnique({
-        where: { discordUserId: receiverId },
-        select: { commissionRate: true, income: true, recharge: true, totalBalance: true },
-      }),
-    ]);
-    if (!giverAccount) throw new Error('付款方不存在。');
+    const receiver = await tx.member.findUnique({
+      where: { discordUserId: receiverId },
+      select: { commissionRate: true, income: true, recharge: true, totalBalance: true },
+    });
     if (!receiver) throw new Error('收款方不存在。');
+
+    // Lock payer row so gift deduction and running-order reserve check stay consistent.
+    await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${giverId} FOR UPDATE`;
+    const giverAccount = await tx.member.findUnique({
+      where: { discordUserId: giverId },
+      select: { income: true, recharge: true, totalBalance: true },
+    });
+    if (!giverAccount) throw new Error('付款方不存在。');
 
     let receiverRate = DEC(receiver.commissionRate ?? 0);
     const commissionBoost = await getActiveCommissionBoost(tx, receiverId);
@@ -720,7 +730,18 @@ export async function performGift(
     const giverIncome = new Prisma.Decimal(giverAccount.income ?? 0);
     const giverRecharge = new Prisma.Decimal(giverAccount.recharge ?? 0);
     const giverTotal = new Prisma.Decimal(giverAccount.totalBalance ?? 0);
-    if (giverTotal.lt(payable)) throw new Error('余额不足，无法完成打赏。');
+    const runningReserved = await tx.order.aggregate({
+      _sum: { chargedGross: true },
+      where: { hostId: giverId, status: OrderStatus.RUNNING },
+    });
+    const reservedForRunningOrders = new Prisma.Decimal(runningReserved._sum?.chargedGross ?? 0);
+    let availableForGift = giverTotal.sub(reservedForRunningOrders);
+    if (availableForGift.lt(0)) availableForGift = DEC(0);
+    if (availableForGift.lt(payable)) {
+      if (giverTotal.lt(payable)) throw new Error(INSUFFICIENT_BALANCE_ERROR);
+      if (reservedForRunningOrders.gt(0)) throw new Error(INSUFFICIENT_RESERVED_ERROR);
+      throw new Error(INSUFFICIENT_BALANCE_ERROR);
+    }
 
     let giverSplit: ReturnType<typeof splitIncomeRecharge>;
     if (payable.lte(0)) {
@@ -738,7 +759,7 @@ export async function performGift(
         giverSplit = splitIncomeRecharge(giverIncome, giverRecharge, payable);
       } catch (err: any) {
         if (err?.message === 'INSUFFICIENT_FUNDS') {
-          throw new Error('余额不足，无法完成打赏。');
+          throw new Error(INSUFFICIENT_BALANCE_ERROR);
         }
         throw err;
       }
@@ -1183,8 +1204,9 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           }
         } catch (err: any) {
           const plainMessage = err?.message ?? '未知错误';
-          if (typeof plainMessage === 'string' && plainMessage.includes('余额不足，无法完成打赏。')) {
-            await msg.reply('打赏失败，老板余额不足');
+          const insufficientReason = resolveInsufficientReason(plainMessage);
+          if (insufficientReason) {
+            await msg.reply(`打赏失败：${insufficientReason}`);
             return;
           }
           throw err;
@@ -1308,13 +1330,14 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
     } catch (err: any) {
       console.error('[gifting] error:', err);
       const plainMessage = err?.message ?? '未知错误';
-      const insufficient =
-        typeof plainMessage === 'string' && plainMessage.includes('余额不足，无法完成打赏。');
+      const insufficientReason = resolveInsufficientReason(plainMessage);
       try {
-        const replyText = insufficient ? '打赏失败：请查看私信噢' : `打赏失败：${plainMessage}`;
+        const replyText = insufficientReason
+          ? `打赏失败：${insufficientReason}`
+          : `打赏失败：${plainMessage}`;
         await msg.reply(replyText);
       } catch {}
-      if (insufficient) {
+      if (insufficientReason) {
         const staffPing = makeStaffPing();
         try {
           await safeSend(

@@ -42,6 +42,7 @@ import { registerTechTagSync } from './services/techTagService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
 import { registerInviteReward } from './services/inviteRewardService.js';
 import { registerVoicePointService } from './services/voicePointService.js';
+import { registerChatVoucherDropService } from './services/chatVoucherDropService.js';
 import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
 import { startCommissionBuffWatcher } from './services/buffService.js';
 import { startLeaderboardScheduler } from './services/leaderboardService.js';
@@ -270,6 +271,7 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
 registerTechTagSync(client);
 registerInviteReward(client);
 registerVoicePointService(client);
+registerChatVoucherDropService(client, prisma);
 
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
