@@ -71,6 +71,7 @@ const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q5: 'csgoPrice',
   Q6: 'narakaPrice',
   Q7: 'apexPrice',
+  Q8: 'owPrice',
 };
 
 /** Map peiwan pricing to QuotationCode => price (nullable allowed for hidden options) */
@@ -83,6 +84,7 @@ function pricesFromPeiwan(peiwan: any): Partial<Record<QuotationCode, number | n
     Q5: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q5]) || null,
     Q6: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q6]) || null,
     Q7: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q7]) || null,
+    Q8: numberOrZero(peiwan[PRICE_FIELD_BY_CODE.Q8]) || null,
   };
 }
 

@@ -107,6 +107,7 @@ const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q5: 'csgoPrice',
   Q6: 'narakaPrice',
   Q7: 'apexPrice',
+  Q8: 'owPrice',
 };
 
 function priceFromPeiwan(peiwan: any, code: QuotationCode): number | null {
@@ -514,6 +515,7 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
         csgoPrice: true,
         narakaPrice: true,
         apexPrice: true,
+        owPrice: true,
       },
     });
     if (!peiwan) {

@@ -28,6 +28,7 @@ const QUOTATION_LABEL: Record<QuotationCode, string> = {
   Q5: 'CSGO',
   Q6: '永劫',
   Q7: 'Apex',
+  Q8: 'OW',
 };
 const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q1: 'quotation_Q1',
@@ -37,6 +38,7 @@ const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q5: 'csgoPrice',
   Q6: 'narakaPrice',
   Q7: 'apexPrice',
+  Q8: 'owPrice',
 };
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
@@ -149,7 +151,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
   const mode: OrderMode = (customIdBase === 'realname_box') ? OrderMode.REALNAME : OrderMode.ANONYMOUS;
   const orderIdFromCustom = customOrderId && customOrderId.trim() ? customOrderId.trim() : null;
 
-  // 1) 解析所选报价档位（Q1..Q7）
+  // 1) 解析所选报价档位（Q1..Q8）
   const codeStr = i.values?.[0];
   if (!codeStr) {
     return i.reply({ content: '请选择一个有效的价格档位。', ephemeral: true });
@@ -180,6 +182,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
       csgoPrice: true,
       narakaPrice: true,
       apexPrice: true,
+      owPrice: true,
     },
   });
   if (!peiwan) {

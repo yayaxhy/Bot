@@ -56,6 +56,7 @@ enum QuotationCode {
   Q5
   Q6
   Q7
+  Q8
 }
 
 enum PeiwanSex {
@@ -565,6 +566,7 @@ model PEIWAN {
   csgoPrice   Decimal? @db.Decimal(10, 2)
   narakaPrice Decimal? @db.Decimal(10, 2)
   apexPrice   Decimal? @db.Decimal(10, 2)
+  owPrice     Decimal? @db.Decimal(10, 2)
 
   // Payout rate copy on PEIWAN (synced → Member via DB trigger)
   commissionRate Decimal @default(0.75) @db.Decimal(7, 6)

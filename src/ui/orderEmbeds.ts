@@ -295,7 +295,7 @@ export function sent_MP_embed(
 /* ================== 下拉框构建 ================== */
 /**
  * 报价档位下拉（隐藏 null/无效）。若 0 个选项则返回 null，调用处不发该下拉。
- * 用更宽松的 Record<string, number|null|undefined> 以兼容你当前的 Q1..Q7 / DEFAULT 差异。
+ * 用更宽松的 Record<string, number|null|undefined> 以兼容你当前的 Q1..Q8 / DEFAULT 差异。
  */
 export function buildQuotationSelect(
   kind: 'REALNAME' | 'ANON',
@@ -313,7 +313,7 @@ export function buildQuotationSelect(
     .setPlaceholder(kind === 'REALNAME' ? '实名点单' : '匿名点单')
     .setMinValues(1).setMaxValues(1);
 
-  // 支持两种枚举写法：Q1..Q7 或 DEFAULT/Q2..Q7
+  // 支持两种枚举写法：Q1..Q8 或 DEFAULT/Q2..Q8
   const labelMap: Record<string, string> = {
     Q1: '默认单价',
     Q2: 'LoL单价',
@@ -322,6 +322,7 @@ export function buildQuotationSelect(
     Q5: 'CSGO单价',
     Q6: '永劫单价',
     Q7: 'Apex单价',
+    Q8: 'OW单价',
     DEFAULT: '默认单价',
   };
 
