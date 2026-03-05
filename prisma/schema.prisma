@@ -295,6 +295,7 @@ model IndividualTransaction {
   typeOfTransaction  String
 
   @@index([discordId])
+  @@index([discordId, timeCreatedAt, typeOfTransaction])
 }
 
 model WithdrawalAccount {
