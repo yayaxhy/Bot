@@ -479,6 +479,34 @@ model GiftAudit {
   @@map("gift_audit")
 }
 
+model OrderAudit {
+  id                          String   @id @default(cuid())
+  orderId                     String   @unique
+  paymentTransactionId        String   @unique
+  transactionOrderId          Int      @unique
+  hostIndividualTransactionId String?  @unique
+  workerIndividualTransactionId String? @unique
+  hostId                      String
+  workerId                    String
+  peiwanId                    Int
+  gross                       Decimal  @db.Decimal(19, 4)
+  pointsEarned                Decimal  @db.Decimal(19, 4)
+  feeAmount                   Decimal  @db.Decimal(19, 4)
+  netAmount                   Decimal  @db.Decimal(19, 4)
+  commissionRate              Decimal  @db.Decimal(19, 6)
+  hostFromIncome              Decimal  @db.Decimal(19, 4)
+  hostFromRecharge            Decimal  @db.Decimal(19, 4)
+  spendBonusExtra             Decimal  @db.Decimal(19, 4)
+  spendRemainingBefore        Decimal  @db.Decimal(19, 4)
+  bossReferralInviterId       String?
+  bossReferralAmount          Decimal? @db.Decimal(19, 4)
+  workerReferralInviterId     String?
+  workerReferralAmount        Decimal? @db.Decimal(19, 4)
+  createdAt                   DateTime @default(now())
+
+  @@map("order_audit")
+}
+
 model LeaderboardPost {
   id          String   @id @default(cuid())
   kind        String
@@ -777,6 +805,23 @@ model CommissionBuff {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@map("commission_buff")
+}
+
+model AutoCommissionBuff {
+  userId          String   @id @map("user_id")
+  targetShare     Decimal  @db.Decimal(10, 4) @default(0.91) @map("target_share")
+  thresholdAmount Decimal  @db.Decimal(19, 4) @default(12000) @map("threshold_amount")
+  windowDays      Int      @default(30) @map("window_days")
+  windowStart     DateTime @map("window_start")
+  windowEnd       DateTime @map("window_end")
+  currentAmount   Decimal  @db.Decimal(19, 4) @default(0) @map("current_amount")
+  tierExpiries    Json?    @map("tier_expiries")
+  activeUntil     DateTime? @map("active_until")
+  lastQualifiedAt DateTime? @map("last_qualified_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("auto_commission_buff")
 }
 
 model FlowBuff {

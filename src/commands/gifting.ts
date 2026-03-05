@@ -20,6 +20,7 @@ import {
   getSpendBuffRemaining,
 } from '../services/buffService.js';
 import { suppressRechargeNotifications } from '../services/rechargeNotifyConfig.js';
+import { evaluateAutoCommissionBuff, getAutoCommissionBoost } from '../services/autoCommissionBuffService.js';
 import { isCashAdmin } from './cash.js';
 import {
   GIFT_VOUCHER_CONFIGS,
@@ -490,8 +491,10 @@ export async function performGift(
     if (!giverAccount) throw new Error('付款方不存在。');
 
     let receiverRate = DEC(receiver.commissionRate ?? 0);
-    const commissionBoost = await getActiveCommissionBoost(tx, receiverId);
-    receiverRate = receiverRate.add(commissionBoost);
+    const manualBoost = await getActiveCommissionBoost(tx, receiverId);
+    // Auto commission adjustment is temporarily disabled.
+    // const autoBoost = await getAutoCommissionBoost(tx, receiverId, receiverRate);
+    receiverRate = receiverRate.add(manualBoost);
     if (receiverRate.gt(1)) receiverRate = DEC(1);
     const feeRate = DEC(1).sub(receiverRate);
     const feeAmount = gross.mul(feeRate);
@@ -996,6 +999,10 @@ export async function performGift(
   syncSpentRolesForMember(receiverId, { includeSpendRoles: false }).catch((err) =>
     console.error('[spent-role] gift sync failed for receiver', err)
   );
+  // Auto commission adjustment is temporarily disabled.
+  // evaluateAutoCommissionBuff(receiverId).catch((err) =>
+  //   console.error('[performGift] auto commission eval failed', err),
+  // );
 
   try {
     const pointsRow = await prisma.loyaltyPoint.findUnique({

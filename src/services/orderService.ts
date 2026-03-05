@@ -6,6 +6,7 @@ import { addHeart } from './heartService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { evaluateAutoCommissionBuff, getAutoCommissionBoost } from './autoCommissionBuffService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 import { PrismaClientKnownRequestError as PrismaKnownError } from '@prisma/client/runtime/library.js';
 
@@ -314,6 +315,10 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
     } catch (err) {
       console.error('[recalcOrAutoEnd] addHeart failed', { orderId, err });
     }
+    // Auto commission adjustment is temporarily disabled.
+    // evaluateAutoCommissionBuff(result.workerId).catch((err) =>
+    //   console.error('[recalcOrAutoEnd] auto commission eval failed', { orderId, err }),
+    // );
   }
   const totalDuration = Date.now() - outerStart;
   console.log('[recalcOrAutoEnd] duration', { orderId, txMs: txDuration, totalMs: totalDuration, ended: result.ended });
@@ -396,6 +401,10 @@ export async function endOrder(orderId: string, byDiscordId: string) {
     } catch (err) {
       console.error('[endOrder] addHeart failed', { orderId, err });
     }
+    // Auto commission adjustment is temporarily disabled.
+    // evaluateAutoCommissionBuff(result.workerId).catch((err) =>
+    //   console.error('[endOrder] auto commission eval failed', { orderId, err }),
+    // );
   }
   // 通知统一由 timerService 触发，避免重复
   const totalDuration = Date.now() - outerStart;
@@ -416,13 +425,15 @@ async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTim
 
   const gross = round2(unitPrice.mul(billableMinutes).div(60));
   let payoutShare = new Prisma.Decimal(order.commissionRate ?? order.worker.commissionRate ?? 0.75);
-  const commissionBoost = await getActiveCommissionBoost(tx, order.workerId);
-  payoutShare = payoutShare.add(commissionBoost);
+  const manualBoost = await getActiveCommissionBoost(tx, order.workerId);
+  // Auto commission adjustment is temporarily disabled.
+  // const autoBoost = await getAutoCommissionBoost(tx, order.workerId, payoutShare);
+  payoutShare = payoutShare.add(manualBoost);
   if (payoutShare.gt(1)) payoutShare = new Prisma.Decimal(1);
   const netToWorker = round2(gross.mul(payoutShare));
   const feeToPlatform = round2(gross.sub(netToWorker));
 
-  await settle(tx, order, endTime, totalMinutes, billableMinutes, gross, netToWorker, feeToPlatform);
+  await settle(tx, order, endTime, totalMinutes, billableMinutes, gross, netToWorker, feeToPlatform, payoutShare);
 
   await tx.pEIWAN.update({ where: { PEIWANID: order.peiwanId }, data: { status: PeiwanStatus.free } });
   await tx.workerLock.deleteMany({ where: { workerId: order.workerId } });
@@ -441,7 +452,8 @@ async function settle(
   billableMinutes: number,
   gross: Prisma.Decimal,
   netToWorker: Prisma.Decimal,
-  feeToPlatform: Prisma.Decimal
+  feeToPlatform: Prisma.Decimal,
+  payoutShare: Prisma.Decimal
 ) {
   await tx.order.update({
     where: { id: order.id },
@@ -468,28 +480,32 @@ async function settle(
   const hostRecharge = new Prisma.Decimal(hostAccount.recharge ?? 0);
   const hostBalanceBefore = new Prisma.Decimal(hostAccount.totalBalance ?? 0);
   let hostBalanceAfter = hostBalanceBefore;
+  let hostFromIncome = new Prisma.Decimal(0);
+  let hostFromRecharge = new Prisma.Decimal(0);
 
   const spendBonus = await consumeSpendBuff(tx, order.hostId, gross);
+  const spendRemainingBefore = spendBonus.extra.add(spendBonus.remaining);
   const totalSpentIncrement = gross.add(spendBonus.extra);
+  let hostIndividualTxId: string | null = null;
 
   if (gross.gt(0)) {
-    const fromIncome = hostIncome.gte(gross) ? gross : hostIncome;
-    const fromRecharge = gross.sub(fromIncome);
+    hostFromIncome = hostIncome.gte(gross) ? gross : hostIncome;
+    hostFromRecharge = gross.sub(hostFromIncome);
 
     hostBalanceAfter = hostBalanceBefore.sub(gross);
 
     await tx.member.update({
       where: { discordUserId: order.hostId },
       data: {
-        income: { decrement: fromIncome },
-        recharge: { decrement: fromRecharge },
+        income: { decrement: hostFromIncome },
+        recharge: { decrement: hostFromRecharge },
         totalBalance: { decrement: gross },
         totalSpent: { increment: totalSpentIncrement },
       },
     });
     await adjustLoyaltyPointsTx(tx, order.hostId, gross);
 
-    await recordIndividualTransaction(tx, {
+    const hostIndividualTx = await recordIndividualTransaction(tx, {
       discordId: order.hostId,
       thirdPartydiscordId: order.workerId,
       balanceBefore: hostBalanceBefore,
@@ -497,6 +513,7 @@ async function settle(
       balanceAfter: hostBalanceAfter,
       typeOfTransaction: '点单',
     });
+    hostIndividualTxId = hostIndividualTx.transactionId;
   } else {
     await tx.member.update({
       where: { discordUserId: order.hostId },
@@ -534,7 +551,7 @@ async function settle(
     });
   }
 
-  await recordIndividualTransaction(tx, {
+  const workerIndividualTx = await recordIndividualTransaction(tx, {
     discordId: order.workerId,
     thirdPartydiscordId: order.hostId,
     balanceBefore: workerBalanceBefore,
@@ -564,11 +581,38 @@ async function settle(
   });
 
   // Referral commission: inviter of host (LAOBAN) and inviter of worker (PEIWAN) both earn 1% of worker net
-  await grantReferralCommission(tx, {
+  const referralSummary = await grantReferralCommission(tx, {
     order,
     gross,
     netToWorker,
     endedAt,
+  });
+
+  await tx.orderAudit.create({
+    data: {
+      orderId: order.id,
+      paymentTransactionId: trans.Transid,
+      transactionOrderId: trans.orderID,
+      hostIndividualTransactionId: hostIndividualTxId ?? undefined,
+      workerIndividualTransactionId: workerIndividualTx.transactionId,
+      hostId: order.hostId,
+      workerId: order.workerId,
+      peiwanId: order.peiwanId,
+      gross,
+      pointsEarned: gross,
+      feeAmount: feeToPlatform,
+      netAmount: netToWorker,
+      commissionRate: payoutShare,
+      hostFromIncome,
+      hostFromRecharge,
+      spendBonusExtra: spendBonus.extra,
+      spendRemainingBefore,
+      bossReferralInviterId: referralSummary.boss?.inviterId,
+      bossReferralAmount: referralSummary.boss?.amount,
+      workerReferralInviterId: referralSummary.worker?.inviterId,
+      workerReferralAmount: referralSummary.worker?.amount,
+      createdAt: endedAt,
+    },
   });
 }
 
@@ -579,13 +623,21 @@ type ReferralCommissionContext = {
   endedAt: Date;
 };
 
+type ReferralAppliedSummary = {
+  inviterId: string;
+  inviteeId: string;
+  amount: Prisma.Decimal;
+};
+
 async function grantReferralCommission(
   tx: Prisma.TransactionClient,
   ctx: ReferralCommissionContext
-) {
+): Promise<{ boss: ReferralAppliedSummary | null; worker: ReferralAppliedSummary | null }> {
   const { order, gross, netToWorker, endedAt } = ctx;
   const REF_RATE = new Prisma.Decimal(0.01);
   const REFERRAL_PAYOUT_CAP = new Prisma.Decimal(1000);
+  let bossSummary: ReferralAppliedSummary | null = null;
+  let workerSummary: ReferralAppliedSummary | null = null;
 
   // helper to pay and log
   const payReferral = async ({
@@ -596,8 +648,8 @@ async function grantReferralCommission(
     referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN' };
     amount: Prisma.Decimal;
     baseLabel: string;
-  }) => {
-    if (amount.lte(0)) return;
+  }): Promise<ReferralAppliedSummary | null> => {
+    if (amount.lte(0)) return null;
 
     const paidSoFar = await tx.referralPayout.aggregate({
       _sum: { amount: true },
@@ -608,7 +660,7 @@ async function grantReferralCommission(
     });
     const totalPaid = new Prisma.Decimal(paidSoFar._sum.amount ?? 0);
     const remaining = REFERRAL_PAYOUT_CAP.sub(totalPaid);
-    if (remaining.lte(0)) return;
+    if (remaining.lte(0)) return null;
     if (amount.gt(remaining)) {
       amount = remaining;
     }
@@ -626,7 +678,7 @@ async function grantReferralCommission(
         err.code === 'P2002'
       ) {
         // duplicate (already paid)
-        return;
+        return null;
       }
       throw err;
     }
@@ -658,6 +710,12 @@ async function grantReferralCommission(
       typeOfTransaction: `邀请提成`,
       timeCreatedAt: endedAt,
     });
+
+    return {
+      inviterId: referral.inviterId,
+      inviteeId: referral.inviteeId,
+      amount,
+    };
   };
 
   // boss side: 1% of worker net
@@ -667,7 +725,7 @@ async function grantReferralCommission(
   });
   if (bossReferral?.type === 'LAOBAN') {
     const amount = round2(netToWorker.mul(REF_RATE));
-    await payReferral({
+    bossSummary = await payReferral({
       referral: {
         inviterId: bossReferral.inviterId,
         inviteeId: bossReferral.inviteeId,
@@ -685,7 +743,7 @@ async function grantReferralCommission(
   });
   if (workerReferral?.type === 'PEIWAN') {
     const amount = round2(netToWorker.mul(REF_RATE));
-    await payReferral({
+    workerSummary = await payReferral({
       referral: {
         inviterId: workerReferral.inviterId,
         inviteeId: workerReferral.inviteeId,
@@ -695,6 +753,8 @@ async function grantReferralCommission(
       baseLabel: '陪玩1%',
     });
   }
+
+  return { boss: bossSummary, worker: workerSummary };
 }
 
 /** Recover running orders after restart: recompute balance/cutoff and auto-end if不足 */

@@ -23,6 +23,7 @@ import { handleRedEnvelopeSlash, redEnvelopeSlashCommand } from './commands/redE
 import { handleKeywordRedEnvelopeSlash, keywordRedEnvelopeSlashCommand } from './commands/keywordRedEnvelopeSlash.js';
 import { customerGangCommand, handleCustomerGangSlash } from './commands/customerGangSlash.js';
 import { handleRevertGiftSlash, revertGiftCommand } from './commands/revertGiftSlash.js';
+import { handleRevertOrderSlash, revertOrderCommand } from './commands/revertOrderSlash.js';
 import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
 import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
 import { getAvatarCommand, handleGetAvatarSlash } from './commands/getAvatarSlash.js';
@@ -45,6 +46,7 @@ import { registerVoicePointService } from './services/voicePointService.js';
 import { registerChatVoucherDropService } from './services/chatVoucherDropService.js';
 import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
 import { startCommissionBuffWatcher } from './services/buffService.js';
+import { refreshAllAutoCommissionBuffs } from './services/autoCommissionBuffService.js';
 import { startLeaderboardScheduler } from './services/leaderboardService.js';
 import { recoverPendingInvitations } from './services/orderInteractionManager.js';
 import { recoverRunningOrders } from './services/orderService.js';
@@ -197,6 +199,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleRevertGiftSlash(i);
                 return;
             }
+            if (i.commandName === '撤回订单') {
+                await handleRevertOrderSlash(i);
+                return;
+            }
             if (i.commandName === '派单私信') {
                 await handleBulkDmSlash(i);
                 return;
@@ -286,6 +292,10 @@ client.once(Events.ClientReady, async () => {
   recoverRunningOrders().catch((err) =>
     console.error('[startup] recover running orders failed:', err),
   );
+  // Auto commission adjustment is temporarily disabled.
+  // refreshAllAutoCommissionBuffs().catch((err) =>
+  //   console.error('[startup] refresh auto commission buffs failed:', err),
+  // );
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerBalanceCommands(client);
@@ -301,6 +311,7 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(keywordRedEnvelopeSlashCommand);
             await client.application.commands.create(customerGangCommand);
             await client.application.commands.create(revertGiftCommand);
+            await client.application.commands.create(revertOrderCommand);
             await client.application.commands.create(bulkDmCommand);
             await client.application.commands.create(giftSlashCommand);
             await client.application.commands.create(scratchStockCommand);

@@ -5,6 +5,7 @@ import { syncSpentRolesForMember } from './spentRoleService.js';
 import { getFlowBuffRemaining, getSpendBuffRemaining } from './buffService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { evaluateAutoCommissionBuffWithReason } from './autoCommissionBuffService.js';
 
 type TxLike = PrismaClient | Prisma.TransactionClient;
 
@@ -314,6 +315,10 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
   } catch (err) {
     console.error('[revert-gift] sync roles failed', err);
   }
+  // Auto commission adjustment is temporarily disabled.
+  // evaluateAutoCommissionBuffWithReason(result.audit.receiverId, 'revert').catch((err) =>
+  //   console.error('[revert-gift] auto commission eval failed', err),
+  // );
 
   // notifications (best-effort)
   try {

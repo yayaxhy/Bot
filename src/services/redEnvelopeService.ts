@@ -14,6 +14,7 @@ import { recordIndividualTransaction } from './individualTransactionService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { getAutoCommissionBoost } from './autoCommissionBuffService.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -841,8 +842,10 @@ export async function claimRedEnvelope(
     const baseRate = member?.commissionRate
       ? new Prisma.Decimal(member.commissionRate)
       : new Prisma.Decimal(1);
-    const commissionBoost = await getActiveCommissionBoost(tx, claimerId);
-    let effectiveRate = baseRate.add(commissionBoost);
+    const manualBoost = await getActiveCommissionBoost(tx, claimerId);
+    // Auto commission adjustment is temporarily disabled.
+    // const autoBoost = await getAutoCommissionBoost(tx, claimerId, baseRate);
+    let effectiveRate = baseRate.add(manualBoost);
     if (effectiveRate.gt(1)) effectiveRate = new Prisma.Decimal(1);
     const netAmount = new Prisma.Decimal(share.mul(effectiveRate).toFixed(2));
     const balanceAfter = balanceBefore.add(netAmount);
