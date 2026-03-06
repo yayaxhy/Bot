@@ -11,7 +11,7 @@ import {
 import prisma from '../../db/prisma.js';
 import { clickStore } from '../../services/clickStore.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
-import { Prisma, PeiwanReviewDisplayMode, PeiwanStatus, QuotationCode } from '@prisma/client';
+import { MemberStatus, Prisma, PeiwanReviewDisplayMode, PeiwanStatus, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
   buildGiftingSelect,
@@ -341,12 +341,29 @@ export async function handlePlayButton(i: ButtonInteraction) {
     // 取陪玩档案
     let peiwan: any = null;
     try {
-      peiwan = await prisma.pEIWAN.findUnique({ where: { discordUserId: workerId } });
+      peiwan = await prisma.pEIWAN.findUnique({
+        where: { discordUserId: workerId },
+        include: {
+          member: { select: { status: true } },
+        },
+      });
     } catch (e) {
       console.error('[handlePlayButton] prisma error:', e);
     }
     if (!peiwan) {
       return; // 静默：未注册陪玩则不做后续动作
+    }
+
+    // 下架陪玩（member.status 已切回 LAOBAN）或已记录删除，不允许抢单
+    if (peiwan.member?.status !== MemberStatus.PEIWAN) {
+      return;
+    }
+    const deletionRecord = await prisma.peiwanDeletion.findUnique({
+      where: { peiwanId: peiwan.PEIWANID },
+      select: { peiwanId: true },
+    });
+    if (deletionRecord) {
+      return;
     }
 
     // 忙碌：静默忽略此次抢单
