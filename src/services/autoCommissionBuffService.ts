@@ -9,7 +9,14 @@ export const AUTO_COMMISSION_WINDOW_DAYS = 30;
 export const AUTO_COMMISSION_ACTIVE_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const AUTO_COMMISSION_INCOME_TYPES = ['点单', '打赏', '红包收入', '订单撤销', '打赏撤销'] as const;
+const AUTO_COMMISSION_POSITIVE_TYPES = ['点单', '打赏', '红包收入'] as const;
+const AUTO_COMMISSION_REVERT_TYPES = ['订单撤销', '打赏撤销'] as const;
+const AUTO_COMMISSION_INCOME_TYPES = [
+  ...AUTO_COMMISSION_POSITIVE_TYPES,
+  ...AUTO_COMMISSION_REVERT_TYPES,
+] as const;
+const AUTO_COMMISSION_POSITIVE_TYPE_SET = new Set<string>(AUTO_COMMISSION_POSITIVE_TYPES);
+const AUTO_COMMISSION_REVERT_TYPE_SET = new Set<string>(AUTO_COMMISSION_REVERT_TYPES);
 
 const toDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -71,6 +78,7 @@ export async function computeAutoCommissionIncome(
       typeOfTransaction: { in: [...AUTO_COMMISSION_INCOME_TYPES] },
     },
     select: {
+      typeOfTransaction: true,
       balanceBefore: true,
       balanceAfter: true,
     },
@@ -79,7 +87,14 @@ export async function computeAutoCommissionIncome(
   const amount = rows.reduce((sum, row) => {
     const before = toDecimal(row.balanceBefore ?? 0);
     const after = toDecimal(row.balanceAfter ?? 0);
-    return sum.add(after.sub(before));
+    const delta = after.sub(before);
+    if (AUTO_COMMISSION_POSITIVE_TYPE_SET.has(row.typeOfTransaction)) {
+      return delta.gt(0) ? sum.add(delta) : sum;
+    }
+    if (AUTO_COMMISSION_REVERT_TYPE_SET.has(row.typeOfTransaction)) {
+      return delta.lt(0) ? sum.add(delta) : sum;
+    }
+    return sum;
   }, new Prisma.Decimal(0));
 
   return { amount, windowStart, windowEnd };
