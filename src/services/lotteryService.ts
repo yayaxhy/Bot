@@ -307,11 +307,12 @@ export type LotteryResult = {
 
 export async function performLotteryDraw(params: {
   userId: string;
+  payerId?: string;
   nonce: string;
   requestId?: string;
   pool?: LotteryPool;
 }): Promise<LotteryResult> {
-  const { userId, nonce, requestId, pool } = params;
+  const { userId, payerId = userId, nonce, requestId, pool } = params;
   const now = new Date();
   return prisma.$transaction(async (tx) => {
     const existing = await tx.lotteryDraw.findUnique({
@@ -331,14 +332,14 @@ export async function performLotteryDraw(params: {
 
     // 先过期掉过期券
     await tx.lotteryDraw.updateMany({
-      where: { userId, status: LotteryStatus.UNUSED, expiresAt: { lte: now } },
+      where: { userId: payerId, status: LotteryStatus.UNUSED, expiresAt: { lte: now } },
       data: { status: LotteryStatus.EXPIRED },
     });
 
     // 抽奖代金券：优先使用 coupon 表
     await tx.coupon.updateMany({
       where: {
-        discordId: userId,
+        discordId: payerId,
         type: CouponType.LOTTERY_VOUCHER,
         status: CouponStatus.ACTIVE,
         expiresAt: { lte: now },
@@ -347,7 +348,7 @@ export async function performLotteryDraw(params: {
     });
     const couponVoucher = await tx.coupon.findFirst({
       where: {
-        discordId: userId,
+        discordId: payerId,
         type: CouponType.LOTTERY_VOUCHER,
         status: CouponStatus.ACTIVE,
         expiresAt: { gt: now },
@@ -358,7 +359,7 @@ export async function performLotteryDraw(params: {
     // 抽奖代金券：按最早优先，如果存在则免扣款
     const freeVoucher = await tx.lotteryDraw.findFirst({
       where: {
-        userId,
+        userId: payerId,
         status: LotteryStatus.UNUSED,
         expiresAt: { gt: now },
         prize: { name: PRIZE_NAMES.LOTTERY_VOUCHER },
@@ -396,10 +397,17 @@ export async function performLotteryDraw(params: {
       update: {},
       create: { discordUserId: userId },
     });
+    if (payerId !== userId) {
+      await tx.member.upsert({
+        where: { discordUserId: payerId },
+        update: {},
+        create: { discordUserId: payerId },
+      });
+    }
 
     if (!useFreeVoucher) {
       const account = await tx.member.findUnique({
-        where: { discordUserId: userId },
+        where: { discordUserId: payerId },
         select: { income: true, recharge: true, totalBalance: true },
       });
       const income = new Prisma.Decimal(account?.income ?? 0);
@@ -409,10 +417,10 @@ export async function performLotteryDraw(params: {
         throw new LotteryError('INSUFFICIENT_BALANCE');
       }
       const split = splitIncomeRecharge(income, recharge, DRAW_COST);
-      const spendBonus = await consumeSpendBuff(tx, userId, DRAW_COST);
+      const spendBonus = await consumeSpendBuff(tx, payerId, DRAW_COST);
       const totalSpentIncrement = DRAW_COST.add(spendBonus.extra);
       await tx.member.update({
-        where: { discordUserId: userId },
+        where: { discordUserId: payerId },
         data: {
           income: { decrement: split.fromIncome },
           recharge: { decrement: split.fromRecharge },
@@ -420,11 +428,11 @@ export async function performLotteryDraw(params: {
           totalSpent: { increment: totalSpentIncrement },
         },
       });
-      await adjustLoyaltyPointsTx(tx, userId, DRAW_COST);
+      await adjustLoyaltyPointsTx(tx, payerId, DRAW_COST);
       const balanceBefore = total;
       const balanceAfter = total.sub(DRAW_COST);
       await recordIndividualTransaction(tx, {
-        discordId: userId,
+        discordId: payerId,
         thirdPartydiscordId: 'SYSTEM',
         balanceBefore,
         amountChange: DRAW_COST,

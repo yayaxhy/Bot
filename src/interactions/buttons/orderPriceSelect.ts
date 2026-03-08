@@ -6,7 +6,7 @@ import {
   type TextBasedChannel,
 } from 'discord.js';
 import prisma from '../../db/prisma.js';
-import { OrderMode, OrderStatus, QuotationCode } from '@prisma/client';
+import { OrderMode, OrderStatus, PeiwanStatus, QuotationCode } from '@prisma/client';
 import { invitation_embed } from '../../ui/orderEmbeds.js';
 import { registerInvitationMessage } from '../../services/orderInteractionManager.js';
 import { recordOrderRequest } from '../../services/orderRequestLogService.js';
@@ -172,6 +172,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
     select: {
       PEIWANID: true,
       discordUserId: true,
+      status: true,
       commissionRate: true,
       techTag: true,
       MP_url: true,
@@ -194,6 +195,30 @@ export async function handleOrderPriceSelect(i: Interaction) {
     return i.reply({ content: `该价格档位暂不可用：${quotationLabel}。`, ephemeral: true });
   }
 
+  const hostId = i.user.id; // 老板
+  const workerId = peiwan.discordUserId;
+
+  if (peiwan.status !== PeiwanStatus.free) {
+    const shouldBeEphemeral = i.inGuild();
+    await i.reply({ content: '不好意思老板~ 该陪玩已经被点走啦', ephemeral: shouldBeEphemeral });
+
+    const bossDisplayName =
+      i.member && typeof i.member === 'object' && 'displayName' in i.member
+        ? (i.member.displayName as string | undefined)
+        : (i.user.globalName ?? i.user.username ?? undefined);
+    const bossNameForText = (bossDisplayName ?? i.user.username).trim();
+    const workerNotice =
+      `${bossNameForText}老板（${i.user.username} ${hostId}）点你啦，但你已经在订单状态，` +
+      '无法收到且接受其他老板的邀请，麻烦请联系老板说明情况';
+    try {
+      const workerUser = await i.client.users.fetch(workerId);
+      await workerUser.send(workerNotice);
+    } catch {
+      // 陪玩关闭私信时静默处理
+    }
+    return;
+  }
+
   // 3.5) 校验老板余额（最低 100）
   const hostMember = await prisma.member.findUnique({
     where: { discordUserId: i.user.id },
@@ -214,9 +239,6 @@ export async function handleOrderPriceSelect(i: Interaction) {
   }
 
   // 4) 创建订单（PENDING）
-  const hostId = i.user.id; // 老板
-  const workerId = peiwan.discordUserId;
-
   const order = await prisma.order.create({
     data: {
       hostId,

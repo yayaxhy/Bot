@@ -315,10 +315,9 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
   } catch (err) {
     console.error('[revert-gift] sync roles failed', err);
   }
-  // Auto commission adjustment is temporarily disabled.
-  // evaluateAutoCommissionBuffWithReason(result.audit.receiverId, 'revert').catch((err) =>
-  //   console.error('[revert-gift] auto commission eval failed', err),
-  // );
+  evaluateAutoCommissionBuffWithReason(result.audit.receiverId, 'revert').catch((err) =>
+    console.error('[revert-gift] auto commission eval failed', err),
+  );
 
   // notifications (best-effort)
   try {

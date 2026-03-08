@@ -381,10 +381,9 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
   } catch (err) {
     console.error('[revert-order] sync roles failed', err);
   }
-  // Auto commission adjustment is temporarily disabled.
-  // evaluateAutoCommissionBuffWithReason(result.order.workerId, 'revert').catch((err) =>
-  //   console.error('[revert-order] auto commission eval failed', err),
-  // );
+  evaluateAutoCommissionBuffWithReason(result.order.workerId, 'revert').catch((err) =>
+    console.error('[revert-order] auto commission eval failed', err),
+  );
 
   try {
     const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;

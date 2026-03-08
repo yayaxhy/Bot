@@ -315,10 +315,9 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
     } catch (err) {
       console.error('[recalcOrAutoEnd] addHeart failed', { orderId, err });
     }
-    // Auto commission adjustment is temporarily disabled.
-    // evaluateAutoCommissionBuff(result.workerId).catch((err) =>
-    //   console.error('[recalcOrAutoEnd] auto commission eval failed', { orderId, err }),
-    // );
+    evaluateAutoCommissionBuff(result.workerId).catch((err) =>
+      console.error('[recalcOrAutoEnd] auto commission eval failed', { orderId, err }),
+    );
   }
   const totalDuration = Date.now() - outerStart;
   console.log('[recalcOrAutoEnd] duration', { orderId, txMs: txDuration, totalMs: totalDuration, ended: result.ended });
@@ -401,10 +400,9 @@ export async function endOrder(orderId: string, byDiscordId: string) {
     } catch (err) {
       console.error('[endOrder] addHeart failed', { orderId, err });
     }
-    // Auto commission adjustment is temporarily disabled.
-    // evaluateAutoCommissionBuff(result.workerId).catch((err) =>
-    //   console.error('[endOrder] auto commission eval failed', { orderId, err }),
-    // );
+    evaluateAutoCommissionBuff(result.workerId).catch((err) =>
+      console.error('[endOrder] auto commission eval failed', { orderId, err }),
+    );
   }
   // 通知统一由 timerService 触发，避免重复
   const totalDuration = Date.now() - outerStart;
@@ -426,9 +424,8 @@ async function endOrderInternal(tx: Prisma.TransactionClient, order: any, endTim
   const gross = round2(unitPrice.mul(billableMinutes).div(60));
   let payoutShare = new Prisma.Decimal(order.commissionRate ?? order.worker.commissionRate ?? 0.75);
   const manualBoost = await getActiveCommissionBoost(tx, order.workerId);
-  // Auto commission adjustment is temporarily disabled.
-  // const autoBoost = await getAutoCommissionBoost(tx, order.workerId, payoutShare);
-  payoutShare = payoutShare.add(manualBoost);
+  const autoBoost = await getAutoCommissionBoost(tx, order.workerId, payoutShare);
+  payoutShare = payoutShare.add(manualBoost).add(autoBoost);
   if (payoutShare.gt(1)) payoutShare = new Prisma.Decimal(1);
   const netToWorker = round2(gross.mul(payoutShare));
   const feeToPlatform = round2(gross.sub(netToWorker));

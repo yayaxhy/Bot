@@ -46,7 +46,7 @@ import { registerVoicePointService } from './services/voicePointService.js';
 import { registerChatVoucherDropService } from './services/chatVoucherDropService.js';
 import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
 import { startCommissionBuffWatcher } from './services/buffService.js';
-import { refreshAllAutoCommissionBuffs } from './services/autoCommissionBuffService.js';
+import { refreshAllAutoCommissionBuffs, startAutoCommissionBuffWatcher } from './services/autoCommissionBuffService.js';
 import { startLeaderboardScheduler } from './services/leaderboardService.js';
 import { recoverPendingInvitations } from './services/orderInteractionManager.js';
 import { recoverRunningOrders } from './services/orderService.js';
@@ -292,10 +292,9 @@ client.once(Events.ClientReady, async () => {
   recoverRunningOrders().catch((err) =>
     console.error('[startup] recover running orders failed:', err),
   );
-  // Auto commission adjustment is temporarily disabled.
-  // refreshAllAutoCommissionBuffs().catch((err) =>
-  //   console.error('[startup] refresh auto commission buffs failed:', err),
-  // );
+  refreshAllAutoCommissionBuffs().catch((err) =>
+    console.error('[startup] refresh auto commission buffs failed:', err),
+  );
   registerGiftingCommand(client, prisma);
   registerCashCommand(client, prisma);
   registerBalanceCommands(client);
@@ -327,6 +326,7 @@ client.once(Events.ClientReady, async () => {
   startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));
   startRechargeWatcher().catch((err) => console.error('[recharge.watch] init failed', err));
   startCommissionBuffWatcher();
+  startAutoCommissionBuffWatcher();
   startLeaderboardScheduler(client);
 });
 

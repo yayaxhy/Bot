@@ -120,6 +120,8 @@ model Member {
 
   // Payout rate (user receives this share of gross), default 75%
   commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
+  // Original payout share baseline, used when temporary boosts expire
+  baseCommissionRate Decimal @default(0.75) @db.Decimal(7, 6)
 
   // Relations
   commissionFrom Commission[] @relation("CommissionFrom")
@@ -599,6 +601,8 @@ model PEIWAN {
 
   // Payout rate copy on PEIWAN (synced → Member via DB trigger)
   commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
+  // Original payout share baseline for future reset logic
+  baseCommissionRate Decimal @default(0.75) @db.Decimal(7, 6)
 
   totalEarn Decimal      @default(0) @db.Decimal(19, 4)
   balance   Decimal      @default(0) @db.Decimal(19, 4)

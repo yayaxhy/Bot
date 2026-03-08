@@ -3,7 +3,7 @@ import { LotteryPool } from '@prisma/client';
 import { DRAW_COST, LotteryError, POOL_LABEL, PRIZE_NAMES, performLotteryDraw } from '../services/lotteryService.js';
 import { getScratchCodePrefix } from '../services/scratchService.js';
 
-const LOTTERY_CMD_PATTERN = /^!抽奖$/;
+const LOTTERY_CMD_PATTERN = /^!抽奖(?:\s+<@!?(\d+)>)?$/;
 const LOTTERY_REVEAL_DELAY_MS = 3000; // 动画结束后再揭晓，毫秒
 const LOTTERY_ANIMATIONS: Record<LotteryPool, string | undefined> = {
   NORMAL:
@@ -35,15 +35,25 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function handleLotteryMessage(message: Message): Promise<boolean> {
   const content = (message.content ?? '').trim();
-  if (!LOTTERY_CMD_PATTERN.test(content)) return false;
+  const match = content.match(LOTTERY_CMD_PATTERN);
+  if (!match) {
+    if (content.startsWith('!抽奖')) {
+      await message.reply('用法：`!抽奖` 或 `!抽奖 @用户`');
+      return true;
+    }
+    return false;
+  }
 
-  const userId = message.author.id;
+  const payerId = message.author.id;
+  const userId = match[1] ?? payerId;
+  const isGiftDraw = userId !== payerId;
+  const targetMention = `<@${userId}>`;
   const nonce = `msg:${message.id}`;
   const costLabel = Number(DRAW_COST.toString()).toFixed(0);
 
   let result;
   try {
-    result = await performLotteryDraw({ userId, nonce, requestId: message.id });
+    result = await performLotteryDraw({ userId, payerId, nonce, requestId: message.id });
   } catch (err: any) {
     if (err instanceof LotteryError) {
       if (err.code === 'INSUFFICIENT_BALANCE') {
@@ -64,15 +74,18 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
   const poolLabel = POOL_LABEL[pool] ?? pool;
   const animationUrl = LOTTERY_ANIMATIONS[pool];
   const poolColor = LOTTERY_COLORS[pool] ?? undefined;
+  const drawingText = isGiftDraw
+    ? `已扣除 ¥${costLabel}，正在为 ${targetMention} 抽奖...`
+    : `已扣除 ¥${costLabel}，抽奖中...`;
 
   const startEmbed = new EmbedBuilder()
     .setTitle('开始抽奖！')
-    .setDescription(`已扣除 ¥${costLabel}，抽奖中...`);
+    .setDescription(drawingText);
   if (poolColor) startEmbed.setColor(poolColor);
   if (animationUrl) startEmbed.setImage(animationUrl);
 
   const sent = await message.reply({
-    content: `已扣除 ¥${costLabel}，抽奖中...`,
+    content: drawingText,
     embeds: [startEmbed],
   });
 
@@ -80,8 +93,17 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
 
   const revealLines =
     prize.name === MYSTERY_CODE_PRIZE_NAME
-      ? ['恭喜您抽到了对应颜色礼物：神秘代码', '请查看机器人私信噢']
-      : [`恭喜您抽到了${poolLabel}礼物：${prize.name}`];
+      ? [
+          isGiftDraw
+            ? `恭喜${targetMention}抽到了对应颜色礼物：神秘代码`
+            : '恭喜您抽到了对应颜色礼物：神秘代码',
+          '请查看机器人私信噢',
+        ]
+      : [
+          isGiftDraw
+            ? `恭喜${targetMention}抽到了${poolLabel}礼物：${prize.name}`
+            : `恭喜您抽到了${poolLabel}礼物：${prize.name}`,
+        ];
   if (prize.name === PRIZE_NAMES.BLOCK_STACK_VOUCHER) {
     revealLines.push('使用方法：输入!抽积木消耗该代金券');
   }
@@ -101,10 +123,16 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
 
   if (prize.name === MYSTERY_CODE_PRIZE_NAME) {
     try {
-      await message.author.send({ content: buildMysteryCodeDmMessage() });
+      const targetUser =
+        isGiftDraw
+          ? await message.client.users.fetch(userId).catch(() => null)
+          : message.author;
+      if (targetUser) {
+        await targetUser.send({ content: buildMysteryCodeDmMessage() });
+      }
     } catch (err) {
       console.error('[lottery] mystery-code DM failed:', {
-        userId: message.author.id,
+        userId,
         err,
       });
     }

@@ -492,9 +492,8 @@ export async function performGift(
 
     let receiverRate = DEC(receiver.commissionRate ?? 0);
     const manualBoost = await getActiveCommissionBoost(tx, receiverId);
-    // Auto commission adjustment is temporarily disabled.
-    // const autoBoost = await getAutoCommissionBoost(tx, receiverId, receiverRate);
-    receiverRate = receiverRate.add(manualBoost);
+    const autoBoost = await getAutoCommissionBoost(tx, receiverId, receiverRate);
+    receiverRate = receiverRate.add(manualBoost).add(autoBoost);
     if (receiverRate.gt(1)) receiverRate = DEC(1);
     const feeRate = DEC(1).sub(receiverRate);
     const feeAmount = gross.mul(feeRate);
@@ -999,10 +998,9 @@ export async function performGift(
   syncSpentRolesForMember(receiverId, { includeSpendRoles: false }).catch((err) =>
     console.error('[spent-role] gift sync failed for receiver', err)
   );
-  // Auto commission adjustment is temporarily disabled.
-  // evaluateAutoCommissionBuff(receiverId).catch((err) =>
-  //   console.error('[performGift] auto commission eval failed', err),
-  // );
+  evaluateAutoCommissionBuff(receiverId).catch((err) =>
+    console.error('[performGift] auto commission eval failed', err),
+  );
 
   try {
     const pointsRow = await prisma.loyaltyPoint.findUnique({

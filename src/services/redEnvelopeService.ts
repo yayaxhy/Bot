@@ -843,9 +843,8 @@ export async function claimRedEnvelope(
       ? new Prisma.Decimal(member.commissionRate)
       : new Prisma.Decimal(1);
     const manualBoost = await getActiveCommissionBoost(tx, claimerId);
-    // Auto commission adjustment is temporarily disabled.
-    // const autoBoost = await getAutoCommissionBoost(tx, claimerId, baseRate);
-    let effectiveRate = baseRate.add(manualBoost);
+    const autoBoost = await getAutoCommissionBoost(tx, claimerId, baseRate);
+    let effectiveRate = baseRate.add(manualBoost).add(autoBoost);
     if (effectiveRate.gt(1)) effectiveRate = new Prisma.Decimal(1);
     const netAmount = new Prisma.Decimal(share.mul(effectiveRate).toFixed(2));
     const balanceAfter = balanceBefore.add(netAmount);

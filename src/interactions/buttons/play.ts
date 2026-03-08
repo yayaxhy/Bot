@@ -11,7 +11,7 @@ import {
 import prisma from '../../db/prisma.js';
 import { clickStore } from '../../services/clickStore.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
-import { MemberStatus, Prisma, PeiwanReviewDisplayMode, PeiwanStatus, QuotationCode } from '@prisma/client';
+import { MemberStatus, Prisma, PeiwanReviewDisplayMode, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
   buildGiftingSelect,
@@ -363,11 +363,6 @@ export async function handlePlayButton(i: ButtonInteraction) {
       select: { peiwanId: true },
     });
     if (deletionRecord) {
-      return;
-    }
-
-    // 忙碌：静默忽略此次抢单
-    if (peiwan.status !== PeiwanStatus.free) {
       return;
     }
 
