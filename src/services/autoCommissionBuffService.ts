@@ -217,12 +217,34 @@ export function getAutoCommissionWindow(now = new Date()) {
   return { windowStart, windowEnd: now };
 }
 
+const getUtcStartOfNextDay = (value: Date) =>
+  new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate() + 1, 0, 0, 0, 0));
+
+export function getAutoCommissionProgressWindow(
+  lastQualifiedAt: Date | null | undefined,
+  now = new Date(),
+) {
+  const rolling = getAutoCommissionWindow(now);
+  if (!lastQualifiedAt) {
+    return rolling;
+  }
+  // Segment progression: after a qualification, next tier starts from the next UTC day.
+  const segmentedStart = getUtcStartOfNextDay(lastQualifiedAt);
+  return {
+    windowStart: segmentedStart > rolling.windowStart ? segmentedStart : rolling.windowStart,
+    windowEnd: rolling.windowEnd,
+  };
+}
+
 export async function computeAutoCommissionIncome(
   tx: TxLike,
   discordUserId: string,
   now = new Date(),
+  windowOverride?: { windowStart: Date; windowEnd?: Date },
 ) {
-  const { windowStart, windowEnd } = getAutoCommissionWindow(now);
+  const { windowStart, windowEnd } = windowOverride
+    ? { windowStart: windowOverride.windowStart, windowEnd: windowOverride.windowEnd ?? now }
+    : getAutoCommissionWindow(now);
   const rows = await tx.individualTransaction.findMany({
     where: {
       discordId: discordUserId,
@@ -300,7 +322,13 @@ export async function evaluateAutoCommissionBuffWithReason(
     });
     const previousActiveUntil = existing?.activeUntil ?? null;
     const previousRoleActive = !!(existing?.activeUntil && existing.activeUntil > now);
-    const { amount, windowStart, windowEnd } = await computeAutoCommissionIncome(tx, userId, now);
+    const progressWindow = getAutoCommissionProgressWindow(existing?.lastQualifiedAt, now);
+    const { amount, windowStart, windowEnd } = await computeAutoCommissionIncome(
+      tx,
+      userId,
+      now,
+      progressWindow,
+    );
     const qualified = amount.gte(AUTO_COMMISSION_THRESHOLD);
     const previousBucket = getThresholdBucket(toDecimal(existing?.currentAmount ?? 0));
     const currentBucket = getThresholdBucket(amount);
