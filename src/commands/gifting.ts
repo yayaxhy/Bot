@@ -392,6 +392,46 @@ function buildPublicGiftSuccessMessage(result: GiftTransactionResult): MessageCr
   return { content };
 }
 
+async function sendGiftSuccessMessage(target: Message, result: GiftTransactionResult) {
+  const channel: any = target.channel;
+  const successPayload = buildPublicGiftSuccessMessage(result);
+  successPayload.content = `${successPayload.content ?? ''}`.trim();
+  if (channel && typeof channel.send === 'function') {
+    await safeSend(() => channel.send(successPayload), 'gift success send');
+    const imageUrl = result.imageUrl;
+    if (imageUrl) {
+      await safeSend(() => channel.send(imageUrl), 'gift image send');
+    }
+    return;
+  }
+
+  await safeSend(() => target.reply(successPayload), 'gift success reply');
+  const imageUrl = result.imageUrl;
+  if (imageUrl) {
+    await safeSend(() => target.reply(imageUrl), 'gift image reply');
+  }
+}
+
+async function notifyGiftFailure(target: Message, plainMessage: string) {
+  const insufficientReason = resolveInsufficientReason(plainMessage);
+  const replyText = insufficientReason ? `打赏失败：${insufficientReason}` : `打赏失败：${plainMessage}`;
+  try {
+    await target.reply(replyText);
+  } catch {}
+
+  if (!insufficientReason) return;
+
+  const staffPing = makeStaffPing();
+  try {
+    await safeSend(
+      () => target.author.send(`打赏失败：余额不足，请联系 ${staffPing} 进行充值后再试。`),
+      'notify insufficient balance'
+    );
+  } catch (dmErr) {
+    console.error('[gifting] notify insufficient balance DM failed:', dmErr);
+  }
+}
+
 async function sendAnonGiftLog(
   client: Client,
   payload: { giverId: string; receiverId: string; giftName: string; quantity: number; gross: number }
@@ -1188,9 +1228,8 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           return;
         }
 
-        const results: { receiverId: string; result: GiftTransactionResult }[] = [];
-        try {
-          for (const receiverId of receivers) {
+        for (const receiverId of receivers) {
+          try {
             const receiverUsername = msg.mentions.users.get(receiverId)?.username;
             const bossUsername = msg.mentions.users.get(bossId)?.username;
             const result = await performGift(msg.client, prisma, {
@@ -1205,34 +1244,15 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
               giverUsername: bossUsername,
               receiverUsername,
             });
-            results.push({ receiverId, result });
-          }
-        } catch (err: any) {
-          const plainMessage = err?.message ?? '未知错误';
-          const insufficientReason = resolveInsufficientReason(plainMessage);
-          if (insufficientReason) {
-            await msg.reply(`打赏失败：${insufficientReason}`);
-            return;
-          }
-          throw err;
-        }
-
-        const channel: any = msg.channel;
-        for (const { receiverId, result } of results) {
-          const successPayload = buildPublicGiftSuccessMessage(result);
-          successPayload.content = `${successPayload.content ?? ''}`.trim();
-          if (channel && typeof channel.send === 'function') {
-            await safeSend(() => channel.send(successPayload), 'gift success send');
-            const imageUrl = result.imageUrl;
-            if (imageUrl) {
-              await safeSend(() => channel.send(imageUrl), 'gift image send');
+            await sendGiftSuccessMessage(msg, result);
+          } catch (err: any) {
+            const plainMessage = err?.message ?? '未知错误';
+            const insufficientReason = resolveInsufficientReason(plainMessage);
+            if (insufficientReason) {
+              await notifyGiftFailure(msg, plainMessage);
+              return;
             }
-          } else {
-            await safeSend(() => msg.reply(successPayload), 'gift success reply');
-            const imageUrl = result.imageUrl;
-            if (imageUrl) {
-              await safeSend(() => msg.reply(imageUrl), 'gift image reply');
-            }
+            throw err;
           }
         }
 
@@ -1295,64 +1315,35 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         return;
       }
 
-      const results: { receiverId: string; result: GiftTransactionResult }[] = [];
       for (const receiverId of toUserIds) {
-        const receiverUsername = msg.mentions.users.get(receiverId)?.username;
-        const result = await performGift(msg.client, prisma, {
-          giverId,
-          receiverId,
-          giftName: gift.GiftName,
-          anonymous: false,
-          quantity,
-          giftRecord: gift,
-          giverUsername: msg.author.username,
-          receiverUsername: receiverUsername,
-          expenseReason: isService ? '客服打赏' : undefined,
-        });
-        results.push({ receiverId, result });
-      }
-
-      const channel: any = msg.channel;
-      for (const { receiverId, result } of results) {
-        const successPayload = buildPublicGiftSuccessMessage(result);
-        const mentionPrefix = `<@${receiverId}> `;
-        const baseContent = successPayload.content ?? '';
-        successPayload.content = `${baseContent}`.trim();
-        if (channel && typeof channel.send === 'function') {
-          await safeSend(() => channel.send(successPayload), 'gift success send');
-          const imageUrl = result.imageUrl;
-          if (imageUrl) {
-            await safeSend(() => channel.send(imageUrl), 'gift image send');
+        try {
+          const receiverUsername = msg.mentions.users.get(receiverId)?.username;
+          const result = await performGift(msg.client, prisma, {
+            giverId,
+            receiverId,
+            giftName: gift.GiftName,
+            anonymous: false,
+            quantity,
+            giftRecord: gift,
+            giverUsername: msg.author.username,
+            receiverUsername: receiverUsername,
+            expenseReason: isService ? '客服打赏' : undefined,
+          });
+          await sendGiftSuccessMessage(msg, result);
+        } catch (err: any) {
+          const plainMessage = err?.message ?? '未知错误';
+          const insufficientReason = resolveInsufficientReason(plainMessage);
+          if (insufficientReason) {
+            await notifyGiftFailure(msg, plainMessage);
+            return;
           }
-        } else {
-          await safeSend(() => msg.reply(successPayload), 'gift success reply');
-          const imageUrl = result.imageUrl;
-          if (imageUrl) {
-            await safeSend(() => msg.reply(imageUrl), 'gift image reply');
-          }
+          throw err;
         }
       }
     } catch (err: any) {
       console.error('[gifting] error:', err);
       const plainMessage = err?.message ?? '未知错误';
-      const insufficientReason = resolveInsufficientReason(plainMessage);
-      try {
-        const replyText = insufficientReason
-          ? `打赏失败：${insufficientReason}`
-          : `打赏失败：${plainMessage}`;
-        await msg.reply(replyText);
-      } catch {}
-      if (insufficientReason) {
-        const staffPing = makeStaffPing();
-        try {
-          await safeSend(
-            () => msg.author.send(`打赏失败：余额不足，请联系 ${staffPing} 进行充值后再试。`),
-            'notify insufficient balance'
-          );
-        } catch (dmErr) {
-          console.error('[gifting] notify insufficient balance DM failed:', dmErr);
-        }
-      }
+      await notifyGiftFailure(msg, plainMessage);
     }
   });
 }
