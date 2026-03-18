@@ -323,6 +323,8 @@ export function buildQuotationSelect(
     Q6: '永劫单价',
     Q7: 'Apex单价',
     Q8: 'OW单价',
+    Q9: 'TFT单价',
+    Q10: 'Steam单价',
     DEFAULT: '默认单价',
   };
 

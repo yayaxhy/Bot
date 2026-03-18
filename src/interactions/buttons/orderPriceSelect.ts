@@ -29,6 +29,8 @@ const QUOTATION_LABEL: Record<QuotationCode, string> = {
   Q6: '永劫',
   Q7: 'Apex',
   Q8: 'OW',
+  Q9: 'TFT',
+  Q10: 'Steam',
 };
 const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q1: 'quotation_Q1',
@@ -39,6 +41,8 @@ const PRICE_FIELD_BY_CODE: Record<QuotationCode, string> = {
   Q6: 'narakaPrice',
   Q7: 'apexPrice',
   Q8: 'owPrice',
+  Q9: 'tftPrice',
+  Q10: 'steamPrice',
 };
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
@@ -184,6 +188,8 @@ export async function handleOrderPriceSelect(i: Interaction) {
       narakaPrice: true,
       apexPrice: true,
       owPrice: true,
+      tftPrice: true,
+      steamPrice: true,
     },
   });
   if (!peiwan) {

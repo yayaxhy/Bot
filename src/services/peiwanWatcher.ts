@@ -17,6 +17,8 @@ const WATCHED_COLUMNS = [
   'narakaPrice',
   'apexPrice',
   'owPrice',
+  'tftPrice',
+  'steamPrice',
   'commissionRate',
   'MP_url',
   'techTag',

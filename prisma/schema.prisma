@@ -57,6 +57,8 @@ enum QuotationCode {
   Q6
   Q7
   Q8
+  Q9
+  Q10
 }
 
 enum PeiwanSex {
@@ -598,6 +600,8 @@ model PEIWAN {
   narakaPrice Decimal? @db.Decimal(10, 2)
   apexPrice   Decimal? @db.Decimal(10, 2)
   owPrice     Decimal? @db.Decimal(10, 2)
+  tftPrice    Decimal? @db.Decimal(10, 2)
+  steamPrice  Decimal? @db.Decimal(10, 2)
 
   // Payout rate copy on PEIWAN (synced → Member via DB trigger)
   commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
@@ -962,6 +966,11 @@ model Referral {
   inviteeId String @id
   inviterId String
   type      ReferralType
+  payoutRate Decimal @default(0.01) @db.Decimal(10, 4)
+  payoutCap  Decimal? @default(1000) @db.Decimal(19, 4)
+  policyApplied Boolean @default(false)
+  policyRuleId  String?
+  policyBoundAt DateTime?
   createdAt DateTime @default(now())
 
   inviter Member @relation("ReferralInviter", fields: [inviterId], references: [discordUserId])
@@ -969,6 +978,23 @@ model Referral {
   payouts ReferralPayout[]
 
   @@index([inviterId, type])
+}
+
+model ReferralPolicy {
+  id           String       @id @default(cuid())
+  inviterId    String
+  referralType ReferralType?
+  rate         Decimal      @db.Decimal(10, 4)
+  capAmount    Decimal?     @db.Decimal(19, 4)
+  enabled      Boolean      @default(true)
+  startsAt     DateTime?
+  endsAt       DateTime?
+  note         String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([inviterId, enabled, createdAt])
+  @@index([referralType, enabled, createdAt])
 }
 
 /// 记录每单邀请提成的发放（幂等：referralId+orderId 唯一）

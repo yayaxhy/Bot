@@ -78,7 +78,6 @@ const computeVoucherConsumeAmount = (prizeName: string, unitPrice: Prisma.Decima
   return unitPrice.mul(discountRate);
 };
 const REF_RATE = new Prisma.Decimal(0.01);
-const REFERRAL_PAYOUT_CAP = new Prisma.Decimal(1000);
 
 const levenshteinDistance = (leftRaw: string, rightRaw: string): number => {
   const left = leftRaw.toLowerCase();
@@ -288,24 +287,26 @@ async function grantReferralForGift(
     amount,
     label,
   }: {
-    referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN' };
+    referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN'; payoutCap: Prisma.Decimal | null };
     amount: Prisma.Decimal;
     label: string;
   }): Promise<{ inviterId: string; amount: Prisma.Decimal } | null> => {
     if (amount.lte(0)) return null;
 
-    const paidSoFar = await tx.referralPayout.aggregate({
-      _sum: { amount: true },
-      where: {
-        referralId: referral.inviteeId,
-        referral: { inviterId: referral.inviterId },
-      },
-    });
-    const totalPaid = new Prisma.Decimal(paidSoFar._sum.amount ?? 0);
-    const remaining = REFERRAL_PAYOUT_CAP.sub(totalPaid);
-    if (remaining.lte(0)) return null;
-    if (amount.gt(remaining)) {
-      amount = remaining;
+    if (referral.payoutCap != null) {
+      const paidSoFar = await tx.referralPayout.aggregate({
+        _sum: { amount: true },
+        where: {
+          referralId: referral.inviteeId,
+          referral: { inviterId: referral.inviterId },
+        },
+      });
+      const totalPaid = new Prisma.Decimal(paidSoFar._sum.amount ?? 0);
+      const remaining = new Prisma.Decimal(referral.payoutCap).sub(totalPaid);
+      if (remaining.lte(0)) return null;
+      if (amount.gt(remaining)) {
+        amount = remaining;
+      }
     }
     try {
       await tx.referralPayout.create({
@@ -359,12 +360,17 @@ async function grantReferralForGift(
   // Boss inviter: type=LAOBAN earns 1% of receiver net
   const bossRef = await tx.referral.findUnique({
     where: { inviteeId: giverId },
-    select: { inviterId: true, inviteeId: true, type: true },
+    select: { inviterId: true, inviteeId: true, type: true, payoutRate: true, payoutCap: true },
   });
   if (bossRef?.type === 'LAOBAN') {
     bossResult = await payReferral({
-      referral: { inviterId: bossRef.inviterId, inviteeId: bossRef.inviteeId, type: 'LAOBAN' },
-      amount: netToReceiver.mul(REF_RATE),
+      referral: {
+        inviterId: bossRef.inviterId,
+        inviteeId: bossRef.inviteeId,
+        type: 'LAOBAN',
+        payoutCap: bossRef.payoutCap,
+      },
+      amount: netToReceiver.mul(new Prisma.Decimal(bossRef.payoutRate ?? REF_RATE)),
       label: '打赏老板1%',
     });
   }
@@ -372,12 +378,17 @@ async function grantReferralForGift(
   // Peiwan inviter: type=PEIWAN earns 1% of receiver net
   const pwRef = await tx.referral.findUnique({
     where: { inviteeId: receiverId },
-    select: { inviterId: true, inviteeId: true, type: true },
+    select: { inviterId: true, inviteeId: true, type: true, payoutRate: true, payoutCap: true },
   });
   if (pwRef?.type === 'PEIWAN') {
     workerResult = await payReferral({
-      referral: { inviterId: pwRef.inviterId, inviteeId: pwRef.inviteeId, type: 'PEIWAN' },
-      amount: netToReceiver.mul(REF_RATE),
+      referral: {
+        inviterId: pwRef.inviterId,
+        inviteeId: pwRef.inviteeId,
+        type: 'PEIWAN',
+        payoutCap: pwRef.payoutCap,
+      },
+      amount: netToReceiver.mul(new Prisma.Decimal(pwRef.payoutRate ?? REF_RATE)),
       label: '打赏陪玩1%',
     });
   }
