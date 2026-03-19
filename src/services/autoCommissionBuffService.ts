@@ -5,6 +5,10 @@ import path from 'node:path';
 import prisma from '../db/prisma.js';
 
 type TxLike = PrismaClient | Prisma.TransactionClient;
+type AutoCommissionEvent = {
+  at: Date;
+  amount: Prisma.Decimal;
+};
 
 export const AUTO_COMMISSION_TARGET_SHARE = new Prisma.Decimal(0.91);
 export const AUTO_COMMISSION_THRESHOLD = new Prisma.Decimal(12000);
@@ -41,6 +45,9 @@ const getThresholdBucket = (amount: Prisma.Decimal) => {
   if (!Number.isFinite(numeric) || numeric <= 0) return 0;
   return Math.floor(numeric);
 };
+
+const getQualifiedUntil = (qualifiedAt: Date) =>
+  new Date(qualifiedAt.getTime() + AUTO_COMMISSION_ACTIVE_DAYS * DAY_MS);
 
 const parseTierExpiries = (value: Prisma.JsonValue | null | undefined) => {
   const map = new Map<number, Date>();
@@ -220,6 +227,181 @@ export function getAutoCommissionWindow(now = new Date()) {
 const getUtcStartOfNextDay = (value: Date) =>
   new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate() + 1, 0, 0, 0, 0));
 
+const getTierOneSeedStart = (
+  tierExpiries: Map<number, Date>,
+  now: Date,
+  fallbackQualifiedAt?: Date | null,
+) => {
+  const tierOneExpiry = tierExpiries.get(1);
+  if (tierOneExpiry) {
+    const tierOneQualifiedAt = new Date(tierOneExpiry.getTime() - AUTO_COMMISSION_ACTIVE_DAYS * DAY_MS);
+    return getAutoCommissionWindow(tierOneQualifiedAt).windowStart;
+  }
+  if (fallbackQualifiedAt) {
+    return getAutoCommissionWindow(fallbackQualifiedAt).windowStart;
+  }
+  return getAutoCommissionWindow(now).windowStart;
+};
+
+async function loadAutoCommissionEvents(
+  tx: TxLike,
+  discordUserId: string,
+  windowStart: Date,
+  windowEnd: Date,
+): Promise<AutoCommissionEvent[]> {
+  const rows = await tx.individualTransaction.findMany({
+    where: {
+      discordId: discordUserId,
+      timeCreatedAt: { gte: windowStart, lte: windowEnd },
+      typeOfTransaction: { in: [...AUTO_COMMISSION_INCOME_TYPES] },
+    },
+    select: {
+      timeCreatedAt: true,
+      typeOfTransaction: true,
+      balanceBefore: true,
+      balanceAfter: true,
+    },
+    orderBy: [{ timeCreatedAt: 'asc' }, { transactionId: 'asc' }],
+  });
+
+  return rows.flatMap((row) => {
+    const before = toDecimal(row.balanceBefore ?? 0);
+    const after = toDecimal(row.balanceAfter ?? 0);
+    const delta = after.sub(before);
+    if (AUTO_COMMISSION_POSITIVE_TYPE_SET.has(row.typeOfTransaction)) {
+      return delta.gt(0) ? [{ at: row.timeCreatedAt, amount: delta }] : [];
+    }
+    if (AUTO_COMMISSION_REVERT_TYPE_SET.has(row.typeOfTransaction)) {
+      return delta.lt(0) ? [{ at: row.timeCreatedAt, amount: delta }] : [];
+    }
+    return [];
+  });
+}
+
+function sumAutoCommissionEvents(
+  events: AutoCommissionEvent[],
+  windowStart: Date,
+  windowEnd: Date,
+) {
+  return events.reduce((sum, event) => {
+    if (event.at < windowStart || event.at > windowEnd) return sum;
+    return sum.add(event.amount);
+  }, new Prisma.Decimal(0));
+}
+
+function findTierOneQualification(
+  events: AutoCommissionEvent[],
+  recomputeStart: Date,
+  now: Date,
+): Date | null {
+  let rollingSum = new Prisma.Decimal(0);
+  let left = 0;
+
+  for (let i = 0; i < events.length; i += 1) {
+    const event = events[i];
+    if (event.at < recomputeStart || event.at > now) continue;
+
+    rollingSum = rollingSum.add(event.amount);
+    const rollingStart = getAutoCommissionWindow(event.at).windowStart;
+    while (left <= i && events[left].at < rollingStart) {
+      rollingSum = rollingSum.sub(events[left].amount);
+      left += 1;
+    }
+
+    if (rollingSum.gte(AUTO_COMMISSION_THRESHOLD)) {
+      return event.at;
+    }
+  }
+
+  return null;
+}
+
+function findTierQualificationFromFixedWindow(
+  events: AutoCommissionEvent[],
+  windowStart: Date,
+  deadline: Date,
+): Date | null {
+  let sum = new Prisma.Decimal(0);
+  for (const event of events) {
+    if (event.at < windowStart) continue;
+    if (event.at > deadline) break;
+    sum = sum.add(event.amount);
+    if (sum.gte(AUTO_COMMISSION_THRESHOLD)) {
+      return event.at;
+    }
+  }
+  return null;
+}
+
+function rebuildAutoCommissionTimeline(
+  events: AutoCommissionEvent[],
+  previousTierExpiries: Map<number, Date>,
+  now: Date,
+  fallbackQualifiedAt?: Date | null,
+) {
+  const tierExpiries = new Map<number, Date>();
+  const qualificationDates: Date[] = [];
+  const tierOneSeedStart = getTierOneSeedStart(previousTierExpiries, now, fallbackQualifiedAt);
+  const tierOneQualifiedAt = findTierOneQualification(events, tierOneSeedStart, now);
+
+  if (tierOneQualifiedAt) {
+    qualificationDates.push(tierOneQualifiedAt);
+    tierExpiries.set(1, getQualifiedUntil(tierOneQualifiedAt));
+
+    let previousQualifiedAt = tierOneQualifiedAt;
+    let nextTier = 2;
+    while (true) {
+      const windowStart = getUtcStartOfNextDay(previousQualifiedAt);
+      const deadline = getQualifiedUntil(previousQualifiedAt);
+      if (windowStart > now) break;
+
+      const qualifiedAt = findTierQualificationFromFixedWindow(
+        events,
+        windowStart,
+        deadline < now ? deadline : now,
+      );
+      if (!qualifiedAt) break;
+
+      qualificationDates.push(qualifiedAt);
+      tierExpiries.set(nextTier, getQualifiedUntil(qualifiedAt));
+      previousQualifiedAt = qualifiedAt;
+      nextTier += 1;
+    }
+  }
+
+  const lastQualifiedAt = qualificationDates.length ? qualificationDates[qualificationDates.length - 1] : null;
+  const activeTiers = Array.from(tierExpiries.entries()).filter(([, expiry]) => expiry > now);
+  const activeUntil = activeTiers.length ? activeTiers[activeTiers.length - 1][1] : null;
+
+  if (activeUntil && lastQualifiedAt) {
+    const progressWindowStart = getUtcStartOfNextDay(lastQualifiedAt);
+    const progressDeadline = getQualifiedUntil(lastQualifiedAt);
+    const progressWindowEnd = now < progressDeadline ? now : progressDeadline;
+    const progressAmount =
+      progressWindowStart <= progressWindowEnd
+        ? sumAutoCommissionEvents(events, progressWindowStart, progressWindowEnd)
+        : new Prisma.Decimal(0);
+    return {
+      tierExpiries,
+      lastQualifiedAt,
+      activeUntil,
+      currentAmount: progressAmount,
+      windowStart: progressWindowStart,
+      windowEnd: progressWindowEnd,
+    };
+  }
+
+  const rollingWindow = getAutoCommissionWindow(now);
+  return {
+    tierExpiries,
+    lastQualifiedAt,
+    activeUntil: null,
+    currentAmount: sumAutoCommissionEvents(events, rollingWindow.windowStart, rollingWindow.windowEnd),
+    windowStart: rollingWindow.windowStart,
+    windowEnd: rollingWindow.windowEnd,
+  };
+}
+
 export function getAutoCommissionProgressWindow(
   lastQualifiedAt: Date | null | undefined,
   now = new Date(),
@@ -245,31 +427,8 @@ export async function computeAutoCommissionIncome(
   const { windowStart, windowEnd } = windowOverride
     ? { windowStart: windowOverride.windowStart, windowEnd: windowOverride.windowEnd ?? now }
     : getAutoCommissionWindow(now);
-  const rows = await tx.individualTransaction.findMany({
-    where: {
-      discordId: discordUserId,
-      timeCreatedAt: { gte: windowStart, lte: windowEnd },
-      typeOfTransaction: { in: [...AUTO_COMMISSION_INCOME_TYPES] },
-    },
-    select: {
-      typeOfTransaction: true,
-      balanceBefore: true,
-      balanceAfter: true,
-    },
-  });
-
-  const amount = rows.reduce((sum, row) => {
-    const before = toDecimal(row.balanceBefore ?? 0);
-    const after = toDecimal(row.balanceAfter ?? 0);
-    const delta = after.sub(before);
-    if (AUTO_COMMISSION_POSITIVE_TYPE_SET.has(row.typeOfTransaction)) {
-      return delta.gt(0) ? sum.add(delta) : sum;
-    }
-    if (AUTO_COMMISSION_REVERT_TYPE_SET.has(row.typeOfTransaction)) {
-      return delta.lt(0) ? sum.add(delta) : sum;
-    }
-    return sum;
-  }, new Prisma.Decimal(0));
+  const events = await loadAutoCommissionEvents(tx, discordUserId, windowStart, windowEnd);
+  const amount = sumAutoCommissionEvents(events, windowStart, windowEnd);
 
   return { amount, windowStart, windowEnd };
 }
@@ -322,49 +481,26 @@ export async function evaluateAutoCommissionBuffWithReason(
     });
     const previousActiveUntil = existing?.activeUntil ?? null;
     const previousRoleActive = !!(existing?.activeUntil && existing.activeUntil > now);
-    const progressWindow = getAutoCommissionProgressWindow(existing?.lastQualifiedAt, now);
-    const { amount, windowStart, windowEnd } = await computeAutoCommissionIncome(
+    const previousTierExpiries = parseTierExpiries(existing?.tierExpiries);
+    const events = await loadAutoCommissionEvents(
       tx,
       userId,
+      getTierOneSeedStart(previousTierExpiries, now, existing?.lastQualifiedAt),
       now,
-      progressWindow,
     );
-    const qualified = amount.gte(AUTO_COMMISSION_THRESHOLD);
-    const previousBucket = getThresholdBucket(toDecimal(existing?.currentAmount ?? 0));
-    const currentBucket = getThresholdBucket(amount);
-    const tierExpiries = parseTierExpiries(existing?.tierExpiries);
-
-    if (
-      currentBucket >= 1 &&
-      !tierExpiries.has(currentBucket) &&
-      existing?.activeUntil &&
-      existing.activeUntil > now
-    ) {
-      // 兼容旧数据：上线前只有一个 activeUntil，没有分档位到期时间
-      tierExpiries.set(currentBucket, existing.activeUntil);
-    }
-
-    let activeUntil: Date | null = null;
-    let lastQualifiedAt: Date | null = existing?.lastQualifiedAt ?? null;
-
-    if (currentBucket > previousBucket && currentBucket >= 1) {
-      const refreshedUntil = new Date(now.getTime() + AUTO_COMMISSION_ACTIVE_DAYS * DAY_MS);
-      for (let tier = previousBucket + 1; tier <= currentBucket; tier += 1) {
-        tierExpiries.set(tier, refreshedUntil);
-      }
-      activeUntil = refreshedUntil;
-      lastQualifiedAt = now;
-    } else if (currentBucket >= 1) {
-      // 回退档位时，恢复到对应档位原本的到期时间（不继承更高档位）
-      activeUntil = resolveTierActiveUntil(tierExpiries, currentBucket, now);
-    } else if (reason === 'revert') {
-      // 撤销导致跌破 1 档，立即失效
-      activeUntil = null;
-    } else {
-      // 非撤销场景下，保留当前有效期直到自然到期
-      activeUntil =
-        existing?.activeUntil && existing.activeUntil > now ? existing.activeUntil : null;
-    }
+    const timeline = rebuildAutoCommissionTimeline(
+      events,
+      previousTierExpiries,
+      now,
+      existing?.lastQualifiedAt,
+    );
+    const amount = timeline.currentAmount;
+    const windowStart = timeline.windowStart;
+    const windowEnd = timeline.windowEnd;
+    const qualified = !!timeline.lastQualifiedAt;
+    const activeUntil = timeline.activeUntil;
+    const lastQualifiedAt = timeline.lastQualifiedAt;
+    const tierExpiries = timeline.tierExpiries;
 
     // Keep a baseline share for restoring after auto-9% ends.
     const storedBase =
@@ -376,8 +512,7 @@ export async function evaluateAutoCommissionBuffWithReason(
     const currentShare = toDecimal(peiwan.commissionRate ?? member?.commissionRate ?? storedBase);
     const resolvedBase = toDecimal(storedBase);
     const desiredShare = activeUntil ? AUTO_COMMISSION_TARGET_SHARE : resolvedBase;
-    const nextTarget = AUTO_COMMISSION_THRESHOLD.mul(currentBucket + 1);
-    const remainingToNextRaw = nextTarget.sub(amount);
+    const remainingToNextRaw = AUTO_COMMISSION_THRESHOLD.sub(amount);
     const remainingToNext = remainingToNextRaw.gt(0)
       ? remainingToNextRaw
       : new Prisma.Decimal(0);
