@@ -14,8 +14,8 @@ const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
   '525770714574225408',
 ]);
-const SPEND_TYPES = new Set<string>(['点单', '打赏', '抽奖消费', '红包发出']);
-const INCOME_TYPES = new Set<string>(['点单', '打赏', '红包收入']);
+const SPEND_TYPES = new Set<string>(['点单', '打赏', '客服代打赏', '抽奖消费', '红包发出']);
+const INCOME_TYPES = new Set<string>(['点单', '打赏', '客服代打赏', '红包收入']);
 
 type SnapshotRow = {
   discordUserId: string;

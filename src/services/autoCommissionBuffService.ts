@@ -28,7 +28,7 @@ const LUCKY_STAR_LOGO_PATH = path.resolve(process.cwd(), 'src', 'img', 'jinleelo
 let autoCommissionWatcherRunning = false;
 const luckyStarReminderSentForActiveUntil = new Map<string, string>();
 
-const AUTO_COMMISSION_POSITIVE_TYPES = ['点单', '打赏', '红包收入'] as const;
+const AUTO_COMMISSION_POSITIVE_TYPES = ['点单', '打赏', '客服代打赏', '红包收入'] as const;
 const AUTO_COMMISSION_REVERT_TYPES = ['订单撤销', '打赏撤销'] as const;
 const AUTO_COMMISSION_INCOME_TYPES = [
   ...AUTO_COMMISSION_POSITIVE_TYPES,
