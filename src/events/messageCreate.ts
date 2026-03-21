@@ -810,6 +810,16 @@ export async function execute(message: Message) {
           .fetch(GENERAL_BROADCAST_CHANNEL_ID)
           .catch(() => null);
         if (generalChannel instanceof TextChannel) {
+          if (originalMsg.trim()) {
+            await generalChannel.send({
+              content: originalMsg,
+              allowedMentions: {
+                users: message.mentions.users.map((user) => user.id),
+                roles: message.mentions.roles.map((role) => role.id),
+                parse: [],
+              },
+            });
+          }
           const hintGeneral = await generalChannel.send('老板派单啦，快来抢单');
           clickStore.registerMessage(orderId, hintGeneral.id, hintGeneral.channelId, ownerId, 'hint');
           const postedCopy = await generalChannel.send(embedResponse);
