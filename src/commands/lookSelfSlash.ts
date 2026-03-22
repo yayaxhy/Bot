@@ -73,7 +73,7 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
   const peiwanType = resolvePeiwanEmbedTitle(peiwan.type, peiwan.gameProfiles);
   const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);
   const realnameGiftBox = buildGiftingSelect('REALNAME', DEFAULT_GIFTS as Array<{ GiftName: string; price: number }>);
-  const { embed } = sent_MP_embed(
+  const { embed, components } = sent_MP_embed(
     peiwanType,
     peiwan.PEIWANID,
     userMention(discordUserId),
@@ -89,6 +89,7 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
 
   await i.reply({
     embeds: [embed],
+    components,
     ephemeral: false,
   });
 }
