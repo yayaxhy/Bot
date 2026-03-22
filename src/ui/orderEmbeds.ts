@@ -319,6 +319,23 @@ export function sent_MP_embed(
   return { embed: e.toJSON(), components: rows };
 }
 
+export function resolvePeiwanEmbedTitle(
+  peiwanType: string | null | undefined,
+  profiles: Array<{ tier: string | null | undefined }> | null | undefined,
+) {
+  const tiers = new Set((profiles ?? []).map((profile) => String(profile.tier ?? '').trim()).filter(Boolean));
+  if (tiers.has('MASTER') || tiers.has('DEMON_GUARD')) {
+    return '大神陪玩';
+  }
+  if (tiers.has('TECH')) {
+    return '技术陪玩';
+  }
+  if (tiers.has('TRAINEE')) {
+    return '见习技术';
+  }
+  return peiwanType && peiwanType.trim() ? peiwanType.trim() : '娱乐陪玩';
+}
+
 export function mapPeiwanRoleLabels(
   profiles: Array<{ gameCode: any; tier: any; sourceRoleId?: string | null }> | null | undefined,
 ) {

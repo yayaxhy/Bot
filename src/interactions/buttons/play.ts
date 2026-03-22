@@ -16,6 +16,7 @@ import {
   buildQuotationSelect,
   buildGiftingSelect,
   mapPeiwanRoleLabels,
+  resolvePeiwanEmbedTitle,
   sent_MP_embed,
   refuse_order_request_embed,
   DEFAULT_GIFTS,
@@ -388,9 +389,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
     const anonymousGiftBox = buildGiftingSelect('ANON', giftsForSelect as any);
 
     const mpUrl: string | null = peiwan.MP_url ?? null;
-    const peiwanType: string = typeof peiwan.type === 'string' && peiwan.type.trim()
-      ? peiwan.type.trim()
-      : '娱乐陪玩';
+    const peiwanType = resolvePeiwanEmbedTitle(peiwan.type, peiwan.gameProfiles);
     const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);
     const orderContent = extractOrderContent(i.message as Message);
     const reviewRows = await prisma.peiwanReview.findMany({
