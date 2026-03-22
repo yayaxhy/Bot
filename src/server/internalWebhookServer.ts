@@ -11,7 +11,7 @@ import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
-import { syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
+import { syncAllPeiwanRoles, syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
 import { sendPeiwanNotification } from '../services/peiwanWatcher.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
@@ -1098,6 +1098,25 @@ async function handleSyncPeiwanRoles(req: IncomingMessage, res: ServerResponse) 
   }
 }
 
+async function handleSyncAllPeiwanRoles(_req: IncomingMessage, res: ServerResponse) {
+  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+  if (!client) {
+    sendJson(res, 503, { ok: false, error: 'client_not_ready' });
+    return;
+  }
+
+  try {
+    const summary = await syncAllPeiwanRoles(client);
+    sendJson(res, 200, {
+      ok: true,
+      ...summary,
+    });
+  } catch (error) {
+    console.error('[internal-api] sync all peiwan roles failed', error);
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+  }
+}
+
 export function startInternalWebhookServer() {
   if (serverInstance) {
     return serverInstance;
@@ -1182,6 +1201,10 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/peiwan/sync-roles') {
       await handleSyncPeiwanRoles(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/peiwan/sync-roles-all') {
+      await handleSyncAllPeiwanRoles(req, res);
       return;
     }
 

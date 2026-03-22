@@ -212,10 +212,10 @@ export async function syncPeiwanRolesForDiscordUser(client: Client, discordUserI
   };
 }
 
-async function runStartupSync(client: Client) {
+export async function syncAllPeiwanRoles(client: Client) {
   if (!PEIWAN_ROLE_GUILD_ID) {
     console.warn('[peiwan-role-sync] missing guild id, skip startup sync');
-    return;
+    return { total: 0, changed: 0, failed: 0 };
   }
 
   const rows = await prisma.pEIWAN.findMany({
@@ -224,6 +224,7 @@ async function runStartupSync(client: Client) {
   });
 
   let changed = 0;
+  let failed = 0;
   for (const row of rows) {
     try {
       const result = await syncPeiwanRolesForDiscordUser(client, row.discordUserId);
@@ -231,6 +232,7 @@ async function runStartupSync(client: Client) {
         changed += 1;
       }
     } catch (error) {
+      failed += 1;
       console.error('[peiwan-role-sync] startup sync failed', { discordUserId: row.discordUserId, error });
     }
   }
@@ -238,7 +240,14 @@ async function runStartupSync(client: Client) {
   console.log('[peiwan-role-sync] startup sync complete', {
     total: rows.length,
     changed,
+    failed,
   });
+
+  return {
+    total: rows.length,
+    changed,
+    failed,
+  };
 }
 
 export function registerPeiwanRoleSync(client: Client) {
@@ -270,7 +279,7 @@ export function registerPeiwanRoleSync(client: Client) {
   // Startup full sync is intentionally disabled for now.
   // Keep role changes event-driven and use the admin sync button when needed.
   // client.once(Events.ClientReady, () => {
-  //   runStartupSync(client).catch((error) => {
+  //   syncAllPeiwanRoles(client).catch((error) => {
   //     console.error('[peiwan-role-sync] startup sync error', error);
   //   });
   // });
