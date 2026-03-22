@@ -1,7 +1,13 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, userMention } from 'discord.js';
 import { MemberStatus, PeiwanReviewDisplayMode } from '@prisma/client';
 import prisma from '../db/prisma.js';
-import { mapPeiwanRoleLabels, resolvePeiwanEmbedTitle, sent_MP_embed } from '../ui/orderEmbeds.js';
+import {
+  buildGiftingSelect,
+  DEFAULT_GIFTS,
+  mapPeiwanRoleLabels,
+  resolvePeiwanEmbedTitle,
+  sent_MP_embed,
+} from '../ui/orderEmbeds.js';
 
 export const lookSelfCommand = new SlashCommandBuilder()
   .setName('看看自己')
@@ -66,6 +72,7 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
 
   const peiwanType = resolvePeiwanEmbedTitle(peiwan.type, peiwan.gameProfiles);
   const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);
+  const realnameGiftBox = buildGiftingSelect('REALNAME', DEFAULT_GIFTS as Array<{ GiftName: string; price: number }>);
   const { embed } = sent_MP_embed(
     peiwanType,
     peiwan.PEIWANID,
@@ -76,7 +83,7 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
     bossReviews,
     null,
     null,
-    null,
+    realnameGiftBox,
     null,
   );
 
