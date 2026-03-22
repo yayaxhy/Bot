@@ -28,6 +28,7 @@ import { bulkDmCommand, handleBulkDmSlash } from './commands/bulkDm.js';
 import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
 import { getAvatarCommand, handleGetAvatarSlash } from './commands/getAvatarSlash.js';
 import { channelMessageCommand, handleChannelMessageSlash } from './commands/channelMessageSlash.js';
+import { handleLookSelfSlash, lookSelfCommand } from './commands/lookSelfSlash.js';
 import { registerBalanceCommands } from './commands/balanceCommands.js';
 import { registerBlockStackCommand } from './commands/blockStack.js';
 import { registerScratchCommand } from './commands/scratch.js';
@@ -223,6 +224,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleChannelMessageSlash(i);
                 return;
             }
+            if (i.commandName === '看看自己') {
+                await handleLookSelfSlash(i);
+                return;
+            }
         }
 
     // Buttons
@@ -316,6 +321,7 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(scratchStockCommand);
             await client.application.commands.create(getAvatarCommand);
             await client.application.commands.create(channelMessageCommand);
+            await client.application.commands.create(lookSelfCommand);
         }
   } catch (err) {
     console.error('[slash] register error:', err);
