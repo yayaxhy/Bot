@@ -12,6 +12,7 @@ import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
 import { syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
+import { sendPeiwanNotification } from '../services/peiwanWatcher.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -1060,6 +1061,7 @@ async function handleSyncPeiwanRoles(req: IncomingMessage, res: ServerResponse) 
     discordId: payload?.discordId,
     peiwanId: payload?.peiwanId,
   });
+  const shouldNotify = payload?.notify === true;
   if (!discordUserId) {
     sendJson(res, 400, { ok: false, error: 'missing_target' });
     return;
@@ -1077,6 +1079,9 @@ async function handleSyncPeiwanRoles(req: IncomingMessage, res: ServerResponse) 
       const statusCode = result.reason === 'member_fetch_failed' ? 503 : 404;
       sendJson(res, statusCode, { ok: false, error: result.reason });
       return;
+    }
+    if (shouldNotify && result.changed) {
+      await sendPeiwanNotification(result.discordUserId, result.peiwanId);
     }
 
     sendJson(res, 200, {

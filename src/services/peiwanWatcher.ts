@@ -22,9 +22,7 @@ const WATCHED_COLUMNS = [
   'commissionRate',
   'MP_url',
   'exclusive',
-  'type',
   'level',
-  'updatedAt',
 ];
 const WATCHED_CHANGE_CONDITION = WATCHED_COLUMNS.map(
   (column) => `OLD."${column}" IS DISTINCT FROM NEW."${column}"`
@@ -76,7 +74,7 @@ async function ensureTrigger() {
   await prisma.$executeRawUnsafe(triggerSql);
 }
 
-async function sendPeiwanNotification(discordId: string, peiwanId?: number) {
+export async function sendPeiwanNotification(discordId: string, peiwanId?: number) {
   const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
   if (!client) {
     console.warn('[peiwan.watch] missing discord client', { discordId });

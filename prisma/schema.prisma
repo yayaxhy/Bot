@@ -668,7 +668,7 @@ model PeiwanGameProfile {
 
   peiwan PEIWAN @relation(fields: [peiwanId], references: [PEIWANID], onDelete: Cascade)
 
-  @@unique([peiwanId, gameCode])
+  @@unique([peiwanId, sourceRoleId])
   @@index([discordUserId])
   @@index([gameCode, tier])
 }

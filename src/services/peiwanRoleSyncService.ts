@@ -1,7 +1,7 @@
 import { Client, Events, GuildMember, PartialGuildMember } from 'discord.js';
 import { PeiwanGameCode, PeiwanGameTier, PeiwanType } from '@prisma/client';
 import prisma from '../db/prisma.js';
-import { PEIWAN_ROLE_CATALOG_BY_ID } from '../config/peiwanRoleCatalog.js';
+import { PEIWAN_ROLE_CATALOG, PEIWAN_ROLE_CATALOG_BY_ID } from '../config/peiwanRoleCatalog.js';
 
 const PEIWAN_ROLE_GUILD_ID =
   process.env.PEIWAN_ROLE_GUILD_ID ?? process.env.SPENT_ROLE_GUILD_ID ?? '';
@@ -25,6 +25,7 @@ const TIER_PRIORITY: Record<PeiwanGameTier, number> = {
   [PeiwanGameTier.MASTER]: 4,
   [PeiwanGameTier.DEMON_GUARD]: 5,
 };
+const ROLE_ORDER = new Map(PEIWAN_ROLE_CATALOG.map((entry, index) => [entry.roleId, index]));
 
 const TYPE_PRIORITY: Record<PeiwanType, number> = {
   [PeiwanType.娱乐陪玩]: 1,
@@ -40,23 +41,41 @@ type NormalizedProfile = {
 
 function normalizeProfilesFromMember(member: GuildMember | PartialGuildMember | null | undefined): NormalizedProfile[] {
   if (!member?.roles?.cache) return [];
-  const byGame = new Map<PeiwanGameCode, NormalizedProfile>();
+  const profiles: NormalizedProfile[] = [];
 
   for (const role of member.roles.cache.values()) {
     const mapping = ROLE_TO_GAME_TIER[role.id];
     if (!mapping) continue;
-
-    const current = byGame.get(mapping.gameCode);
-    if (!current || TIER_PRIORITY[mapping.tier] > TIER_PRIORITY[current.tier]) {
-      byGame.set(mapping.gameCode, {
-        gameCode: mapping.gameCode,
-        tier: mapping.tier,
-        sourceRoleId: role.id,
-      });
-    }
+    profiles.push({
+      gameCode: mapping.gameCode,
+      tier: mapping.tier,
+      sourceRoleId: role.id,
+    });
   }
 
-  return [...byGame.values()].sort((a, b) => a.gameCode.localeCompare(b.gameCode));
+  return sortProfiles(profiles);
+}
+
+function sortProfiles<T extends { gameCode: PeiwanGameCode; tier: PeiwanGameTier; sourceRoleId: string | null }>(
+  profiles: readonly T[],
+) {
+  return [...profiles].sort((left, right) => {
+    const leftRoleOrder = left.sourceRoleId ? ROLE_ORDER.get(left.sourceRoleId) : undefined;
+    const rightRoleOrder = right.sourceRoleId ? ROLE_ORDER.get(right.sourceRoleId) : undefined;
+    if (leftRoleOrder != null || rightRoleOrder != null) {
+      if (leftRoleOrder == null) return 1;
+      if (rightRoleOrder == null) return -1;
+      if (leftRoleOrder !== rightRoleOrder) return leftRoleOrder - rightRoleOrder;
+    }
+
+    const gameOrder = left.gameCode.localeCompare(right.gameCode);
+    if (gameOrder !== 0) return gameOrder;
+
+    const tierOrder = TIER_PRIORITY[right.tier] - TIER_PRIORITY[left.tier];
+    if (tierOrder !== 0) return tierOrder;
+
+    return (left.sourceRoleId ?? '').localeCompare(right.sourceRoleId ?? '');
+  });
 }
 
 function derivePeiwanType(profiles: readonly Pick<NormalizedProfile, 'tier'>[]): PeiwanType {
@@ -79,10 +98,12 @@ function profilesEqual(
   existing: readonly { gameCode: PeiwanGameCode; tier: PeiwanGameTier; sourceRoleId: string | null }[],
   next: readonly NormalizedProfile[],
 ) {
-  if (existing.length !== next.length) return false;
-  for (let i = 0; i < existing.length; i += 1) {
-    const left = existing[i];
-    const right = next[i];
+  const leftProfiles = sortProfiles(existing);
+  const rightProfiles = sortProfiles(next);
+  if (leftProfiles.length !== rightProfiles.length) return false;
+  for (let i = 0; i < leftProfiles.length; i += 1) {
+    const left = leftProfiles[i];
+    const right = rightProfiles[i];
     if (
       left.gameCode !== right.gameCode ||
       left.tier !== right.tier ||
@@ -129,7 +150,6 @@ export async function syncPeiwanRolesForDiscordUser(client: Client, discordUserI
           tier: true,
           sourceRoleId: true,
         },
-        orderBy: { gameCode: 'asc' },
       },
     },
   });
@@ -247,9 +267,11 @@ export function registerPeiwanRoleSync(client: Client) {
     });
   });
 
-  client.once(Events.ClientReady, () => {
-    runStartupSync(client).catch((error) => {
-      console.error('[peiwan-role-sync] startup sync error', error);
-    });
-  });
+  // Startup full sync is intentionally disabled for now.
+  // Keep role changes event-driven and use the admin sync button when needed.
+  // client.once(Events.ClientReady, () => {
+  //   runStartupSync(client).catch((error) => {
+  //     console.error('[peiwan-role-sync] startup sync error', error);
+  //   });
+  // });
 }
