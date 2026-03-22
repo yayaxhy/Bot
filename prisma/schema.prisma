@@ -72,6 +72,31 @@ enum PeiwanType {
   大神陪玩
 }
 
+enum PeiwanGameCode {
+  LOL
+  CSGO
+  VAL
+  NARAKA
+  OW
+  APEX
+  DELTA
+  MARVEL
+  TFT
+  TARKOV
+  DOTA
+  COD
+  CHAT
+  SINGER
+}
+
+enum PeiwanGameTier {
+  ENTERTAINMENT
+  TRAINEE
+  TECH
+  MASTER
+  DEMON_GUARD
+}
+
 enum PeiwanLevel {
   优选陪玩
   明星陪玩
@@ -613,28 +638,10 @@ model PEIWAN {
   MP_url    String?
   status    PeiwanStatus @default(free)
   serverDisplayName String?
-  techTag   Boolean      @default(false)
   sex       PeiwanSex    @default(小姐姐)
   exclusive Boolean      @default(false)
   type      PeiwanType   @default(娱乐陪玩)
   level     PeiwanLevel  @default(优选陪玩)
-  LOL       Boolean      @default(false)
-  CSGO      Boolean      @default(false)
-  Valorant  Boolean      @default(false)
-  Naraka    Boolean      @default(false)
-  OW2       Boolean      @default(false)
-  APEX      Boolean      @default(false)
-  deltaForce Boolean     @default(false)
-  marvel    Boolean      @default(false)
-  singer    Boolean      @default(false)
-  PUBG      Boolean      @default(false)
-  TFT       Boolean      @default(false)
-  R6        Boolean      @default(false)
-  tarkov    Boolean      @default(false)
-  chat      Boolean      @default(false)
-  steam     Boolean      @default(false)
-  DOTA      Boolean      @default(false)
-  COD       Boolean      @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -643,8 +650,27 @@ model PEIWAN {
 
   // Back-relation to Order for the peiwan relation
   orders Order[] @relation("PeiwanOrders")
+  gameProfiles PeiwanGameProfile[]
 
   @@index([status])
+}
+
+model PeiwanGameProfile {
+  id            String         @id @default(cuid())
+  peiwanId      Int
+  discordUserId String
+  gameCode      PeiwanGameCode
+  tier          PeiwanGameTier
+  source        String?
+  sourceRoleId  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  peiwan PEIWAN @relation(fields: [peiwanId], references: [PEIWANID], onDelete: Cascade)
+
+  @@unique([peiwanId, gameCode])
+  @@index([discordUserId])
+  @@index([gameCode, tier])
 }
 
 model Order {

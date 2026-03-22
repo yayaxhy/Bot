@@ -15,6 +15,7 @@ import { MemberStatus, Prisma, PeiwanReviewDisplayMode, QuotationCode } from '@p
 import {
   buildQuotationSelect,
   buildGiftingSelect,
+  mapPeiwanRoleLabels,
   sent_MP_embed,
   refuse_order_request_embed,
   DEFAULT_GIFTS,
@@ -349,6 +350,13 @@ export async function handlePlayButton(i: ButtonInteraction) {
         where: { discordUserId: workerId },
         include: {
           member: { select: { status: true } },
+          gameProfiles: {
+            select: {
+              gameCode: true,
+              tier: true,
+              sourceRoleId: true,
+            },
+          },
         },
       });
     } catch (e) {
@@ -380,7 +388,10 @@ export async function handlePlayButton(i: ButtonInteraction) {
     const anonymousGiftBox = buildGiftingSelect('ANON', giftsForSelect as any);
 
     const mpUrl: string | null = peiwan.MP_url ?? null;
-    const isTech: boolean = !!peiwan.techTag;
+    const peiwanType: string = typeof peiwan.type === 'string' && peiwan.type.trim()
+      ? peiwan.type.trim()
+      : '娱乐陪玩';
+    const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);
     const orderContent = extractOrderContent(i.message as Message);
     const reviewRows = await prisma.peiwanReview.findMany({
       where: {
@@ -407,9 +418,10 @@ export async function handlePlayButton(i: ButtonInteraction) {
     });
 
     const { embed, components } = sent_MP_embed(
-      isTech,
+      peiwanType,
       peiwan.PEIWANID,
       `<@${workerId}>`,
+      peiwanRoleLabels,
       orderContent,
       mpUrl,
       bossReviews,

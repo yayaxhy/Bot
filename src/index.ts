@@ -39,7 +39,7 @@ import {
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
 import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
-import { registerTechTagSync } from './services/techTagService.js';
+import { registerPeiwanRoleSync } from './services/peiwanRoleSyncService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
 import { registerInviteReward } from './services/inviteRewardService.js';
 import { registerVoicePointService } from './services/voicePointService.js';
@@ -274,7 +274,7 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
 
 
 
-registerTechTagSync(client);
+registerPeiwanRoleSync(client);
 registerInviteReward(client);
 registerVoicePointService(client);
 registerChatVoucherDropService(client, prisma);

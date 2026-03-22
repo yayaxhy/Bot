@@ -178,7 +178,6 @@ export async function handleOrderPriceSelect(i: Interaction) {
       discordUserId: true,
       status: true,
       commissionRate: true,
-      techTag: true,
       MP_url: true,
       quotation_Q1: true,
       lolPrice: true,

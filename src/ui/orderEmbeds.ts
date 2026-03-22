@@ -12,6 +12,7 @@ import {
 } from 'discord.js';
 import { QuotationCode, Gift } from '@prisma/client';
 import type { ActivityItem } from '../services/activityService.js';
+import { formatPeiwanRoleLabel, PEIWAN_ROLE_CATALOG } from '../config/peiwanRoleCatalog.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
@@ -233,9 +234,10 @@ export function order_request_sent_successfully_embed(
 /* ================== MP 卡（DM 给老板） ================== */
 /** 注意：四个下拉都允许为 null；我们只渲染存在的下拉，避免 0 选项导致 50035 */
 export function sent_MP_embed(
-  isTech: boolean,
+  peiwanType: string | null | undefined,
   peiwanId: number,
   workerMention: string,
+  peiwanRoleLabels: string[],
   orderContent: string,
   mpUrl: string | null,
   bossReviews: string[],
@@ -245,11 +247,36 @@ export function sent_MP_embed(
   anonymousGiftBox: StringSelectMenuBuilder | null
 ): { embed: APIEmbed; components: any[] } {
   const sanitizedOrderContent = stripRoleMentions(String(orderContent ?? '')).slice(0, 1024);
+  const resolvedType = peiwanType && peiwanType.trim() ? peiwanType.trim() : '娱乐陪玩';
 
   const e = new EmbedBuilder()
-    .setTitle(isTech ? '技术陪玩' : '娱乐陪玩')
+    .setTitle(resolvedType)
     .addFields({ name: '陪玩ID', value: `${peiwanId} ${workerMention}`, inline: true })
     .setColor(DEFAULT_EMBED_COLOR);
+
+  if (peiwanRoleLabels.length > 0) {
+    const chunks: string[] = [];
+    let current = '';
+    for (const label of peiwanRoleLabels) {
+      const text = String(label ?? '').trim();
+      if (!text) continue;
+      const candidate = current ? `${current}\n${text}` : text;
+      if (candidate.length > 1024) {
+        if (current) chunks.push(current);
+        current = text.slice(0, 1024);
+      } else {
+        current = candidate;
+      }
+    }
+    if (current) chunks.push(current);
+    chunks.forEach((chunk, idx) => {
+      e.addFields({
+        name: idx === 0 ? '锦鲤认证' : `锦鲤认证（续${idx}）`,
+        value: chunk,
+        inline: false,
+      });
+    });
+  }
 
   if (sanitizedOrderContent) {
     e.addFields({ name: ' <a:41:1422335911236206723> 订单内容', value: sanitizedOrderContent, inline: false });
@@ -290,6 +317,25 @@ export function sent_MP_embed(
   if (anonymousGiftBox) rows.push(new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(anonymousGiftBox));
 
   return { embed: e.toJSON(), components: rows };
+}
+
+export function mapPeiwanRoleLabels(
+  profiles: Array<{ gameCode: any; tier: any; sourceRoleId?: string | null }> | null | undefined,
+) {
+  if (!profiles?.length) return [];
+  const roleOrder = new Map(PEIWAN_ROLE_CATALOG.map((entry, index) => [entry.roleId, index]));
+  return [...profiles]
+    .sort((left, right) => {
+      const leftRank = left.sourceRoleId ? roleOrder.get(left.sourceRoleId) : undefined;
+      const rightRank = right.sourceRoleId ? roleOrder.get(right.sourceRoleId) : undefined;
+      if (leftRank != null || rightRank != null) {
+        if (leftRank == null) return 1;
+        if (rightRank == null) return -1;
+        return leftRank - rightRank;
+      }
+      return formatPeiwanRoleLabel(left).localeCompare(formatPeiwanRoleLabel(right), 'zh-CN');
+    })
+    .map((profile) => formatPeiwanRoleLabel(profile));
 }
 
 /* ================== 下拉框构建 ================== */

@@ -11,6 +11,7 @@ import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
+import { syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -1051,6 +1052,47 @@ async function handleRevertGift(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+async function handleSyncPeiwanRoles(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const discordUserId = await resolveDiscordId({
+    discordId: payload?.discordId,
+    peiwanId: payload?.peiwanId,
+  });
+  if (!discordUserId) {
+    sendJson(res, 400, { ok: false, error: 'missing_target' });
+    return;
+  }
+
+  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+  if (!client) {
+    sendJson(res, 503, { ok: false, error: 'client_not_ready' });
+    return;
+  }
+
+  try {
+    const result = await syncPeiwanRolesForDiscordUser(client, discordUserId);
+    if (!result.ok) {
+      const statusCode = result.reason === 'member_fetch_failed' ? 503 : 404;
+      sendJson(res, statusCode, { ok: false, error: result.reason });
+      return;
+    }
+
+    sendJson(res, 200, {
+      ok: true,
+      changed: result.changed,
+      discordId: result.discordUserId,
+      peiwanId: result.peiwanId,
+      type: result.type,
+      profiles: result.profiles,
+    });
+  } catch (error) {
+    console.error('[internal-api] peiwan role sync failed', { discordUserId, error });
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+  }
+}
+
 export function startInternalWebhookServer() {
   if (serverInstance) {
     return serverInstance;
@@ -1131,6 +1173,10 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/revert-gift') {
       await handleRevertGift(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/peiwan/sync-roles') {
+      await handleSyncPeiwanRoles(req, res);
       return;
     }
 
