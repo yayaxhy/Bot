@@ -71,6 +71,9 @@ export function formatPeiwanRoleLabel(profile: {
   }
 
   const game = GAME_LABELS[profile.gameCode] ?? profile.gameCode;
+  if (profile.gameCode === PeiwanGameCode.CHAT || profile.gameCode === PeiwanGameCode.SINGER) {
+    return game;
+  }
   switch (profile.tier) {
     case PeiwanGameTier.DEMON_GUARD:
       return `${game}魔王护`;

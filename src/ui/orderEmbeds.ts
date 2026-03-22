@@ -325,6 +325,12 @@ export function mapPeiwanRoleLabels(
   if (!profiles?.length) return [];
   const roleOrder = new Map(PEIWAN_ROLE_CATALOG.map((entry, index) => [entry.roleId, index]));
   return [...profiles]
+    .filter((profile) => {
+      const sourceRoleId = String(profile.sourceRoleId ?? '').trim();
+      if (!sourceRoleId) return false;
+      return true;
+    })
+    .filter((profile) => String(profile.tier ?? '') !== 'ENTERTAINMENT')
     .sort((left, right) => {
       const leftRank = left.sourceRoleId ? roleOrder.get(left.sourceRoleId) : undefined;
       const rightRank = right.sourceRoleId ? roleOrder.get(right.sourceRoleId) : undefined;
