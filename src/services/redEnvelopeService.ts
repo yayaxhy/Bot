@@ -15,6 +15,7 @@ import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { getAutoCommissionBoost } from './autoCommissionBuffService.js';
+import { scheduleSpentRoleSync } from './spentRoleService.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
 
@@ -558,7 +559,7 @@ export async function createRedEnvelope(
       ? encodeKeywordNote(keyword!, displayNote)
       : clampNote(displayNote);
 
-  return client.$transaction(async (tx) => {
+  const envelope = await client.$transaction(async (tx) => {
     await ensureMemberExists(tx, params.creatorId);
 
     const member = await tx.member.findUnique({
@@ -646,6 +647,8 @@ export async function createRedEnvelope(
 
     return envelope;
   });
+  scheduleSpentRoleSync(params.creatorId, { announceVipUpgrade: true });
+  return envelope;
 }
 
 type CreateSystemEnvelopeParams = {
@@ -930,7 +933,7 @@ export async function expireEnvelope(
     ? (client as PrismaClient).$transaction.bind(client as PrismaClient)
     : async (fn: (tx: DbClient) => any) => fn(client);
 
-  return runner(async (tx: DbClient) => {
+  const result = await runner(async (tx: DbClient) => {
     const envelope = await tx.redEnvelope.findUnique({
       where: { id: envelopeId },
       select: {
@@ -1025,6 +1028,10 @@ export async function expireEnvelope(
 
     return { refundAmount: remainingAmount, status: 'refunded', creatorId: envelope.creatorId };
   });
+  if (result.status === 'refunded' && result.creatorId) {
+    scheduleSpentRoleSync(result.creatorId);
+  }
+  return result;
 }
 
 async function resolveCreatorName(

@@ -1,7 +1,7 @@
 import { LotteryStatus, Prisma, PrismaClient } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
-import { syncSpentRolesForMember } from './spentRoleService.js';
+import { scheduleSpentRoleSync } from './spentRoleService.js';
 import { getFlowBuffRemaining, getSpendBuffRemaining } from './buffService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
@@ -309,12 +309,8 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
     };
   });
 
-  try {
-    await syncSpentRolesForMember(result.audit.giverId);
-    await syncSpentRolesForMember(result.audit.receiverId, { includeSpendRoles: false });
-  } catch (err) {
-    console.error('[revert-gift] sync roles failed', err);
-  }
+  scheduleSpentRoleSync(result.audit.giverId);
+  scheduleSpentRoleSync(result.audit.receiverId, { includeSpendRoles: false });
   evaluateAutoCommissionBuffWithReason(result.audit.receiverId, 'revert').catch((err) =>
     console.error('[revert-gift] auto commission eval failed', err),
   );

@@ -8,6 +8,7 @@ import { consumeSpendBuff } from '../services/buffService.js';
 import { consumePityForNewGame } from '../services/blockStackPityState.js';
 import { recordIndividualTransaction } from '../services/individualTransactionService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
+import { scheduleSpentRoleSync } from '../services/spentRoleService.js';
 import {
   buildBlockStackComponents,
   buildBlockStackEmbed,
@@ -86,7 +87,7 @@ export function registerBlockStackCommand(client: Client) {
               totalRevenue: START_COST,
             },
           });
-          return { status: 'ok' as const, game };
+          return { status: 'ok' as const, game, spentCharged: false };
         }
 
         await tx.lotteryDraw.updateMany({
@@ -130,7 +131,7 @@ export function registerBlockStackCommand(client: Client) {
               totalRevenue: START_COST,
             },
           });
-          return { status: 'ok' as const, game };
+          return { status: 'ok' as const, game, spentCharged: false };
         }
 
         await tx.member.upsert({
@@ -206,12 +207,15 @@ export function registerBlockStackCommand(client: Client) {
             totalRevenue: START_COST,
           },
         });
-        return { status: 'ok' as const, game };
+        return { status: 'ok' as const, game, spentCharged: true };
       });
 
       if (result.status === 'insufficient') {
         await sendToChannel(msg.channel, '余额不足！');
         return;
+      }
+      if (result.spentCharged) {
+        scheduleSpentRoleSync(msg.author.id, { announceVipUpgrade: true });
       }
 
       const game = result.game!;

@@ -1,7 +1,7 @@
 import { order_end_boss_embed, order_end_pw_embed, discount_prompt_embed } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
 import type { Client } from 'discord.js';
-import { syncSpentRolesForMember } from './spentRoleService.js';
+import { scheduleSpentRoleSync } from './spentRoleService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
 import { LotteryStatus } from '@prisma/client';
 
@@ -70,10 +70,8 @@ export async function notifyOrderEnded(orderId: string) {
     console.log('[notifyOrderEnded] skip', { orderId, reason: 'missing order or participants' });
     return;
   }
-  syncSpentRolesForMember(order.hostId).catch((err) => console.error('[spent-role] schedule failed', err));
-  syncSpentRolesForMember(order.workerId, { includeSpendRoles: false }).catch((err) =>
-    console.error('[spent-role] schedule failed for worker', err)
-  );
+  scheduleSpentRoleSync(order.hostId, { announceVipUpgrade: true });
+  scheduleSpentRoleSync(order.workerId, { includeSpendRoles: false });
   const now = new Date();
   const [availableCoupons, bazheCouponCount, qizheCouponCount, specialJiuzheCouponCount] =
     await Promise.all([

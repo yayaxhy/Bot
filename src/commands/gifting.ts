@@ -7,7 +7,7 @@ import { addHeart } from '../services/heartService.js';
 import { recordIndividualTransaction } from '../services/individualTransactionService.js';
 import { giftBox_success } from '../ui/orderEmbeds.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
-import { syncSpentRolesForMember } from '../services/spentRoleService.js';
+import { scheduleSpentRoleSync } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 import { unlockGiftWallForPeiwan } from '../services/giftWallService.js';
 import { adjustLoyaltyPointsTx } from '../services/loyaltyPointService.js';
@@ -1043,12 +1043,8 @@ export async function performGift(
     console.error('[gift-wall] reward notify failed:', err);
   }
 
-  syncSpentRolesForMember(giverId).catch((err) =>
-    console.error('[spent-role] gift sync failed', err)
-  );
-  syncSpentRolesForMember(receiverId, { includeSpendRoles: false }).catch((err) =>
-    console.error('[spent-role] gift sync failed for receiver', err)
-  );
+  scheduleSpentRoleSync(giverId, { announceVipUpgrade: true });
+  scheduleSpentRoleSync(receiverId, { includeSpendRoles: false });
   evaluateAutoCommissionBuff(receiverId).catch((err) =>
     console.error('[performGift] auto commission eval failed', err),
   );

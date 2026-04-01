@@ -1,7 +1,7 @@
 import { CouponType, LotteryStatus, OrderStatus, Prisma, PrismaClient } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
-import { syncSpentRolesForMember } from './spentRoleService.js';
+import { scheduleSpentRoleSync } from './spentRoleService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { getSpendBuffRemaining } from './buffService.js';
@@ -375,12 +375,8 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
     };
   });
 
-  try {
-    await syncSpentRolesForMember(result.order.hostId);
-    await syncSpentRolesForMember(result.order.workerId, { includeSpendRoles: false });
-  } catch (err) {
-    console.error('[revert-order] sync roles failed', err);
-  }
+  scheduleSpentRoleSync(result.order.hostId);
+  scheduleSpentRoleSync(result.order.workerId, { includeSpendRoles: false });
   evaluateAutoCommissionBuffWithReason(result.order.workerId, 'revert').catch((err) =>
     console.error('[revert-order] auto commission eval failed', err),
   );

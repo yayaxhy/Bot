@@ -2,6 +2,7 @@ import { Prisma, PrismaClient, ScratchPrizeType, ScratchTicketStatus } from '@pr
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
+import { scheduleSpentRoleSync } from './spentRoleService.js';
 
 const DEC = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
@@ -485,6 +486,9 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
       ) {
         scratchRandomThanksCount = 0;
       }
+    }
+    if (result.status === 'ok') {
+      scheduleSpentRoleSync(params.userId, { announceVipUpgrade: true });
     }
 
     return result;

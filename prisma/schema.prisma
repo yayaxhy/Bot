@@ -97,6 +97,23 @@ enum PeiwanGameTier {
   DEMON_GUARD
 }
 
+enum FarmSeedType {
+  WHEAT
+  ROSE
+  KOI_FLOWER
+  MYSTERY_FRUIT
+}
+
+enum FarmActionType {
+  BALANCE_TO_COINS
+  POINTS_TO_COINS
+  COINS_TO_POINTS
+  PLANT
+  HARVEST
+  EXPAND
+  STEAL
+}
+
 enum PeiwanLevel {
   优选陪玩
   明星陪玩
@@ -163,6 +180,8 @@ model Member {
   peiwan PEIWAN? @relation("MemberToPeiwan")
   // Loyalty points (one-to-one)
   loyaltyPoint LoyaltyPoint?
+  // Farm profile (one-to-one)
+  farmProfile FarmProfile?
   // Withdrawal account presets (one-to-one)
   withdrawalAccount WithdrawalAccount?
 
@@ -227,6 +246,71 @@ model LoyaltyPoint {
   updatedAt     DateTime @updatedAt
 
   member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+}
+
+model FarmProfile {
+  discordUserId String   @id
+  coins         Decimal  @default(0) @db.Decimal(19, 4)
+  experience    Int      @default(0)
+  unlockedPlots Int      @default(4)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+  plots  FarmPlot[]
+  logs   FarmActionLog[]
+}
+
+model FarmPlot {
+  id            String        @id @default(cuid())
+  discordUserId String
+  plotIndex     Int
+  seedType      FarmSeedType?
+  plantedAt     DateTime?
+  readyAt       DateTime?
+  lastStolenAt  DateTime?
+  lastStolenBy  String?
+  stolenCoins   Decimal       @default(0) @db.Decimal(19, 4)
+  lastHarvestAt DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  profile FarmProfile @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+
+  @@unique([discordUserId, plotIndex])
+  @@index([discordUserId, readyAt])
+}
+
+model FarmActionLog {
+  id            String         @id @default(cuid())
+  discordUserId String
+  actionType    FarmActionType
+  plotIndex     Int?
+  seedType      FarmSeedType?
+  balanceDelta  Decimal        @default(0) @db.Decimal(19, 4)
+  pointDelta    Decimal        @default(0) @db.Decimal(19, 4)
+  coinDelta     Decimal        @default(0) @db.Decimal(19, 4)
+  expDelta      Int            @default(0)
+  note          String?
+  createdAt     DateTime       @default(now())
+
+  profile FarmProfile @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+
+  @@index([discordUserId, createdAt])
+  @@index([discordUserId, actionType, createdAt])
+}
+
+model FarmVisit {
+  id              String   @id @default(cuid())
+  viewerDiscordId String
+  targetDiscordId String
+  visitCount      Int      @default(1)
+  createdAt       DateTime @default(now())
+  lastVisitedAt   DateTime @default(now())
+
+  @@unique([viewerDiscordId, targetDiscordId])
+  @@index([viewerDiscordId, lastVisitedAt])
+  @@index([viewerDiscordId, visitCount])
 }
 
 model VoicePointSession {

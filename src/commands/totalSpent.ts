@@ -1,6 +1,7 @@
 import { Client, Message } from 'discord.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { isCashAdmin } from './cash.js';
+import { scheduleSpentRoleSync } from '../services/spentRoleService.js';
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
@@ -70,6 +71,7 @@ export function registerTotalSpentCommand(client: Client, prisma: PrismaClient) 
       });
 
       const verb = sign === '+' ? '增加' : '减少';
+      scheduleSpentRoleSync(targetId, { announceVipUpgrade: sign === '+' });
       await msg.channel.send(
         `已为用户 <@${targetId}> ${verb}消费 **${amount.toString()}**，当前消费：**${updated.totalSpent.toString()}**`
       );

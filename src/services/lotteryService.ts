@@ -5,6 +5,7 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { scheduleSpentRoleSync } from './spentRoleService.js';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -314,7 +315,8 @@ export async function performLotteryDraw(params: {
 }): Promise<LotteryResult> {
   const { userId, payerId = userId, nonce, requestId, pool } = params;
   const now = new Date();
-  return prisma.$transaction(async (tx) => {
+  let spentCharged = false;
+  const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.lotteryDraw.findUnique({
       where: { nonce },
       include: { prize: true },
@@ -406,6 +408,7 @@ export async function performLotteryDraw(params: {
     }
 
     if (!useFreeVoucher) {
+      spentCharged = true;
       const account = await tx.member.findUnique({
         where: { discordUserId: payerId },
         select: { income: true, recharge: true, totalBalance: true },
@@ -527,6 +530,10 @@ export async function performLotteryDraw(params: {
       cost: draw.cost,
     };
   });
+  if (spentCharged) {
+    scheduleSpentRoleSync(payerId, { announceVipUpgrade: true });
+  }
+  return result;
 }
 
 export async function consumeVouchers(
