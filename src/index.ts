@@ -18,11 +18,7 @@ import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
 import { registerTotalSpentCommand } from './commands/totalSpent.js';
 import { registerLoyaltyPointCommand } from './commands/loyaltyPoints.js';
-import {
-  grantCouponCommand,
-  handleGrantCouponAutocomplete,
-  handleGrantCouponSlash,
-} from './commands/grantCouponSlash.js';
+import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
 import { handleRegisterPeiwanSlash, registerPeiwanCommand } from './commands/registerPeiwanSlash.js';
 import { handleRedEnvelopeSlash, redEnvelopeSlashCommand } from './commands/redEnvelopeSlash.js';
 import { handleKeywordRedEnvelopeSlash, keywordRedEnvelopeSlashCommand } from './commands/keywordRedEnvelopeSlash.js';
@@ -69,10 +65,24 @@ import {
 
 dotenv.config();
 
-await prismaReady.catch((err) => {
+const PRISMA_CONNECT_TIMEOUT_MS = Math.max(
+  1_000,
+  Number.parseInt(process.env.PRISMA_CONNECT_TIMEOUT_MS ?? '', 10) || 15_000
+);
+
+console.log('[startup] waiting for prisma');
+await Promise.race([
+  prismaReady,
+  new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Prisma connect timeout after ${PRISMA_CONNECT_TIMEOUT_MS}ms`));
+    }, PRISMA_CONNECT_TIMEOUT_MS);
+  }),
+]).catch((err) => {
   console.error('[startup] prisma warmup failed:', err);
   process.exit(1);
 });
+console.log('[startup] prisma ready');
 
 const client = new Client({
   intents: [
@@ -163,13 +173,6 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 	// interaction router
 client.on(Events.InteractionCreate, async (i: Interaction) => {
   try {
-    if (i.isAutocomplete()) {
-      if (i.commandName === '送券') {
-        await handleGrantCouponAutocomplete(i);
-        return;
-      }
-    }
-
     // String select for price (实名/匿名点单)
     if (i.isStringSelectMenu()) {
       const customId = i.customId ?? '';
@@ -352,4 +355,8 @@ client.once(Events.ClientReady, async () => {
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));
 process.on('uncaughtException', (err) => console.error('[uncaughtException]', err));
 
-client.login(process.env.DISCORD_TOKEN);
+console.log('[startup] logging into discord');
+await client.login(process.env.DISCORD_TOKEN).catch((err) => {
+  console.error('[startup] discord login failed:', err);
+  process.exit(1);
+});
