@@ -34,6 +34,7 @@ const GRANT_ITEMS: Record<string, GrantItem> = {
   LOTTERY_VOUCHER: { label: '抽奖代金券', couponType: CouponType.LOTTERY_VOUCHER },
   CUSTOM_GIFT: { label: '自定义礼物券', couponType: CouponType.CUSTOM_GIFT_VOUCHER },
   CUSTOM_TAG: { label: '自定义tag券', couponType: CouponType.CUSTOM_TAG_VOUCHER },
+  PEIWAN_REVIEW: { label: '陪玩评语券', couponType: CouponType.PEIWAN_REVIEW_VOUCHER },
   COMMISSION_MINUS1: { label: '抽成降1%券', couponType: CouponType.COMMISSION_MINUS1_VOUCHER },
   DOUBLE_FLOW_5000: { label: '双倍流水5000券', couponType: CouponType.DOUBLE_FLOW_5000_VOUCHER },
   DOUBLE_SPEND_5000: { label: '双倍消费5000券', couponType: CouponType.DOUBLE_SPEND_5000_VOUCHER },
