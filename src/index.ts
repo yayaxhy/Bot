@@ -18,7 +18,11 @@ import { handleDiscountSelect } from './interactions/selects/discountSelect.js';
 import { registerTotalEarnCommand } from './commands/totalEarn.js';
 import { registerTotalSpentCommand } from './commands/totalSpent.js';
 import { registerLoyaltyPointCommand } from './commands/loyaltyPoints.js';
-import { grantCouponCommand, handleGrantCouponSlash } from './commands/grantCouponSlash.js';
+import {
+  grantCouponCommand,
+  handleGrantCouponAutocomplete,
+  handleGrantCouponSlash,
+} from './commands/grantCouponSlash.js';
 import { handleRegisterPeiwanSlash, registerPeiwanCommand } from './commands/registerPeiwanSlash.js';
 import { handleRedEnvelopeSlash, redEnvelopeSlashCommand } from './commands/redEnvelopeSlash.js';
 import { handleKeywordRedEnvelopeSlash, keywordRedEnvelopeSlashCommand } from './commands/keywordRedEnvelopeSlash.js';
@@ -156,9 +160,16 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   }
 });
 
-// interaction router
+	// interaction router
 client.on(Events.InteractionCreate, async (i: Interaction) => {
   try {
+    if (i.isAutocomplete()) {
+      if (i.commandName === '送券') {
+        await handleGrantCouponAutocomplete(i);
+        return;
+      }
+    }
+
     // String select for price (实名/匿名点单)
     if (i.isStringSelectMenu()) {
       const customId = i.customId ?? '';

@@ -1,4 +1,8 @@
-import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
+import {
+  AutocompleteInteraction,
+  ChatInputCommandInteraction,
+  SlashCommandBuilder,
+} from 'discord.js';
 import prisma from '../db/prisma.js';
 import { CouponStatus, CouponType, LotteryPool, LotteryStatus } from '@prisma/client';
 import crypto from 'node:crypto';
@@ -41,11 +45,6 @@ const GRANT_ITEMS: Record<string, GrantItem> = {
   BLOCK_STACK_VOUCHER: { label: '积木游戏代金券', lotteryPrizeName: PRIZE_NAMES.BLOCK_STACK_VOUCHER },
 };
 
-const CHOICES = Object.entries(GRANT_ITEMS).map(([value, item]) => ({
-  name: item.label,
-  value,
-}));
-
 export const grantCouponCommand = new SlashCommandBuilder()
   .setName('送券')
   .setDescription('给指定用户发放优惠券')
@@ -54,7 +53,7 @@ export const grantCouponCommand = new SlashCommandBuilder()
       .setName('券种')
       .setDescription('选择要发放的优惠券类型')
       .setRequired(true)
-      .addChoices(...CHOICES)
+      .setAutocomplete(true)
   )
   .addIntegerOption((option) =>
     option
@@ -69,6 +68,34 @@ export const grantCouponCommand = new SlashCommandBuilder()
       .setDescription('要发券的用户')
       .setRequired(true)
   );
+
+export async function handleGrantCouponAutocomplete(i: AutocompleteInteraction) {
+  if (i.commandName !== '送券') return;
+
+  const focused = i.options.getFocused(true);
+  if (focused.name !== '券种') return;
+
+  const keyword = String(focused.value ?? '').trim().toLowerCase();
+  const matches = Object.entries(GRANT_ITEMS)
+    .filter(([value, item]) => {
+      if (!keyword) return true;
+      return value.toLowerCase().includes(keyword) || item.label.toLowerCase().includes(keyword);
+    })
+    .slice(0, 25)
+    .map(([value, item]) => ({
+      name: item.label,
+      value,
+    }));
+
+  try {
+    await i.respond(matches);
+  } catch (err) {
+    console.error('[grantCoupon] autocomplete failed', {
+      interactionId: i.id,
+      err,
+    });
+  }
+}
 
 export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
   if (i.commandName !== '送券') return;
