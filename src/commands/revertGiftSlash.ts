@@ -25,8 +25,31 @@ export async function handleRevertGiftSlash(i: ChatInputCommandInteraction) {
   const reason = i.options.getString('reason') ?? undefined;
 
   try {
-    await revertGiftByIndividualTx({ transactionId: txId, operatorId: i.user.id, reason });
-    await i.editReply({ content: `已撤销打赏流水 ${txId}，请留意余额和通知。` });
+    const result = await revertGiftByIndividualTx({ transactionId: txId, operatorId: i.user.id, reason });
+    const refundText = Number(result.payable.toString()).toFixed(2);
+    const workerNetText = Number(result.netAmount.toString()).toFixed(2);
+    const voucherUsed =
+      (Array.isArray(result.audit.voucherIds) && result.audit.voucherIds.length > 0) ||
+      (Array.isArray((result.audit as any).couponIds) && (result.audit as any).couponIds.length > 0);
+
+    let bossMessage: string;
+    if (voucherUsed && refundText === '0.00') {
+      bossMessage = '消耗的券已返还。';
+    } else if (voucherUsed) {
+      bossMessage = `消耗的券和金额 ¥${refundText} 已返还。`;
+    } else {
+      bossMessage = `金额 ¥${refundText} 已返还。`;
+    }
+
+    await i.editReply({
+      content:
+        `已撤销打赏流水 ${txId}，` +
+        `老板 <@${result.audit.giverId}>：${bossMessage} ` +
+        `陪玩 <@${result.audit.receiverId}>：金额 ¥${workerNetText} 已扣回。`,
+      allowedMentions: {
+        users: [result.audit.giverId, result.audit.receiverId],
+      },
+    });
   } catch (err: any) {
     const msg =
       err?.message === 'already_reverted'
