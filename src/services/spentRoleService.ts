@@ -1,8 +1,9 @@
 import prisma from '../db/prisma.js';
-import { EmbedBuilder, roleMention, userMention, type Client } from 'discord.js';
+import { EmbedBuilder, userMention, type Client } from 'discord.js';
 
 type Tier = { threshold: number; roles: string[] };
 type SpendRoleTier = {
+  vipLevel: number;
   threshold: number;
   roleId: string;
   name: string;
@@ -18,9 +19,39 @@ const SPENT_ROLE_GUILD_ID = process.env.SPENT_ROLE_GUILD_ID ?? '';
 const VIP_UPGRADE_ANNOUNCE_CHANNEL_ID =
   process.env.VIP_UPGRADE_ANNOUNCE_CHANNEL_ID ?? '1488737027582201998';
 const spentRoleSyncQueue = new Map<string, Promise<void>>();
+const EMOJI_YELLOW_HANGING_STARS = '<a:229185yellowhangingstars:1443533883764375562>';
+const EMOJI_BABY_PINK_SPARKLIES = '<a:995647babypinksparklies:1443519291583369266>';
+const EMOJI_PINK_SPARKLES = '<a:64382pinksparkles:1445301278040391800>';
+const EMOJI_HEART_POP = '<a:604354heartpop:1452472977169060032>';
+const EMOJI_WHITE_PAW_BOUNCE = '<a:64382whitepawbounce:1443540848548646912>';
+const EMOJI_C = '<a:AC:1422295050678833172>';
+const EMOJI_O = '<a:AO:1422295368426848256>';
+const EMOJI_N = '<a:AN:1422295344292827329>';
+const EMOJI_G = '<a:AG:1422295140218966107>';
+const EMOJI_R = '<a:AR:1422295495954403440>';
+const EMOJI_A = '<a:AA:1422295004868775936>';
+const EMOJI_T = '<a:AT:1422295552267386940>';
+const EMOJI_U = '<a:AU:1422295584034918470>';
+const EMOJI_L = '<a:AL:1422295291440140419>';
+const EMOJI_I = '<a:AI:1422295171630108765>';
+const EMOJI_S = '<a:AS:1422295527047041114>';
+const FANCY_DIGITS = ['𝟎', '𝟏', '𝟐', '𝟑', '𝟒', '𝟓', '𝟔', '𝟕', '𝟖', '𝟗'] as const;
+const LEVEL_UP_BANNER =
+  `## ${EMOJI_YELLOW_HANGING_STARS} ${EMOJI_BABY_PINK_SPARKLIES} ` +
+  `${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_BABY_PINK_SPARKLIES}` +
+  `${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_PINK_SPARKLES} ` +
+  `𝕷𝖊𝖛𝖊𝖑 𝖀𝖕${EMOJI_PINK_SPARKLES} ` +
+  `${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_BABY_PINK_SPARKLIES}` +
+  `${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_BABY_PINK_SPARKLIES}${EMOJI_BABY_PINK_SPARKLIES} ` +
+  `${EMOJI_YELLOW_HANGING_STARS}`;
+const CONGRATS_BANNER =
+  `## ${EMOJI_HEART_POP} ${EMOJI_C} ${EMOJI_O} ${EMOJI_N} ${EMOJI_G} ${EMOJI_R} ` +
+  `${EMOJI_A} ${EMOJI_T} ${EMOJI_U} ${EMOJI_L} ${EMOJI_A} ${EMOJI_T} ${EMOJI_I} ` +
+  `${EMOJI_O} ${EMOJI_N} ${EMOJI_S}${EMOJI_HEART_POP}`;
 
 const SPENT_ROLE_TIERS: SpendRoleTier[] = [
   {
+    vipLevel: 1,
     threshold: 500,
     roleId: '1431674463401017364',
     name: '锦鲤',
@@ -29,6 +60,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
     extraRoleIds: ['1430926034873614418'],
   },
   {
+    vipLevel: 2,
     threshold: 1500,
     roleId: '1431678158675116192',
     name: '金锦',
@@ -36,6 +68,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735410505912430/VIP2.png?ex=69cddc65&is=69cc8ae5&hm=4e02b965237c9d2fd8b8709ce3ed5031297423ba554a8ae0c591eb3225f3056d',
   },
   {
+    vipLevel: 3,
     threshold: 3000,
     roleId: '1431678273250918451',
     name: '玉锦',
@@ -43,6 +76,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735433553612882/VIP3.png?ex=69cddc6a&is=69cc8aea&hm=5ac20696ea3ed3e48ddf93d8d304ceb08991b47da9223d3604b31923c084049a',
   },
   {
+    vipLevel: 4,
     threshold: 5000,
     roleId: '1431678352338452603',
     name: '瑞锦',
@@ -50,6 +84,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735453648523354/VIP4.png?ex=69cddc6f&is=69cc8aef&hm=d1c62aa9c29b7ec6d23c65f7c015bd51d87f682e6b988ec9f2423e78a77fa47e',
   },
   {
+    vipLevel: 5,
     threshold: 10000,
     roleId: '1431678419053056071',
     name: '祥锦',
@@ -57,6 +92,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735494128009407/VIP5.png?ex=69cddc79&is=69cc8af9&hm=37ba4d4dec29e9be40ee02f19ddc3b1d1b37d0dbaf57bad6421c6b31ceeb6a03',
   },
   {
+    vipLevel: 6,
     threshold: 20000,
     roleId: '1431678531963850804',
     name: '福锦',
@@ -64,6 +100,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735516059762688/VIP6.png?ex=69cddc7e&is=69cc8afe&hm=ef78c9090f734e78ea10d137be5af30cc843b5977a00f322f8872669f345b5a4',
   },
   {
+    vipLevel: 7,
     threshold: 50000,
     roleId: '1431678630265618433',
     name: '跃锦',
@@ -71,6 +108,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735536452599878/VIP7.png?ex=69cddc83&is=69cc8b03&hm=79b8f08ab40ca024e363f5b77fb7307fb4ce775dcd632a8f9e587e0549134f35',
   },
   {
+    vipLevel: 8,
     threshold: 120000,
     roleId: '1431678711312416918',
     name: '龙门锦',
@@ -78,6 +116,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735562431987844/VIP8.png?ex=69cddc89&is=69cc8b09&hm=5eef633745979dd387ce1aa844049c0bcc14dada915fc7a9b9042abec0f7eb4f',
   },
   {
+    vipLevel: 9,
     threshold: 210000,
     roleId: '1431678784712605856',
     name: '化龙锦',
@@ -85,6 +124,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735586914140290/VIP9.png?ex=69cddc8f&is=69cc8b0f&hm=0c526bdca3ea204827a9c6b4d2a5a185e12a4a27be0f9b0eaf33b07404d664a8',
   },
   {
+    vipLevel: 10,
     threshold: 340000,
     roleId: '1478021398491562054',
     name: '隐龙锦',
@@ -92,6 +132,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735613480993030/VIP10.png?ex=69cddc95&is=69cc8b15&hm=45963d1a39bcd7368195d43a488f9318e432a61db94b834dc13eeb8e2ce18173',
   },
   {
+    vipLevel: 11,
     threshold: 520000,
     roleId: '1478023200674811955',
     name: '游龙锦',
@@ -99,6 +140,7 @@ const SPENT_ROLE_TIERS: SpendRoleTier[] = [
       'https://cdn.discordapp.com/attachments/1488734945810579476/1488735646817452073/VIP11.png?ex=69cddc9d&is=69cc8b1d&hm=3175ec27e36a3028f52104dbcbd1574140ea3c8d1faa7b2d7d129d924e211b93',
   },
   {
+    vipLevel: 12,
     threshold: 880000,
     roleId: '1478022587350253718',
     name: '御龙锦',
@@ -177,6 +219,10 @@ function getHighestSpendTierFromRoles(roleIds: Iterable<string>): SpendRoleTier 
   return matched;
 }
 
+function formatFancyNumber(value: number): string {
+  return String(value).replace(/\d/g, (digit) => FANCY_DIGITS[Number(digit)] ?? digit);
+}
+
 async function postVipUpgradeAnnouncement(discordId: string, tier: SpendRoleTier) {
   const client = (globalThis as any).__CLIENT__ as Client | undefined;
   if (!client || !VIP_UPGRADE_ANNOUNCE_CHANNEL_ID) return;
@@ -189,12 +235,19 @@ async function postVipUpgradeAnnouncement(discordId: string, tier: SpendRoleTier
     if (typeof send !== 'function') return;
 
     const embed = new EmbedBuilder().setColor(0xf7c948).setImage(tier.imageUrl);
+    const fancyVipLevel = formatFancyNumber(tier.vipLevel);
     await send({
-      content: `恭喜老板 ${userMention(discordId)} 达到了 ${roleMention(tier.roleId)}`,
+      content: [
+        LEVEL_UP_BANNER,
+        CONGRATS_BANNER,
+        `## ${EMOJI_WHITE_PAW_BOUNCE} ${userMention(discordId)} 晋升至 ˗ˋˏ꒰ 𝓥𝓘𝓟 ${fancyVipLevel} · ${tier.name} ꒱ˎˊ˗ ${EMOJI_WHITE_PAW_BOUNCE}`,
+        '',
+        '*恭喜宝贝升级成功啦！',
+        '从今天开始就是更闪亮的VIP啦～贴贴加倍，快乐翻倍！*',
+      ].join('\n'),
       embeds: [embed],
       allowedMentions: {
         users: [discordId],
-        roles: [tier.roleId],
       },
     });
   } catch (err) {

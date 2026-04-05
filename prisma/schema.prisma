@@ -229,6 +229,7 @@ model Member {
   // Order request logs/clicks
   orderRequestsCreated OrderRequestLog[] @relation("OrderRequestOwner")
   orderRequestClicks   OrderRequestClick[] @relation("OrderRequestWorker")
+  bossProfile          BossProfile?
 
   // Expense & profit logs
     expensesAsOperator Expense[] @relation("ExpenseOperator")
@@ -833,6 +834,33 @@ model OrderRequestClick {
   @@unique([orderId, workerId])
   @@index([orderId])
   @@index([workerId])
+}
+
+model BossProfile {
+  bossId                 String   @id
+  displayName            String?
+  spendLevelLabel        String?
+  styleLabel             String?
+  preferredCompanionLabel String?
+  activeWindowLabel      String?
+  repeatWorkerLabel      String?
+  rankLabel              String?
+  topGames               Json?
+  evidenceLines          Json?
+  totalSpentSnapshot     Decimal  @default(0) @db.Decimal(19, 4)
+  totalBalanceSnapshot   Decimal  @default(0) @db.Decimal(19, 4)
+  totalRequestCount      Int      @default(0)
+  sampledRequestCount    Int      @default(0)
+  totalEndedOrderCount   Int      @default(0)
+  sampledEndedOrderCount Int      @default(0)
+  averageSpendPerOrder   Decimal  @default(0) @db.Decimal(19, 4)
+  averageUnitPrice       Decimal  @default(0) @db.Decimal(19, 4)
+  averageClickCount      Decimal  @default(0) @db.Decimal(19, 4)
+  firstSeenAt            DateTime?
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  member Member @relation(fields: [bossId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
 }
 
 model BossChannelBinding {

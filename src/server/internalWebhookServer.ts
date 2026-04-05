@@ -13,6 +13,8 @@ import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
 import { syncAllPeiwanRoles, syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
 import { sendPeiwanNotification } from '../services/peiwanWatcher.js';
+import { buildAndStoreBossPortrait, generateBossPortraitBatch, listStoredBossPortraits } from '../services/bossProfileService.js';
+import { renderBossProfileAdminPage } from './bossProfileAdminPage.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -20,7 +22,7 @@ const MAX_BODY_SIZE = Number(process.env.INTERNAL_API_MAX_BODY ?? 1024 * 32);
 const INTERNAL_API_ORIGIN = process.env.INTERNAL_API_ORIGIN ?? '*';
 const INTERNAL_API_ALLOWED_HEADERS =
   process.env.INTERNAL_API_ALLOWED_HEADERS ?? 'Content-Type, X-Internal-Token';
-const INTERNAL_API_ALLOWED_METHODS = 'POST, OPTIONS';
+const INTERNAL_API_ALLOWED_METHODS = 'GET, POST, OPTIONS';
 const RENAME_NOTIFY_CHANNEL_ID = process.env.RENAME_NOTIFY_CHANNEL_ID ?? '1446819752692416542';
 const RENAME_NOTIFY_USER_ID = process.env.RENAME_NOTIFY_USER_ID ?? '1421651539247894549';
 const INTERNAL_ALLOWED_IPS = (process.env.INTERNAL_ALLOWED_IPS ?? '43.131.41.173')
@@ -28,6 +30,7 @@ const INTERNAL_ALLOWED_IPS = (process.env.INTERNAL_ALLOWED_IPS ?? '43.131.41.173
   .map((s) => s.trim())
   .filter(Boolean);
 const ADMIN_NOTIFY_USER_ID = '1421651539247894549';
+const ADMIN_TOKEN_COOKIE = 'internal_admin_token';
 const PROFILE_PERSONALISATION_URL =
   process.env.PROFILE_PERSONALISATION_URL ?? 'https://jinleeclub.vip/profile?tab=profile-personalisation';
 
@@ -74,21 +77,71 @@ function sendJson(res: ServerResponse, statusCode: number, body: Record<string, 
   res.end(JSON.stringify(body));
 }
 
-async function parseJsonBody(req: IncomingMessage, res: ServerResponse): Promise<any | null> {
+function sendHtml(res: ServerResponse, statusCode: number, html: string) {
+  applyCorsHeaders(res);
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(html);
+}
+
+function redirect(res: ServerResponse, location: string, statusCode = 303) {
+  applyCorsHeaders(res);
+  res.statusCode = statusCode;
+  res.setHeader('Location', location);
+  res.end();
+}
+
+function parseCookies(req: IncomingMessage) {
+  const header = req.headers.cookie ?? '';
+  const cookies: Record<string, string> = {};
+  for (const entry of header.split(';')) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const eqIndex = trimmed.indexOf('=');
+    if (eqIndex <= 0) continue;
+    const key = trimmed.slice(0, eqIndex).trim();
+    const value = trimmed.slice(eqIndex + 1).trim();
+    if (!key) continue;
+    cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+}
+
+function getRequestToken(req: IncomingMessage, url?: URL) {
+  const headerToken = req.headers['x-internal-token'];
+  if (typeof headerToken === 'string' && headerToken) return headerToken;
+  const cookies = parseCookies(req);
+  if (cookies[ADMIN_TOKEN_COOKIE]) return cookies[ADMIN_TOKEN_COOKIE];
+  return url?.searchParams.get('token') ?? '';
+}
+
+function ensureInternalAccess(req: IncomingMessage, res: ServerResponse, url?: URL): boolean {
   if (!isIpAllowed(req)) {
     console.warn('[internal-api] rejected request from disallowed IP', req.socket.remoteAddress);
     sendJson(res, 403, { ok: false, error: 'forbidden_ip' });
-    return null;
+    return false;
   }
 
-  if (INTERNAL_TOKEN) {
-    const tokenHeader = req.headers['x-internal-token'];
-    if (tokenHeader !== INTERNAL_TOKEN) {
-      console.warn('[internal-api] rejected unauthorized request');
-      sendJson(res, 401, { ok: false, error: 'unauthorized' });
-      return null;
-    }
+  if (!INTERNAL_TOKEN) return true;
+
+  const token = getRequestToken(req, url);
+  if (token !== INTERNAL_TOKEN) {
+    console.warn('[internal-api] rejected unauthorized request');
+    sendJson(res, 401, { ok: false, error: 'unauthorized' });
+    return false;
   }
+
+  if (url?.searchParams.get('token') === INTERNAL_TOKEN) {
+    res.setHeader('Set-Cookie', `${ADMIN_TOKEN_COOKIE}=${encodeURIComponent(INTERNAL_TOKEN)}; Path=/; HttpOnly; SameSite=Lax`);
+  }
+
+  return true;
+}
+
+async function parseJsonBody(req: IncomingMessage, res: ServerResponse): Promise<any | null> {
+  const url = req.url ? new URL(req.url, 'http://localhost') : undefined;
+  if (!ensureInternalAccess(req, res, url)) return null;
 
   let raw = '';
   try {
@@ -108,6 +161,22 @@ async function parseJsonBody(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   return payload;
+}
+
+async function parseFormBody(req: IncomingMessage, res: ServerResponse): Promise<URLSearchParams | null> {
+  const url = req.url ? new URL(req.url, 'http://localhost') : undefined;
+  if (!ensureInternalAccess(req, res, url)) return null;
+
+  let raw = '';
+  try {
+    raw = await readBody(req);
+  } catch (err) {
+    console.error('[internal-api] failed to read form body', err);
+    sendHtml(res, 413, '<h1>413</h1><p>payload too large</p>');
+    return null;
+  }
+
+  return new URLSearchParams(raw);
 }
 
 async function resolveDiscordId(input: { discordId?: string | null; peiwanId?: number | null }) {
@@ -1117,6 +1186,114 @@ async function handleSyncAllPeiwanRoles(_req: IncomingMessage, res: ServerRespon
   }
 }
 
+function buildBossProfileNotice(url: URL) {
+  const status = url.searchParams.get('status');
+  const message = url.searchParams.get('message')?.trim();
+  if (!status || !message) return null;
+  return {
+    type: status === 'ok' ? 'success' as const : 'error' as const,
+    message,
+  };
+}
+
+async function handleBossProfileAdminPage(req: IncomingMessage, res: ServerResponse, url: URL) {
+  if (!ensureInternalAccess(req, res, url)) return;
+
+  if (INTERNAL_TOKEN && url.searchParams.get('token') === INTERNAL_TOKEN) {
+    redirect(res, '/admin/boss-profiles');
+    return;
+  }
+
+  try {
+    const profiles = await listStoredBossPortraits(500);
+    const html = renderBossProfileAdminPage({
+      profiles,
+      notice: buildBossProfileNotice(url),
+    });
+    sendHtml(res, 200, html);
+  } catch (err: any) {
+    console.error('[internal-api] boss profile admin page failed', err);
+    sendHtml(
+      res,
+      500,
+      renderBossProfileAdminPage({
+        profiles: [],
+        notice: {
+          type: 'error',
+          message: '画像页面读取失败，请先确认 BossProfile migration 已执行。',
+        },
+      }),
+    );
+  }
+}
+
+async function handleBossProfileGenerate(req: IncomingMessage, res: ServerResponse) {
+  const form = await parseFormBody(req, res);
+  if (!form) return;
+
+  const bossId = (form.get('bossId') ?? '').toString().trim();
+  const sampleSizeRaw = Number.parseInt((form.get('sampleSize') ?? '50').toString(), 10);
+  const sampleSize = Number.isFinite(sampleSizeRaw) ? Math.min(Math.max(sampleSizeRaw, 20), 200) : 50;
+
+  if (!bossId) {
+    redirect(res, '/admin/boss-profiles?status=error&message=' + encodeURIComponent('请输入老板 Discord ID'));
+    return;
+  }
+
+  try {
+    const portrait = await buildAndStoreBossPortrait(bossId, sampleSize);
+    if (!portrait) {
+      redirect(
+        res,
+        '/admin/boss-profiles?status=error&message=' + encodeURIComponent(`未找到 ${bossId} 的派单或订单样本`),
+      );
+      return;
+    }
+
+    redirect(
+      res,
+      '/admin/boss-profiles?status=ok&message=' + encodeURIComponent(`已刷新 ${portrait.displayName} 的老板画像`),
+    );
+  } catch (err) {
+    console.error('[internal-api] boss profile generate failed', err);
+    redirect(
+      res,
+      '/admin/boss-profiles?status=error&message=' + encodeURIComponent('画像生成失败，请检查 BossProfile 表和样本数据'),
+    );
+  }
+}
+
+async function handleBossProfileBatchGenerate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  mode: 'all' | 'missing',
+) {
+  const form = await parseFormBody(req, res);
+  if (!form) return;
+
+  const sampleSizeRaw = Number.parseInt((form.get('sampleSize') ?? '50').toString(), 10);
+  const sampleSize = Number.isFinite(sampleSizeRaw) ? Math.min(Math.max(sampleSizeRaw, 20), 200) : 50;
+
+  try {
+    const result = await generateBossPortraitBatch(mode, sampleSize);
+    const message =
+      mode === 'all'
+        ? `全部老板画像执行完成：候选 ${result.candidateCount}，新增 ${result.createdCount}，刷新 ${result.refreshedCount}，失败 ${result.failedCount}`
+        : `未建档老板画像补齐完成：候选 ${result.candidateCount}，新增 ${result.createdCount}，失败 ${result.failedCount}`;
+
+    redirect(
+      res,
+      '/admin/boss-profiles?status=ok&message=' + encodeURIComponent(message),
+    );
+  } catch (err) {
+    console.error('[internal-api] boss profile batch generate failed', { mode, err });
+    redirect(
+      res,
+      '/admin/boss-profiles?status=error&message=' + encodeURIComponent('批量画像生成失败，请检查 BossProfile 表和样本数据'),
+    );
+  }
+}
+
 export function startInternalWebhookServer() {
   if (serverInstance) {
     return serverInstance;
@@ -1136,6 +1313,23 @@ export function startInternalWebhookServer() {
     }
 
     const url = new URL(req.url, 'http://localhost');
+
+    if (req.method === 'GET' && url.pathname === '/admin/boss-profiles') {
+      await handleBossProfileAdminPage(req, res, url);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/admin/boss-profiles/generate') {
+      await handleBossProfileGenerate(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/admin/boss-profiles/generate-all') {
+      await handleBossProfileBatchGenerate(req, res, 'all');
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/admin/boss-profiles/generate-missing') {
+      await handleBossProfileBatchGenerate(req, res, 'missing');
+      return;
+    }
 
     if (req.method === 'POST' && url.pathname === '/internal/withdrawals') {
       await handleWithdrawal(req, res);
