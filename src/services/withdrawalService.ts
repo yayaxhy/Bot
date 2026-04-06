@@ -23,12 +23,96 @@ export interface WithdrawalResult {
 }
 
 const asDecimal = (value: number | string) => new Prisma.Decimal(value);
+const WITHDRAW_LINK_TIMEOUT_MS = 10_000;
+const WECHAT_WITHDRAW_ACCOUNT_FIELD = 'account1';
+const ALLOWED_WECHAT_WITHDRAW_HOST = 'cdn.discordapp.com';
+
+function normalizeWithdrawalMethod(note?: string | null): string {
+  return note?.toString().trim().toLowerCase() ?? '';
+}
+
+function isWeChatWithdrawal(note?: string | null): boolean {
+  const method = normalizeWithdrawalMethod(note);
+  return method === '微信' || method === 'wechat' || method.includes('微信');
+}
+
+function parseHttpUrl(value: string): URL | null {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedWeChatWithdrawalHost(url: URL): boolean {
+  return url.hostname.toLowerCase() === ALLOWED_WECHAT_WITHDRAW_HOST;
+}
+
+async function assertValidWeChatWithdrawalImage(url: string) {
+  const parsed = parseHttpUrl(url);
+  if (!parsed) {
+    throw new Error('微信提现收款码链接无效，请重新保存');
+  }
+  if (!isAllowedWeChatWithdrawalHost(parsed)) {
+    throw new Error('微信提现收款码链接必须来自 cdn.discordapp.com，请重新保存');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(parsed, {
+      method: 'GET',
+      signal: AbortSignal.timeout(WITHDRAW_LINK_TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error('微信提现收款码链接无法访问，请重新保存');
+  }
+
+  try {
+    if (!response.ok) {
+      throw new Error('微信提现收款码链接无法访问，请重新保存');
+    }
+
+    const finalUrl = parseHttpUrl(response.url || parsed.toString());
+    if (!finalUrl || !isAllowedWeChatWithdrawalHost(finalUrl)) {
+      throw new Error('微信提现收款码链接必须来自 cdn.discordapp.com，请重新保存');
+    }
+
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    if (!contentType.startsWith('image/')) {
+      throw new Error('微信提现收款码链接不是图片，请重新保存');
+    }
+  } finally {
+    await response.body?.cancel().catch(() => undefined);
+  }
+}
+
+async function ensureWeChatWithdrawalAccountReady(userDiscordId: string) {
+  const account = await prisma.withdrawalAccount.findUnique({
+    where: { discordUserId: userDiscordId },
+    select: { account1: true },
+  });
+
+  const imageUrl = account?.[WECHAT_WITHDRAW_ACCOUNT_FIELD]?.trim();
+  if (!imageUrl) {
+    throw new Error('未设置微信提现收款码，请先保存后再提现');
+  }
+
+  await assertValidWeChatWithdrawalImage(imageUrl);
+}
 
 export async function processWithdrawal(params: WithdrawalParams): Promise<WithdrawalResult> {
   const amountDecimal = asDecimal(params.amount);
 
   if (amountDecimal.lte(0)) {
     throw new Error('提现金额必须大于 0');
+  }
+
+  if (isWeChatWithdrawal(params.note)) {
+    await ensureWeChatWithdrawalAccountReady(params.userDiscordId);
   }
 
   return prisma.$transaction(async (tx) => {

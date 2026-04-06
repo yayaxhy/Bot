@@ -236,6 +236,7 @@ async function postVipUpgradeAnnouncement(discordId: string, tier: SpendRoleTier
 
     const embed = new EmbedBuilder().setColor(0xf7c948).setImage(tier.imageUrl);
     const fancyVipLevel = formatFancyNumber(tier.vipLevel);
+    const everyoneSuffix = tier.vipLevel >= 7 ? ' @everyone' : '';
     await send({
       content: [
         LEVEL_UP_BANNER,
@@ -243,12 +244,18 @@ async function postVipUpgradeAnnouncement(discordId: string, tier: SpendRoleTier
         `## ${EMOJI_WHITE_PAW_BOUNCE} ${userMention(discordId)} 晋升至 ˗ˋˏ꒰ 𝓥𝓘𝓟 ${fancyVipLevel} · ${tier.name} ꒱ˎˊ˗ ${EMOJI_WHITE_PAW_BOUNCE}`,
         '',
         '*恭喜宝贝升级成功啦！',
-        '从今天开始就是更闪亮的VIP啦～贴贴加倍，快乐翻倍！*',
+        `从今天开始就是更闪亮的VIP啦～贴贴加倍，快乐翻倍！${everyoneSuffix}*`,
       ].join('\n'),
       embeds: [embed],
-      allowedMentions: {
-        users: [discordId],
-      },
+      allowedMentions:
+        tier.vipLevel >= 7
+          ? {
+              parse: ['everyone'],
+              users: [discordId],
+            }
+          : {
+              users: [discordId],
+            },
     });
   } catch (err) {
     console.error('[spent-role] vip upgrade announce failed', {

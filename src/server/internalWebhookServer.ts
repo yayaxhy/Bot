@@ -13,8 +13,6 @@ import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
 import { syncAllPeiwanRoles, syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
 import { sendPeiwanNotification } from '../services/peiwanWatcher.js';
-import { buildAndStoreBossPortrait, generateBossPortraitBatch, listStoredBossPortraits } from '../services/bossProfileService.js';
-import { renderBossProfileAdminPage } from './bossProfileAdminPage.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -75,14 +73,6 @@ function sendJson(res: ServerResponse, statusCode: number, body: Record<string, 
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(body));
-}
-
-function sendHtml(res: ServerResponse, statusCode: number, html: string) {
-  applyCorsHeaders(res);
-  res.statusCode = statusCode;
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-store');
-  res.end(html);
 }
 
 function redirect(res: ServerResponse, location: string, statusCode = 303) {
@@ -161,22 +151,6 @@ async function parseJsonBody(req: IncomingMessage, res: ServerResponse): Promise
   }
 
   return payload;
-}
-
-async function parseFormBody(req: IncomingMessage, res: ServerResponse): Promise<URLSearchParams | null> {
-  const url = req.url ? new URL(req.url, 'http://localhost') : undefined;
-  if (!ensureInternalAccess(req, res, url)) return null;
-
-  let raw = '';
-  try {
-    raw = await readBody(req);
-  } catch (err) {
-    console.error('[internal-api] failed to read form body', err);
-    sendHtml(res, 413, '<h1>413</h1><p>payload too large</p>');
-    return null;
-  }
-
-  return new URLSearchParams(raw);
 }
 
 async function resolveDiscordId(input: { discordId?: string | null; peiwanId?: number | null }) {
@@ -444,7 +418,15 @@ async function handleProcessWithdrawal(req: IncomingMessage, res: ServerResponse
   } catch (err: any) {
     console.error('[internal-api] processWithdrawal error', err);
     const message = err instanceof Error ? err.message : 'internal_error';
-    const statusCode = message.includes('余额不足') || message.includes('未找到') || message.includes('金额') ? 400 : 500;
+    const statusCode =
+      message.includes('余额不足') ||
+      message.includes('未找到') ||
+      message.includes('金额') ||
+      message.includes('收款码') ||
+      message.includes('链接') ||
+      message.includes('图片')
+        ? 400
+        : 500;
     sendJson(res, statusCode, { ok: false, error: message });
   }
 }
@@ -1186,114 +1168,6 @@ async function handleSyncAllPeiwanRoles(_req: IncomingMessage, res: ServerRespon
   }
 }
 
-function buildBossProfileNotice(url: URL) {
-  const status = url.searchParams.get('status');
-  const message = url.searchParams.get('message')?.trim();
-  if (!status || !message) return null;
-  return {
-    type: status === 'ok' ? 'success' as const : 'error' as const,
-    message,
-  };
-}
-
-async function handleBossProfileAdminPage(req: IncomingMessage, res: ServerResponse, url: URL) {
-  if (!ensureInternalAccess(req, res, url)) return;
-
-  if (INTERNAL_TOKEN && url.searchParams.get('token') === INTERNAL_TOKEN) {
-    redirect(res, '/admin/boss-profiles');
-    return;
-  }
-
-  try {
-    const profiles = await listStoredBossPortraits(500);
-    const html = renderBossProfileAdminPage({
-      profiles,
-      notice: buildBossProfileNotice(url),
-    });
-    sendHtml(res, 200, html);
-  } catch (err: any) {
-    console.error('[internal-api] boss profile admin page failed', err);
-    sendHtml(
-      res,
-      500,
-      renderBossProfileAdminPage({
-        profiles: [],
-        notice: {
-          type: 'error',
-          message: '画像页面读取失败，请先确认 BossProfile migration 已执行。',
-        },
-      }),
-    );
-  }
-}
-
-async function handleBossProfileGenerate(req: IncomingMessage, res: ServerResponse) {
-  const form = await parseFormBody(req, res);
-  if (!form) return;
-
-  const bossId = (form.get('bossId') ?? '').toString().trim();
-  const sampleSizeRaw = Number.parseInt((form.get('sampleSize') ?? '50').toString(), 10);
-  const sampleSize = Number.isFinite(sampleSizeRaw) ? Math.min(Math.max(sampleSizeRaw, 20), 200) : 50;
-
-  if (!bossId) {
-    redirect(res, '/admin/boss-profiles?status=error&message=' + encodeURIComponent('请输入老板 Discord ID'));
-    return;
-  }
-
-  try {
-    const portrait = await buildAndStoreBossPortrait(bossId, sampleSize);
-    if (!portrait) {
-      redirect(
-        res,
-        '/admin/boss-profiles?status=error&message=' + encodeURIComponent(`未找到 ${bossId} 的派单或订单样本`),
-      );
-      return;
-    }
-
-    redirect(
-      res,
-      '/admin/boss-profiles?status=ok&message=' + encodeURIComponent(`已刷新 ${portrait.displayName} 的老板画像`),
-    );
-  } catch (err) {
-    console.error('[internal-api] boss profile generate failed', err);
-    redirect(
-      res,
-      '/admin/boss-profiles?status=error&message=' + encodeURIComponent('画像生成失败，请检查 BossProfile 表和样本数据'),
-    );
-  }
-}
-
-async function handleBossProfileBatchGenerate(
-  req: IncomingMessage,
-  res: ServerResponse,
-  mode: 'all' | 'missing',
-) {
-  const form = await parseFormBody(req, res);
-  if (!form) return;
-
-  const sampleSizeRaw = Number.parseInt((form.get('sampleSize') ?? '50').toString(), 10);
-  const sampleSize = Number.isFinite(sampleSizeRaw) ? Math.min(Math.max(sampleSizeRaw, 20), 200) : 50;
-
-  try {
-    const result = await generateBossPortraitBatch(mode, sampleSize);
-    const message =
-      mode === 'all'
-        ? `全部老板画像执行完成：候选 ${result.candidateCount}，新增 ${result.createdCount}，刷新 ${result.refreshedCount}，失败 ${result.failedCount}`
-        : `未建档老板画像补齐完成：候选 ${result.candidateCount}，新增 ${result.createdCount}，失败 ${result.failedCount}`;
-
-    redirect(
-      res,
-      '/admin/boss-profiles?status=ok&message=' + encodeURIComponent(message),
-    );
-  } catch (err) {
-    console.error('[internal-api] boss profile batch generate failed', { mode, err });
-    redirect(
-      res,
-      '/admin/boss-profiles?status=error&message=' + encodeURIComponent('批量画像生成失败，请检查 BossProfile 表和样本数据'),
-    );
-  }
-}
-
 export function startInternalWebhookServer() {
   if (serverInstance) {
     return serverInstance;
@@ -1313,23 +1187,6 @@ export function startInternalWebhookServer() {
     }
 
     const url = new URL(req.url, 'http://localhost');
-
-    if (req.method === 'GET' && url.pathname === '/admin/boss-profiles') {
-      await handleBossProfileAdminPage(req, res, url);
-      return;
-    }
-    if (req.method === 'POST' && url.pathname === '/admin/boss-profiles/generate') {
-      await handleBossProfileGenerate(req, res);
-      return;
-    }
-    if (req.method === 'POST' && url.pathname === '/admin/boss-profiles/generate-all') {
-      await handleBossProfileBatchGenerate(req, res, 'all');
-      return;
-    }
-    if (req.method === 'POST' && url.pathname === '/admin/boss-profiles/generate-missing') {
-      await handleBossProfileBatchGenerate(req, res, 'missing');
-      return;
-    }
 
     if (req.method === 'POST' && url.pathname === '/internal/withdrawals') {
       await handleWithdrawal(req, res);
