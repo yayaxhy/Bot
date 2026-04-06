@@ -267,6 +267,41 @@ async function postVipUpgradeAnnouncement(discordId: string, tier: SpendRoleTier
   }
 }
 
+export async function replayCurrentVipUpgradeAnnouncement(discordId: string) {
+  const memberRecord = await prisma.member.findUnique({
+    where: { discordUserId: discordId },
+    select: { totalSpent: true, VIPRoleOptOut: true },
+  });
+
+  if (!memberRecord) {
+    return { ok: false as const, reason: 'member_not_found' as const };
+  }
+  if (memberRecord.VIPRoleOptOut) {
+    return { ok: false as const, reason: 'vip_opt_out' as const };
+  }
+
+  const totalSpentNumber = Number(memberRecord.totalSpent?.toString?.() ?? memberRecord.totalSpent ?? 0);
+  const tier = getHighestSpendTier(totalSpentNumber);
+  if (!tier) {
+    return {
+      ok: false as const,
+      reason: 'no_vip_tier' as const,
+      totalSpent: totalSpentNumber,
+    };
+  }
+
+  await postVipUpgradeAnnouncement(discordId, tier);
+
+  return {
+    ok: true as const,
+    discordId,
+    totalSpent: totalSpentNumber,
+    vipLevel: tier.vipLevel,
+    tierName: tier.name,
+    roleId: tier.roleId,
+  };
+}
+
 export async function syncSpentRolesForMember(
   discordId: string,
   options: SyncSpentRoleOptions = {}
