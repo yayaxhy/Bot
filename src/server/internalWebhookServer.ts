@@ -1,6 +1,9 @@
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { notifyWithdrawal } from '../services/withdrawalNotificationService.js';
+import {
+  notifyWithdrawal,
+  type WithdrawalNotificationPayload,
+} from '../services/withdrawalNotificationService.js';
 import { processWithdrawal } from '../services/withdrawalService.js';
 import { performGift } from '../commands/gifting.js';
 import prisma from '../db/prisma.js';
@@ -33,6 +36,7 @@ const PROFILE_PERSONALISATION_URL =
   process.env.PROFILE_PERSONALISATION_URL ?? 'https://jinleeclub.vip/profile?tab=profile-personalisation';
 
 let serverInstance: http.Server | null = null;
+const withdrawalNotificationQueue = new Map<string, Promise<{ statusCode: number; body: Record<string, unknown> }>>();
 
 function applyCorsHeaders(res: ServerResponse) {
   res.setHeader('Access-Control-Allow-Origin', INTERNAL_API_ORIGIN);
@@ -358,26 +362,109 @@ async function notifyChannel(message: string) {
   }
 }
 
+type InternalWithdrawalNotificationPayload = {
+  userDiscordId?: string;
+  amount?: number | string;
+  requestedAt?: string | number | Date;
+  withdrawalId?: string;
+  note?: string;
+  currency?: string;
+  remainingIncome?: number | string;
+};
+
+async function deliverWithdrawalNotification(
+  rawPayload: InternalWithdrawalNotificationPayload
+): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+  const withdrawalId = rawPayload.withdrawalId?.toString().trim() || undefined;
+  let payload: InternalWithdrawalNotificationPayload = { ...rawPayload, withdrawalId };
+
+  if (withdrawalId) {
+    const record = await prisma.withdraw.findUnique({
+      where: { id: withdrawalId },
+    });
+
+    if (!record) {
+      return { statusCode: 404, body: { ok: false, error: 'withdrawal_not_found' } };
+    }
+    if (record.notifiedAt) {
+      return { statusCode: 200, body: { ok: true, duplicate: true, withdrawalId } };
+    }
+
+    payload = {
+      ...payload,
+      userDiscordId: record.discordId,
+      amount: record.amount.toString(),
+      requestedAt: record.createdAt,
+      withdrawalId: record.id,
+      note: record.method,
+    };
+  }
+
+  if (!payload.userDiscordId || payload.amount == null) {
+    return { statusCode: 400, body: { ok: false, error: 'missing_fields' } };
+  }
+
+  const notificationResult = await notifyWithdrawal(payload as WithdrawalNotificationPayload);
+  if (!notificationResult.delivered) {
+    return {
+      statusCode: 502,
+      body: {
+        ok: false,
+        error: 'notification_failed',
+        withdrawalId,
+        ...notificationResult,
+      },
+    };
+  }
+
+  if (withdrawalId) {
+    await prisma.withdraw.update({
+      where: { id: withdrawalId },
+      data: { notifiedAt: new Date() },
+    });
+  }
+
+  return {
+    statusCode: 200,
+    body: {
+      ok: true,
+      withdrawalId,
+      duplicate: false,
+      ...notificationResult,
+    },
+  };
+}
+
+function scheduleWithdrawalNotification(
+  payload: InternalWithdrawalNotificationPayload
+): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+  const withdrawalId = payload.withdrawalId?.toString().trim();
+  if (!withdrawalId) {
+    return deliverWithdrawalNotification(payload);
+  }
+
+  const previous =
+    withdrawalNotificationQueue.get(withdrawalId) ??
+    Promise.resolve({ statusCode: 200, body: { ok: true } });
+  const current = previous
+    .catch(() => undefined)
+    .then(() => deliverWithdrawalNotification({ ...payload, withdrawalId }));
+
+  withdrawalNotificationQueue.set(withdrawalId, current);
+  return current.finally(() => {
+    if (withdrawalNotificationQueue.get(withdrawalId) === current) {
+      withdrawalNotificationQueue.delete(withdrawalId);
+    }
+  });
+}
+
 async function handleWithdrawal(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
 
-  if (!payload?.userDiscordId || payload.amount == null) {
-    sendJson(res, 400, { ok: false, error: 'missing_fields' });
-    return;
-  }
-
   try {
-    await notifyWithdrawal({
-      userDiscordId: payload.userDiscordId,
-      amount: payload.amount,
-      requestedAt: payload.requestedAt,
-      withdrawalId: payload.withdrawalId,
-      note: payload.note,
-      currency: payload.currency,
-      remainingIncome: payload.remainingIncome,
-    });
-    sendJson(res, 200, { ok: true });
+    const response = await scheduleWithdrawalNotification(payload);
+    sendJson(res, response.statusCode, response.body);
   } catch (err) {
     console.error('[internal-api] notifyWithdrawal failed', err);
     sendJson(res, 500, { ok: false, error: 'internal_error' });
@@ -421,10 +508,7 @@ async function handleProcessWithdrawal(req: IncomingMessage, res: ServerResponse
     const statusCode =
       message.includes('余额不足') ||
       message.includes('未找到') ||
-      message.includes('金额') ||
-      message.includes('收款码') ||
-      message.includes('链接') ||
-      message.includes('图片')
+      message.includes('金额')
         ? 400
         : 500;
     sendJson(res, statusCode, { ok: false, error: message });

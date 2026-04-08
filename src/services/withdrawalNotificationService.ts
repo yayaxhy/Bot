@@ -12,6 +12,12 @@ export interface WithdrawalNotificationPayload {
   workId?: number;
 }
 
+export interface WithdrawalNotificationResult {
+  delivered: boolean;
+  dmSent: boolean;
+  announceSent: boolean;
+}
+
 const CURRENCY_SYMBOLS: Record<string, string> = {
   CNY: '¥',
   USD: '$',
@@ -65,11 +71,13 @@ function formatDate(date: Date): string {
   return formatter.format(date);
 }
 
-export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
+export async function notifyWithdrawal(
+  payload: WithdrawalNotificationPayload
+): Promise<WithdrawalNotificationResult> {
   const client = (globalThis as any).__CLIENT__ as Client | undefined;
   if (!client) {
     console.warn('[withdraw.notify] missing client instance', payload);
-    return;
+    return { delivered: false, dmSent: false, announceSent: false };
   }
 
   const { userDiscordId } = payload;
@@ -77,7 +85,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
 
   if (!userDiscordId || !amountNumber || amountNumber <= 0) {
     console.warn('[withdraw.notify] invalid payload', payload);
-    return;
+    return { delivered: false, dmSent: false, announceSent: false };
   }
 
   let requestedAt = payload.requestedAt ? new Date(payload.requestedAt) : new Date();
@@ -122,9 +130,13 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
     .setDescription(lines.join('\n'))
     .setColor(0xf4a460);
 
+  let dmSent = false;
+  let announceSent = false;
+
   try {
     const user = await client.users.fetch(userDiscordId);
     await user.send({ embeds: [embed] });
+    dmSent = true;
     console.log('[withdraw.notify] sent DM', {
       userDiscordId,
       withdrawalId: payload.withdrawalId,
@@ -157,6 +169,7 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
           .setColor(0xf4a460);
           
         await (channel as any).send({ embeds: [announceEmbed] });
+        announceSent = true;
       } else {
         console.warn('[withdraw.notify] announce channel not text based', { announceChannelId });
       }
@@ -164,4 +177,10 @@ export async function notifyWithdrawal(payload: WithdrawalNotificationPayload) {
       console.error('[withdraw.notify] failed to send announce message', { announceChannelId, err });
     }
   }
+
+  return {
+    delivered: dmSent || announceSent,
+    dmSent,
+    announceSent,
+  };
 }

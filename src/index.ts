@@ -39,7 +39,6 @@ import {
   scratchStockCommand,
 } from './commands/scratchStockSlash.js';
 import { startInternalWebhookServer } from './server/internalWebhookServer.js';
-import { startWithdrawWatcher } from './services/withdrawalWatcher.js';
 import { startPeiwanWatcher } from './services/peiwanWatcher.js';
 import { registerPeiwanRoleSync } from './services/peiwanRoleSyncService.js';
 import { startRechargeWatcher } from './services/rechargeWatcher.js';
@@ -344,7 +343,6 @@ client.once(Events.ClientReady, async () => {
   }
   await recoverRedEnvelopeSchedules(client);
   startInternalWebhookServer();
-  startWithdrawWatcher().catch((err) => console.error('[withdraw.watch] init failed', err));
   startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));
   startRechargeWatcher().catch((err) => console.error('[recharge.watch] init failed', err));
   startCommissionBuffWatcher();
