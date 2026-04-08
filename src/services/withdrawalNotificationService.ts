@@ -71,6 +71,20 @@ function formatDate(date: Date): string {
   return formatter.format(date);
 }
 
+function extractFirstHttpUrl(value?: string): string | undefined {
+  if (!value) return undefined;
+  const match = value.match(/https?:\/\/\S+/i);
+  if (!match) return undefined;
+  const candidate = match[0].replace(/[)>，。,]+$/g, '');
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+  } catch {}
+  return undefined;
+}
+
 export async function notifyWithdrawal(
   payload: WithdrawalNotificationPayload
 ): Promise<WithdrawalNotificationResult> {
@@ -125,10 +139,16 @@ export async function notifyWithdrawal(
     lines.push(`提现方式：${payload.note}`);
   }
 
+  const noteImageUrl = extractFirstHttpUrl(payload.note);
+
   const embed = new EmbedBuilder()
     .setTitle('提现通知')
     .setDescription(lines.join('\n'))
     .setColor(0xf4a460);
+
+  if (noteImageUrl) {
+    embed.setImage(noteImageUrl);
+  }
 
   let dmSent = false;
   let announceSent = false;
@@ -167,6 +187,10 @@ export async function notifyWithdrawal(
           .setTitle('提现公告')
           .setDescription(lines.join('\n'))
           .setColor(0xf4a460);
+
+        if (noteImageUrl) {
+          announceEmbed.setImage(noteImageUrl);
+        }
           
         await (channel as any).send({ embeds: [announceEmbed] });
         announceSent = true;
