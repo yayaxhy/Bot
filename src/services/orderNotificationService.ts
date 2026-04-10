@@ -288,7 +288,7 @@ export async function notifyOrderEnded(orderId: string) {
           where: {
             jinleeId: hostJinleeId,
             status: LotteryStatus.USED,
-            requestId: orderId,
+            consumeOrderId: orderId,
             prize: { name: { in: lotteryDiscountNames } },
           },
           select: { id: true },

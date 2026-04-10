@@ -141,13 +141,11 @@ async function consumeDiscountCandidateTx(
       expiresAt: { gt: now },
       consumeAt: null,
       consumeOrderId: null,
-      requestId: null,
       prize: { name: candidate.prizeName },
     },
     data: {
       status: LotteryStatus.USED,
       consumeAt: now,
-      requestId: orderId,
       consumeAmount: discountAmount,
       consumeOrderId: orderId,
       consumeTargetId: workerDiscordUserId,
@@ -238,7 +236,7 @@ export async function applyLotteryDiscountForOrder(params: {
         where: {
           jinleeId: userIdentity.jinleeId,
           status: LotteryStatus.USED,
-          requestId: orderId,
+          consumeOrderId: orderId,
           prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
         },
         select: { id: true },

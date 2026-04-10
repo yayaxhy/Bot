@@ -217,7 +217,7 @@ export async function applyCouponDiscountForOrder(params: {
         where: {
           jinleeId: userIdentity.jinleeId,
           status: LotteryStatus.USED,
-          requestId: orderId,
+          consumeOrderId: orderId,
           prize: { name: { in: DISCOUNT_PRIZE_NAMES } },
         },
         select: { id: true },

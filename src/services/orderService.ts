@@ -4,7 +4,7 @@ import { round2, minutesBetweenCeil } from '../lib/money.js';
 import { addMinutes, minutesBetweenFloor } from '../lib/time.js';
 import { addHeart } from './heartService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
-import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
+import { consumeFlowBuff, consumeSpendBuff, getActiveCommissionBoost, getFlowBuffRemaining } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { evaluateAutoCommissionBuff, getAutoCommissionBoost } from './autoCommissionBuffService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
@@ -586,11 +586,15 @@ async function settle(
     data: { status: MemberStatus.PEIWAN },
   });
 
+  const flowRemainingBefore = order.peiwan ? await getFlowBuffRemaining(tx, order.workerId) : new Prisma.Decimal(0);
+  const flowBonus = order.peiwan ? await consumeFlowBuff(tx, order.workerId, gross) : { extra: new Prisma.Decimal(0), remaining: new Prisma.Decimal(0) };
+  const flowExtra = flowBonus.extra;
+
   if (order.peiwan) {
     await tx.pEIWAN.update({
       where: { PEIWANID: order.peiwanId },
       data: {
-        totalEarn: new Prisma.Decimal(order.peiwan.totalEarn ?? 0).add(gross),
+        totalEarn: new Prisma.Decimal(order.peiwan.totalEarn ?? 0).add(gross).add(flowExtra),
         balance: workerBalanceAfter,
       },
     });
@@ -661,6 +665,8 @@ async function settle(
       hostFromRecharge,
       spendBonusExtra: spendBonus.extra,
       spendRemainingBefore,
+      flowBonusExtra: flowExtra,
+      flowRemainingBefore,
       bossReferralInviterId: referralSummary.boss?.inviterId,
       bossReferralAmount: referralSummary.boss?.amount,
       workerReferralInviterId: referralSummary.worker?.inviterId,

@@ -176,7 +176,15 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
     if (voucherIds.length) {
       await tx.lotteryDraw.updateMany({
         where: { id: { in: voucherIds as string[] } },
-        data: { status: LotteryStatus.UNUSED, consumeAt: null, requestId: null },
+        data: {
+          status: LotteryStatus.UNUSED,
+          consumeAt: null,
+          consumeAmount: null,
+          consumeOrderId: null,
+          consumeTargetId: null,
+          consumeTargetJinleeId: null,
+          requestId: null,
+        },
       });
     }
     if (couponIds.length) {

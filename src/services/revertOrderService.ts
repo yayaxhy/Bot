@@ -4,7 +4,7 @@ import { recordIndividualTransaction } from './individualTransactionService.js';
 import { scheduleSpentRoleSync } from './spentRoleService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
-import { getSpendBuffRemaining } from './buffService.js';
+import { getFlowBuffRemaining, getSpendBuffRemaining } from './buffService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
 import { evaluateAutoCommissionBuffWithReason } from './autoCommissionBuffService.js';
 import {
@@ -100,6 +100,25 @@ async function restoreSpendBuff(
   `;
 }
 
+async function restoreFlowBuff(
+  tx: TxLike,
+  userId: string,
+  used: Prisma.Decimal,
+  capBefore: Prisma.Decimal,
+) {
+  if (used.lte(0) || capBefore.lte(0)) return;
+  const current = await getFlowBuffRemaining(tx, userId);
+  let next = current.add(used);
+  if (next.gt(capBefore)) next = capBefore;
+  await tx.$executeRaw`
+    INSERT INTO flow_buff (user_id, remaining_extra, expires_at, created_at, updated_at)
+    VALUES (${userId}, ${next}, now() + interval '30 day', now(), now())
+    ON CONFLICT (user_id) DO UPDATE
+      SET remaining_extra = ${next},
+          updated_at = now()
+  `;
+}
+
 export async function revertOrderByOrderId(params: RevertOrderParams) {
   const { orderId, operatorId, reason } = params;
 
@@ -136,6 +155,8 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
     const pointsEarned = DEC(audit.pointsEarned);
     const spendExtra = DEC(audit.spendBonusExtra);
     const spendCap = DEC(audit.spendRemainingBefore);
+    const flowExtra = DEC(audit.flowBonusExtra ?? 0);
+    const flowCap = DEC(audit.flowRemainingBefore ?? 0);
 
     const usedCoupons = await tx.coupon.findMany({
       where: {
@@ -154,7 +175,7 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
       where: {
         jinleeId: hostIdentity.jinleeId,
         status: LotteryStatus.USED,
-        requestId: order.id,
+        consumeOrderId: order.id,
         prize: { name: { in: DISCOUNT_PRIZE_NAMES } },
       },
       select: {
@@ -254,7 +275,7 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
       select: { totalEarn: true },
     });
     if (peiwan) {
-      let totalEarnAfter = DEC(peiwan.totalEarn ?? 0).sub(gross);
+      let totalEarnAfter = DEC(peiwan.totalEarn ?? 0).sub(gross).sub(flowExtra);
       if (totalEarnAfter.lt(0)) totalEarnAfter = DEC(0);
       await tx.pEIWAN.update({
         where: { PEIWANID: order.peiwanId },
@@ -288,13 +309,15 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
           consumeOrderId: null,
           consumeTargetId: null,
           consumeTargetJinleeId: null,
-          requestId: null,
         },
       });
     }
 
     if (hostIdentity.discordUserId) {
       await restoreSpendBuff(tx, hostIdentity.discordUserId, spendExtra, spendCap);
+    }
+    if (workerIdentity.discordUserId) {
+      await restoreFlowBuff(tx, workerIdentity.discordUserId, flowExtra, flowCap);
     }
 
     const referralRollbacks: Array<{ inviterId: string; inviteeId: string; amount: Prisma.Decimal }> = [];

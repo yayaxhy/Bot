@@ -277,16 +277,15 @@ async function consumeLotteryVoucherRecordTx(
       jinleeId,
       status: LotteryStatus.UNUSED,
       consumeAt: null,
-      requestId: null,
       expiresAt: { gt: now },
       prize: { name: prizeName },
     },
     data: {
       status: LotteryStatus.USED,
       consumeAt: now,
-      requestId: requestId ?? null,
       consumeTargetId: discordUserId,
       consumeTargetJinleeId: jinleeId,
+      ...(requestId ? { requestId } : {}),
     },
   });
   return result.count === 1;

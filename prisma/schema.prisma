@@ -736,6 +736,8 @@ model OrderAudit {
   hostFromRecharge              Decimal  @db.Decimal(19, 4)
   spendBonusExtra               Decimal  @db.Decimal(19, 4)
   spendRemainingBefore          Decimal  @db.Decimal(19, 4)
+  flowBonusExtra                Decimal? @db.Decimal(19, 4)
+  flowRemainingBefore           Decimal? @db.Decimal(19, 4)
   bossReferralInviterId         String?
   bossReferralAmount            Decimal? @db.Decimal(19, 4)
   workerReferralInviterId       String?
