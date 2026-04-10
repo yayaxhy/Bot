@@ -12,6 +12,11 @@ import { isPityGame, markBlockStackGameEnded } from '../../services/blockStackPi
 import { recordIndividualTransaction } from '../../services/individualTransactionService.js';
 import { suppressRechargeNotifications } from '../../services/rechargeNotifyConfig.js';
 import {
+  applyJinleeWalletDeltaTx,
+  ensureJinleeIdentityForDiscordTx,
+  lockJinleeUserForUpdateTx,
+} from '../../services/jinleeAccountService.js';
+import {
   bindEnvelopeMessage,
   buildRedEnvelopeMessagePayload,
   createSystemRedEnvelope,
@@ -855,6 +860,8 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
         update: {},
       });
       await suppressRechargeNotifications(tx);
+      const actorIdentity = await ensureJinleeIdentityForDiscordTx(tx, actorId);
+      await lockJinleeUserForUpdateTx(tx, actorIdentity.jinleeId);
       const member = await tx.member.findUnique({
         where: { discordUserId: actorId },
         select: { totalBalance: true, commissionRate: true },
@@ -866,15 +873,14 @@ export async function handleBlockStackButton(i: ButtonInteraction) {
       const net = round2(gross.mul(rate));
 
       const balanceBefore = DEC(member?.totalBalance ?? 0);
-      const balanceAfter = balanceBefore.add(net);
-
-      await tx.member.update({
-        where: { discordUserId: actorId },
-        data: {
-          income: { increment: net },
-          totalBalance: { increment: net },
-        },
+      const walletAfter = await applyJinleeWalletDeltaTx(tx, {
+        jinleeId: actorIdentity.jinleeId,
+        discordUserId: actorIdentity.discordUserId,
+        incomeDelta: net,
+        totalBalanceDelta: net,
+        offsetNegativeRechargeWithIncome: true,
       });
+      const balanceAfter = walletAfter.totalBalance;
       await updatePeiwanBalance(tx, actorId, balanceAfter);
 
       const txRecord = await recordIndividualTransaction(tx, {

@@ -63,7 +63,9 @@ async function cancelOtherPendingOrdersForWorker(client: Client, workerId: strin
     data: { status: OrderStatus.CANCELED, endedAt: new Date() },
   });
   for (const o of pending) {
-    await notifyBossBusy(client, o.hostId, workerId);
+    if (o.hostId) {
+      await notifyBossBusy(client, o.hostId, workerId);
+    }
   }
 }
 
@@ -87,15 +89,17 @@ export async function runOrderAcceptanceFlow(client: Client, orderId: string) {
 
   let bossUser: User | null = null;
   try {
-    bossUser = await client.users.fetch(order.hostId);
-    const workerMention = workerUser ? workerUser.toString() : `<@${order.workerId}>`;
-    const { embed: bossEmbed, components: bossComponents } = invite_success_boss_embed(
-      order.id,
-      order.displayNo,
-      order.peiwanId,
-      workerMention,
-    );
-    await bossUser.send({ embeds: [bossEmbed], components: bossComponents });
+    if (order.hostId) {
+      bossUser = await client.users.fetch(order.hostId);
+      const workerMention = workerUser ? workerUser.toString() : `<@${order.workerId}>`;
+      const { embed: bossEmbed, components: bossComponents } = invite_success_boss_embed(
+        order.id,
+        order.displayNo,
+        order.peiwanId,
+        workerMention,
+      );
+      await bossUser.send({ embeds: [bossEmbed], components: bossComponents });
+    }
   } catch (err) {
     console.error('[runOrderAcceptanceFlow] notify boss failed:', err);
   }

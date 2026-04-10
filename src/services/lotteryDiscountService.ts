@@ -1,6 +1,12 @@
-import { CouponStatus, CouponType, LotteryStatus, OrderStatus, Prisma } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryStatus, OrderStatus, PointShopDeliveryType, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
+import {
+  applyJinleeWalletDeltaTx,
+  ensureJinleeIdentityForDiscordTx,
+  getJinleeWalletSnapshotTx,
+  requireJinleeIdentityTx,
+} from './jinleeAccountService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import type { ApplyDiscountResult } from './discountService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
@@ -21,6 +27,135 @@ const DISCOUNT_COUPON_TYPE_MAP: Record<string, CouponType> = {
   [PRIZE_NAMES.DISCOUNT_90_LOTTERY]: CouponType.DISCOUNT_90_LOTTERY,
   [LEGACY_DISCOUNT_90_NAME]: CouponType.DISCOUNT_90_LOTTERY,
 };
+
+type DiscountSelectionCandidate =
+  | {
+      id: string;
+      source: 'coupon';
+      expiresAt: Date;
+      issuedAt: Date;
+      couponType: CouponType;
+    }
+  | {
+      id: string;
+      source: 'point_shop_coupon';
+      expiresAt: Date;
+      issuedAt: Date;
+      couponType: CouponType;
+    }
+  | {
+      id: string;
+      source: 'lottery';
+      expiresAt: Date;
+      issuedAt: Date;
+      prizeName: string;
+    };
+
+const pickEarliestExpiryDiscountCandidate = (
+  candidates: Array<DiscountSelectionCandidate | null>,
+): DiscountSelectionCandidate | null => {
+  const available = candidates.filter((candidate): candidate is DiscountSelectionCandidate => !!candidate);
+  if (available.length === 0) return null;
+  available.sort((left, right) => {
+    const expireDelta = left.expiresAt.getTime() - right.expiresAt.getTime();
+    if (expireDelta !== 0) return expireDelta;
+    const issuedDelta = left.issuedAt.getTime() - right.issuedAt.getTime();
+    if (issuedDelta !== 0) return issuedDelta;
+    return left.id.localeCompare(right.id);
+  });
+  return available[0] ?? null;
+};
+
+const MAX_DISCOUNT_SELECTION_RETRIES = 10;
+
+async function lockOrderForDiscountTx(tx: Prisma.TransactionClient, orderId: string) {
+  await tx.$executeRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
+}
+
+async function consumeDiscountCandidateTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    candidate: DiscountSelectionCandidate;
+    jinleeId: string;
+    orderId: string;
+    discountAmount: Prisma.Decimal;
+    workerDiscordUserId: string | null;
+    workerJinleeId: string;
+    now: Date;
+  },
+) {
+  const { candidate, jinleeId, orderId, discountAmount, workerDiscordUserId, workerJinleeId, now } = params;
+
+  if (candidate.source === 'point_shop_coupon') {
+    const result = await tx.pointShopGrant.updateMany({
+      where: {
+        id: candidate.id,
+        jinleeId,
+        deliveryType: PointShopDeliveryType.COUPON,
+        couponType: candidate.couponType,
+        couponStatus: CouponStatus.ACTIVE,
+        expiresAt: { gt: now },
+        consumedAt: null,
+        consumeOrderId: null,
+      },
+      data: {
+        consumedAt: now,
+        consumeOrderId: orderId,
+        consumeAmount: discountAmount,
+        consumeTargetId: workerDiscordUserId,
+        consumeTargetJinleeId: workerJinleeId,
+        couponStatus: CouponStatus.USED,
+      },
+    });
+    return result.count > 0;
+  }
+
+  if (candidate.source === 'coupon') {
+    const result = await tx.coupon.updateMany({
+      where: {
+        id: candidate.id,
+        jinleeId,
+        type: candidate.couponType,
+        status: CouponStatus.ACTIVE,
+        expiresAt: { gt: now },
+        consumedAt: null,
+        orderId: null,
+      },
+      data: {
+        consumedAt: now,
+        orderId,
+        consumeAmount: discountAmount,
+        consumeTargetId: workerDiscordUserId,
+        consumeTargetJinleeId: workerJinleeId,
+        status: CouponStatus.USED,
+      },
+    });
+    return result.count > 0;
+  }
+
+  const result = await tx.lotteryDraw.updateMany({
+    where: {
+      id: candidate.id,
+      jinleeId,
+      status: LotteryStatus.UNUSED,
+      expiresAt: { gt: now },
+      consumeAt: null,
+      consumeOrderId: null,
+      requestId: null,
+      prize: { name: candidate.prizeName },
+    },
+    data: {
+      status: LotteryStatus.USED,
+      consumeAt: now,
+      requestId: orderId,
+      consumeAmount: discountAmount,
+      consumeOrderId: orderId,
+      consumeTargetId: workerDiscordUserId,
+      consumeTargetJinleeId: workerJinleeId,
+    },
+  });
+  return result.count > 0;
+}
 
 function computeDiscountAmount(params: {
   unitPrice: Prisma.Decimal;
@@ -47,7 +182,7 @@ function computeDiscountAmount(params: {
  */
 export async function applyLotteryDiscountForOrder(params: {
   orderId: string;
-  userId: string; // host id
+  userId: string;
   lotteryId?: string;
   prizeName?: string;
   now?: Date;
@@ -56,11 +191,13 @@ export async function applyLotteryDiscountForOrder(params: {
   const now = params.now ?? new Date();
 
   return prisma.$transaction(async (tx) => {
+    const userIdentity = await requireJinleeIdentityTx(tx, userId);
     const order = await tx.order.findUnique({
       where: { id: orderId },
       select: {
         id: true,
         hostId: true,
+        hostJinleeId: true,
         workerId: true,
         status: true,
         unitPrice: true,
@@ -68,31 +205,53 @@ export async function applyLotteryDiscountForOrder(params: {
       },
     });
     if (!order) return { status: 'order_not_found' };
-    if (order.hostId !== userId) return { status: 'not_order_host' };
+    const orderHostJinleeId = order.hostJinleeId ?? null;
+    if (orderHostJinleeId !== userIdentity.jinleeId && (!orderHostJinleeId || order.hostId !== userIdentity.discordUserId)) {
+      return { status: 'not_order_host' };
+    }
     if (order.status !== OrderStatus.ENDED) return { status: 'order_not_ended' };
+    await lockOrderForDiscountTx(tx, order.id);
+    const workerIdentity = await ensureJinleeIdentityForDiscordTx(tx, order.workerId);
+
+    if (!order.unitPrice || order.totalMinutes == null) {
+      return { status: 'insufficient_data' };
+    }
+
+    const unitPrice = new Prisma.Decimal(order.unitPrice);
 
     // prevent reuse
-    const existingCouponUsage = await tx.coupon.findFirst({
-      where: { orderId, status: 'USED' },
-      select: { id: true },
-    });
-    const existingLotteryUsage = await tx.lotteryDraw.findFirst({
-      where: {
-        userId,
-        status: LotteryStatus.USED,
-        requestId: orderId,
-        prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
-      },
-      select: { id: true },
-    });
-    if (existingCouponUsage || existingLotteryUsage) {
+    const [existingCouponUsage, existingPointShopCouponUsage, existingLotteryUsage] = await Promise.all([
+      tx.coupon.findFirst({
+        where: { orderId, status: CouponStatus.USED },
+        select: { id: true },
+      }),
+      tx.pointShopGrant.findFirst({
+        where: {
+          consumeOrderId: orderId,
+          jinleeId: userIdentity.jinleeId,
+          deliveryType: PointShopDeliveryType.COUPON,
+          couponStatus: CouponStatus.USED,
+        },
+        select: { id: true },
+      }),
+      tx.lotteryDraw.findFirst({
+        where: {
+          jinleeId: userIdentity.jinleeId,
+          status: LotteryStatus.USED,
+          requestId: orderId,
+          prize: { name: { in: Object.keys(DISCOUNT_PRIZE_CONFIG) } },
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (existingCouponUsage || existingPointShopCouponUsage || existingLotteryUsage) {
       return { status: 'already_used' };
     }
 
     // expire outdated 8 折券
     await tx.lotteryDraw.updateMany({
       where: {
-        userId,
+        jinleeId: userIdentity.jinleeId,
         status: LotteryStatus.UNUSED,
         expiresAt: { lte: now },
         prize: { name: { in: DISCOUNT_PRIZE_NAMES } },
@@ -124,114 +283,137 @@ export async function applyLotteryDiscountForOrder(params: {
     // expire outdated coupons
     if (couponTypes.length > 0) {
       await tx.coupon.updateMany({
-        where: { discordId: userId, status: CouponStatus.ACTIVE, expiresAt: { lte: now }, type: { in: couponTypes } },
+        where: { jinleeId: userIdentity.jinleeId, status: CouponStatus.ACTIVE, expiresAt: { lte: now }, type: { in: couponTypes } },
         data: { status: CouponStatus.EXPIRED },
       });
     }
 
-    const availableCoupon = couponTypes.length
-      ? await tx.coupon.findFirst({
-          where: {
-            discordId: userId,
-            type: { in: couponTypes },
-            status: CouponStatus.ACTIVE,
-            expiresAt: { gt: now },
-          },
-          orderBy: { issuedAt: 'asc' },
-        })
-      : null;
+    const findNextDiscountCandidate = async (): Promise<DiscountSelectionCandidate | null> => {
+      const availableCoupon = couponTypes.length
+        ? await tx.coupon.findFirst({
+            where: {
+              ...(lotteryId ? { id: lotteryId } : {}),
+              jinleeId: userIdentity.jinleeId,
+              type: { in: couponTypes },
+              status: CouponStatus.ACTIVE,
+              expiresAt: { gt: now },
+            },
+            ...(lotteryId
+              ? {}
+              : { orderBy: [{ expiresAt: 'asc' as const }, { issuedAt: 'asc' as const }] }),
+            select: { id: true, type: true, issuedAt: true, expiresAt: true },
+          })
+        : null;
+      const availablePointShopCoupon = couponTypes.length
+        ? await tx.pointShopGrant.findFirst({
+            where: {
+              ...(lotteryId ? { id: lotteryId } : {}),
+              jinleeId: userIdentity.jinleeId,
+              deliveryType: PointShopDeliveryType.COUPON,
+              couponStatus: CouponStatus.ACTIVE,
+              expiresAt: { gt: now },
+              couponType: { in: couponTypes },
+            },
+            ...(lotteryId
+              ? {}
+              : { orderBy: [{ expiresAt: 'asc' as const }, { issuedAt: 'asc' as const }] }),
+            select: { id: true, couponType: true, issuedAt: true, expiresAt: true },
+          })
+        : null;
+      const availableLottery = await tx.lotteryDraw.findFirst({
+        where: {
+          ...(lotteryId ? { id: lotteryId } : {}),
+          jinleeId: userIdentity.jinleeId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { gt: now },
+          prize: prizeFilter,
+        },
+        select: { id: true, createdAt: true, expiresAt: true, prize: { select: { name: true } } },
+        ...(lotteryId
+          ? {}
+          : { orderBy: [{ expiresAt: 'asc' as const }, { createdAt: 'asc' as const }] }),
+      });
 
-    if (!order.unitPrice || order.totalMinutes == null) {
-      return { status: 'insufficient_data' };
-    }
+      return pickEarliestExpiryDiscountCandidate([
+        availableCoupon
+          ? {
+              id: availableCoupon.id,
+              source: 'coupon',
+              expiresAt: availableCoupon.expiresAt,
+              issuedAt: availableCoupon.issuedAt,
+              couponType: availableCoupon.type,
+            }
+          : null,
+        availablePointShopCoupon?.couponType && availablePointShopCoupon.expiresAt
+          ? {
+              id: availablePointShopCoupon.id,
+              source: 'point_shop_coupon',
+              expiresAt: availablePointShopCoupon.expiresAt,
+              issuedAt: availablePointShopCoupon.issuedAt,
+              couponType: availablePointShopCoupon.couponType,
+            }
+          : null,
+        availableLottery?.prize?.name && availableLottery.expiresAt
+          ? {
+              id: availableLottery.id,
+              source: 'lottery',
+              expiresAt: availableLottery.expiresAt,
+              issuedAt: availableLottery.createdAt,
+              prizeName: availableLottery.prize.name,
+            }
+          : null,
+      ]);
+    };
 
-    const unitPrice = new Prisma.Decimal(order.unitPrice);
+    let selectedDiscount: DiscountSelectionCandidate | null = null;
 
-    if (availableCoupon) {
-      const couponType = availableCoupon.type;
-      const prizeNameUsed = Object.entries(DISCOUNT_COUPON_TYPE_MAP).find(
-        ([, type]) => type === couponType
-      )?.[0] ?? '';
+    for (let attempt = 0; attempt < MAX_DISCOUNT_SELECTION_RETRIES; attempt++) {
+      const candidate = await findNextDiscountCandidate();
+      if (!candidate) break;
+
+      const prizeNameUsed =
+        candidate.source === 'lottery'
+          ? candidate.prizeName
+          : Object.entries(DISCOUNT_COUPON_TYPE_MAP).find(([, type]) => type === candidate.couponType)?.[0] ?? '';
       const config = DISCOUNT_PRIZE_CONFIG[prizeNameUsed];
-      if (!config) return { status: 'no_lottery' };
-
-      const discountAmount = computeDiscountAmount({
+      if (!config) {
+        if (lotteryId) break;
+        continue;
+      }
+      const candidateDiscountAmount = computeDiscountAmount({
         unitPrice,
         totalMinutes: order.totalMinutes,
         rate: config.rate,
         cap: config.cap,
       });
-      if (discountAmount.lte(0)) return { status: 'no_fee' };
+      if (candidateDiscountAmount.lte(0)) return { status: 'no_fee' };
 
-      await suppressRechargeNotifications(tx);
-      const hostAccount = await tx.member.findUnique({
-        where: { discordUserId: userId },
-        select: { totalBalance: true },
-      });
-      const balanceBefore = new Prisma.Decimal(hostAccount?.totalBalance ?? 0);
-      const balanceAfter = balanceBefore.add(discountAmount);
-
-      await tx.coupon.update({
-        where: { id: availableCoupon.id },
-        data: {
-          consumedAt: now,
-          orderId: order.id,
-          consumeAmount: discountAmount,
-          consumeTargetId: order.workerId ?? null,
-          status: CouponStatus.USED,
-        },
+      const consumed = await consumeDiscountCandidateTx(tx, {
+        candidate,
+        jinleeId: userIdentity.jinleeId,
+        orderId: order.id,
+        discountAmount: candidateDiscountAmount,
+        workerDiscordUserId: workerIdentity.discordUserId ?? order.workerId ?? null,
+        workerJinleeId: workerIdentity.jinleeId,
+        now,
       });
 
-      await tx.member.update({
-        where: { discordUserId: userId },
-        data: {
-          recharge: { increment: discountAmount },
-          totalBalance: { increment: discountAmount },
-        },
-      });
+      if (consumed) {
+        selectedDiscount = candidate;
+        break;
+      }
 
-      await recordIndividualTransaction(tx, {
-        discordId: userId,
-        thirdPartydiscordId: order.workerId ?? 'SYSTEM',
-        balanceBefore,
-        amountChange: discountAmount,
-        balanceAfter,
-        typeOfTransaction: '优惠返利',
-        timeCreatedAt: now,
-      });
-
-      return {
-        status: 'applied',
-        kind: 'coupon',
-        consumeAmount: discountAmount,
-        couponId: availableCoupon.id,
-      };
+      if (lotteryId) {
+        break;
+      }
     }
 
-    const voucher = lotteryId
-      ? await tx.lotteryDraw.findFirst({
-          where: {
-            id: lotteryId,
-            userId,
-            status: LotteryStatus.UNUSED,
-            expiresAt: { gt: now },
-            prize: prizeFilter,
-          },
-          select: { id: true, prize: { select: { name: true } } },
-        })
-      : await tx.lotteryDraw.findFirst({
-          where: {
-            userId,
-            status: LotteryStatus.UNUSED,
-            expiresAt: { gt: now },
-            prize: prizeFilter,
-          },
-          select: { id: true, prize: { select: { name: true } } },
-          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-        });
-    if (!voucher) return { status: 'no_lottery' };
+    if (!selectedDiscount) return { status: 'no_lottery' };
 
-    const prizeNameUsed = voucher.prize?.name ?? '';
+    const prizeNameUsed =
+      selectedDiscount.source === 'lottery'
+        ? selectedDiscount.prizeName
+        : Object.entries(DISCOUNT_COUPON_TYPE_MAP).find(([, type]) => type === selectedDiscount.couponType)?.[0] ?? '';
     const config = DISCOUNT_PRIZE_CONFIG[prizeNameUsed];
     if (!config) return { status: 'no_lottery' };
     const discountAmount = computeDiscountAmount({
@@ -243,35 +425,20 @@ export async function applyLotteryDiscountForOrder(params: {
     if (discountAmount.lte(0)) return { status: 'no_fee' };
 
     await suppressRechargeNotifications(tx);
-    const hostAccount = await tx.member.findUnique({
-      where: { discordUserId: userId },
-      select: { totalBalance: true },
-    });
-    const balanceBefore = new Prisma.Decimal(hostAccount?.totalBalance ?? 0);
+    const walletSnapshot = await getJinleeWalletSnapshotTx(tx, userIdentity);
+    const balanceBefore = walletSnapshot.totalBalance;
     const balanceAfter = balanceBefore.add(discountAmount);
 
-    await tx.lotteryDraw.update({
-      where: { id: voucher.id },
-      data: {
-        status: LotteryStatus.USED,
-        consumeAt: now,
-        requestId: order.id,
-        consumeAmount: discountAmount,
-        consumeOrderId: order.id,
-        consumeTargetId: order.workerId ?? null,
-      },
-    });
-
-    await tx.member.update({
-      where: { discordUserId: userId },
-      data: {
-        recharge: { increment: discountAmount },
-        totalBalance: { increment: discountAmount },
-      },
+    await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: userIdentity.jinleeId,
+      discordUserId: userIdentity.discordUserId,
+      rechargeDelta: discountAmount,
+      totalBalanceDelta: discountAmount,
     });
 
     await recordIndividualTransaction(tx, {
-      discordId: userId,
+      discordId: userIdentity.discordUserId,
+      jinleeId: userIdentity.jinleeId,
       thirdPartydiscordId: order.workerId ?? 'SYSTEM',
       balanceBefore,
       amountChange: discountAmount,
@@ -282,9 +449,11 @@ export async function applyLotteryDiscountForOrder(params: {
 
     return {
       status: 'applied',
-      kind: 'lottery',
+      kind: selectedDiscount.source === 'lottery' ? 'lottery' : 'coupon',
       consumeAmount: discountAmount,
-      lotteryId: voucher.id,
+      ...(selectedDiscount.source === 'lottery'
+        ? { lotteryId: selectedDiscount.id }
+        : { couponId: selectedDiscount.id }),
     };
   });
 }

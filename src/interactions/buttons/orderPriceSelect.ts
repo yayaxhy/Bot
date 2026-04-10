@@ -12,6 +12,7 @@ import { registerInvitationMessage } from '../../services/orderInteractionManage
 import { recordOrderRequest } from '../../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 import { clickStore } from '../../services/clickStore.js';
+import { ensureJinleeIdentityForDiscordTx } from '../../services/jinleeAccountService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const SUPPORT_STAFF_USER_ID = process.env.SUPPORT_STAFF_USER_ID ?? '';
@@ -202,6 +203,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
 
   const hostId = i.user.id; // 老板
   const workerId = peiwan.discordUserId;
+  const hostIdentity = await ensureJinleeIdentityForDiscordTx(prisma, hostId);
 
   if (peiwan.status !== PeiwanStatus.free) {
     const shouldBeEphemeral = i.inGuild();
@@ -247,6 +249,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
   const order = await prisma.order.create({
     data: {
       hostId,
+      hostJinleeId: hostIdentity.jinleeId,
       workerId,
       peiwanId: peiwan.PEIWANID,
       mode,

@@ -1,6 +1,7 @@
 import { CouponStatus, CouponType, LotteryStatus } from '@prisma/client';
 import { Message } from 'discord.js';
 import prisma from '../db/prisma.js';
+import { ensureJinleeIdentityForDiscordTx } from '../services/jinleeAccountService.js';
 import { RENAME_CARD_NAMES } from '../services/lotteryService.js';
 
 const RENAME_NOTIFY_CHANNEL_ID = '1446819752692416542';
@@ -14,6 +15,7 @@ export async function handleRenameCardCommand(message: Message): Promise<boolean
   const now = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
+    const userIdentity = await ensureJinleeIdentityForDiscordTx(tx, userId);
     const couponTypes = [CouponType.RENAME_CARD_3, CouponType.RENAME_CARD, CouponType.RENAME_CARD_5];
     await tx.coupon.updateMany({
       where: {
@@ -43,6 +45,7 @@ export async function handleRenameCardCommand(message: Message): Promise<boolean
           consumedAt: now,
           consumeAmount: 0,
           consumeTargetId: userId,
+          consumeTargetJinleeId: userIdentity.jinleeId,
         },
       });
       return { used: true };
@@ -72,7 +75,12 @@ export async function handleRenameCardCommand(message: Message): Promise<boolean
 
     await tx.lotteryDraw.update({
       where: { id: card.id },
-      data: { status: LotteryStatus.USED, consumeAt: now, consumeTargetId: userId },
+      data: {
+        status: LotteryStatus.USED,
+        consumeAt: now,
+        consumeTargetId: userId,
+        consumeTargetJinleeId: userIdentity.jinleeId,
+      },
     });
     return { used: true };
   });

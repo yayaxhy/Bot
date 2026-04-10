@@ -11,6 +11,11 @@ import { scheduleSpentRoleSync } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 import { unlockGiftWallForPeiwan } from '../services/giftWallService.js';
 import { adjustLoyaltyPointsTx } from '../services/loyaltyPointService.js';
+import {
+  applyJinleeWalletDeltaTx,
+  ensureJinleeIdentityForDiscordTx,
+  lockJinleeUserForUpdateTx,
+} from '../services/jinleeAccountService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 import {
   consumeFlowBuff,
@@ -525,6 +530,8 @@ export async function performGift(
   const result = await prisma.$transaction(async (tx) => {
     // 避免触发充值类通知
     await suppressRechargeNotifications(tx);
+    const receiverIdentity = await ensureJinleeIdentityForDiscordTx(tx, receiverId);
+    await lockJinleeUserForUpdateTx(tx, receiverIdentity.jinleeId);
 
     const now = new Date();
     const receiver = await tx.member.findUnique({
@@ -588,16 +595,17 @@ export async function performGift(
         throw new Error('礼物券不可用或已过期。');
       }
       const consumeAmount = computeVoucherConsumeAmount(voucher.prize?.name ?? '', unitPrice);
-      await tx.lotteryDraw.update({
-        where: { id: voucher.id },
-        data: {
-          status: LotteryStatus.USED,
-          consumeAt: now,
-          requestId: voucherRequestId ?? undefined,
-          consumeAmount: consumeAmount ?? undefined,
-          consumeTargetId: receiverId,
-        },
-      });
+        await tx.lotteryDraw.update({
+          where: { id: voucher.id },
+          data: {
+            status: LotteryStatus.USED,
+            consumeAt: now,
+            requestId: voucherRequestId ?? undefined,
+            consumeAmount: consumeAmount ?? undefined,
+            consumeTargetId: receiverId,
+            consumeTargetJinleeId: receiverIdentity.jinleeId,
+          },
+        });
       voucherCount = 1;
       consumedVoucherIds.push(voucher.id);
       const cfg = voucherConfigs.find((c) => c.prizeName === voucher.prize?.name);
@@ -625,6 +633,7 @@ export async function performGift(
             consumedAt: now,
             consumeAmount: consumeAmount ?? undefined,
             consumeTargetId: receiverId,
+            consumeTargetJinleeId: receiverIdentity.jinleeId,
           },
         });
         consumedCouponIds.push(coupon.id);
@@ -664,7 +673,8 @@ export async function performGift(
                   SET "status" = 'USED',
                       "consumedAt" = ${now},
                       "consumeAmount" = ${consumeAmount ?? null},
-                      "consumeTargetId" = ${receiverId}
+                      "consumeTargetId" = ${receiverId},
+                      "consumeTargetJinleeId" = ${receiverIdentity.jinleeId}
                   WHERE "id" = ${pointShopGrant.id}
                 `,
               );
@@ -720,6 +730,7 @@ export async function performGift(
             consumedAt: now,
             consumeAmount: consumeAmount ?? undefined,
             consumeTargetId: receiverId,
+            consumeTargetJinleeId: receiverIdentity.jinleeId,
           },
         });
         consumedCouponIds.push(c.id);
@@ -763,6 +774,7 @@ export async function performGift(
               consumeAt: now,
               consumeAmount: consumeAmount ?? undefined,
               consumeTargetId: receiverId,
+              consumeTargetJinleeId: receiverIdentity.jinleeId,
             },
           });
             consumedVoucherIds.push(v.id);
@@ -848,17 +860,23 @@ export async function performGift(
     let extraFlow = DEC(0);
     const flowRemainingBefore = receiverPeiwan ? await getFlowBuffRemaining(tx, receiverId) : DEC(0);
 
-    await tx.member.update({
-      where: { discordUserId: receiverId },
-      data: {
-        income: { increment: netAmount },
-        totalBalance: { increment: netAmount },
-        ...(receiverPeiwan ? { status: MemberStatus.PEIWAN } : {}),
-      },
+    const receiverWalletAfter = await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: receiverIdentity.jinleeId,
+      discordUserId: receiverIdentity.discordUserId,
+      incomeDelta: netAmount,
+      totalBalanceDelta: netAmount,
+      offsetNegativeRechargeWithIncome: true,
     });
 
-    const receiverBalanceAfter = receiverBalanceBefore.add(netAmount);
-    const receiverIncomeAfter = receiverIncomeBefore.add(netAmount);
+    if (receiverPeiwan) {
+      await tx.member.update({
+        where: { discordUserId: receiverId },
+        data: { status: MemberStatus.PEIWAN },
+      });
+    }
+
+    const receiverBalanceAfter = receiverWalletAfter.totalBalance;
+    const receiverIncomeAfter = receiverWalletAfter.income;
 
     if (receiverPeiwan) {
       const flowBonus = await consumeFlowBuff(tx, receiverId, gross);

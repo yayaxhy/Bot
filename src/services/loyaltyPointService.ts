@@ -1,34 +1,47 @@
 import { Prisma } from '@prisma/client';
+import { ensureJinleeIdentityForDiscordTx, type JinleeIdentity } from './jinleeAccountService.js';
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
 export async function adjustLoyaltyPointsTx(
   tx: Prisma.TransactionClient,
-  discordUserId: string,
+  target: string | JinleeIdentity | null,
   delta: Prisma.Decimal
 ) {
-  if (!discordUserId) return;
   const deltaValue = new Prisma.Decimal(delta);
   if (deltaValue.eq(0)) return;
+  if (!target) return;
 
-  const existing = await tx.loyaltyPoint.findUnique({
-    where: { discordUserId },
-    select: { points: true },
+  const identity =
+    typeof target === 'string'
+      ? await ensureJinleeIdentityForDiscordTx(tx, target)
+      : target;
+
+  const wallet = await tx.jinleeUser.findUnique({
+    where: { jinleeId: identity.jinleeId },
+    select: { loyaltyPoints: true },
   });
-
-  if (!existing) {
-    const initial = deltaValue.gt(0) ? deltaValue : DEC(0);
-    await tx.loyaltyPoint.create({
-      data: { discordUserId, points: initial },
-    });
-    return;
+  if (!wallet) {
+    throw new Error(`jinlee_user_not_found:${identity.jinleeId}`);
   }
 
-  let next = new Prisma.Decimal(existing.points ?? 0).add(deltaValue);
+  let next = new Prisma.Decimal(wallet.loyaltyPoints ?? 0).add(deltaValue);
   if (next.lt(0)) next = DEC(0);
 
-  await tx.loyaltyPoint.update({
-    where: { discordUserId },
-    data: { points: next },
+  if (identity.discordUserId) {
+    await tx.loyaltyPoint.upsert({
+      where: { discordUserId: identity.discordUserId },
+      update: { jinleeId: identity.jinleeId, points: next },
+      create: {
+        discordUserId: identity.discordUserId,
+        jinleeId: identity.jinleeId,
+        points: next,
+      },
+    });
+  }
+
+  await tx.jinleeUser.update({
+    where: { jinleeId: identity.jinleeId },
+    data: { loyaltyPoints: next },
   });
 }

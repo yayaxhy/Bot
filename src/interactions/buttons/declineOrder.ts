@@ -74,21 +74,23 @@ export async function runOrderDeclineFlow(client: Client, orderId: string, worke
 
   try {
     const worker = await client.users.fetch(workerId);
-    const wEmbed = PW_decline_embed(updated.hostId);
+    const wEmbed = PW_decline_embed(updated.hostId ?? undefined);
     await worker.send({ embeds: [wEmbed] });
   } catch (err) {
     console.error('[runOrderDeclineFlow] notify worker failed:', err);
   }
 
   try {
-    const boss = await client.users.fetch(updated.hostId);
-    const workerMention = updated.workerId ? `<@${updated.workerId}>` : '';
-    const bEmbed = refuse_order_request_embed(
-      updated.peiwanId,
-      updated.displayNo,
-      workerMention,
-    );
-    await boss.send({ embeds: [bEmbed] });
+    if (updated.hostId) {
+      const boss = await client.users.fetch(updated.hostId);
+      const workerMention = updated.workerId ? `<@${updated.workerId}>` : '';
+      const bEmbed = refuse_order_request_embed(
+        updated.peiwanId,
+        updated.displayNo,
+        workerMention,
+      );
+      await boss.send({ embeds: [bEmbed] });
+    }
   } catch (err) {
     console.error('[runOrderDeclineFlow] notify boss failed:', err);
   }

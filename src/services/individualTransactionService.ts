@@ -1,5 +1,6 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { isUniqueConstraintError, realignIndividualTransactionSequence } from './sequenceService.js';
+import { ensureJinleeIdentityForDiscordTx, syncJinleeWalletFromMemberTx } from './jinleeAccountService.js';
 
 export const CUSTOMER_SERVICE_DISCORD_ID = '1421651539247894549';
 
@@ -9,7 +10,8 @@ const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
 
 type RecordTransactionParams = {
-  discordId: string;
+  discordId?: string | null;
+  jinleeId?: string | null;
   thirdPartydiscordId?: string;
   balanceBefore: Prisma.Decimal | number | string;
   amountChange: Prisma.Decimal | number | string;
@@ -22,6 +24,16 @@ export async function recordIndividualTransaction(
   client: PrismaClientOrTransaction,
   params: RecordTransactionParams
 ) {
+  let jinleeId = params.jinleeId ?? null;
+  if (!jinleeId && params.discordId && params.discordId !== 'SYSTEM') {
+    const identity = await ensureJinleeIdentityForDiscordTx(client, params.discordId);
+    jinleeId = identity.jinleeId;
+  }
+
+  if (!params.discordId && !jinleeId) {
+    throw new Error('discordId or jinleeId is required');
+  }
+
   const balanceBefore = asDecimal(params.balanceBefore);
   const balanceAfter = asDecimal(params.balanceAfter);
   const amountChange = asDecimal(params.amountChange).abs();
@@ -38,7 +50,8 @@ export async function recordIndividualTransaction(
   const createPayload = () =>
     client.individualTransaction.create({
       data: {
-        discordId: params.discordId,
+        discordId: params.discordId ?? null,
+        jinleeId,
         thirdPartydiscordId: thirdParty,
         balanceBefore,
         amountChange,
@@ -51,7 +64,11 @@ export async function recordIndividualTransaction(
   await realignIndividualTransactionSequence(client);
 
   try {
-    return await createPayload();
+    const created = await createPayload();
+    if (params.discordId && params.discordId !== 'SYSTEM') {
+      await syncJinleeWalletFromMemberTx(client, params.discordId);
+    }
+    return created;
   } catch (err) {
     if (!isUniqueConstraintError(err, 'transactionId')) {
       throw err;
@@ -59,6 +76,10 @@ export async function recordIndividualTransaction(
 
     await realignIndividualTransactionSequence(client);
 
-    return createPayload();
+    const created = await createPayload();
+    if (params.discordId && params.discordId !== 'SYSTEM') {
+      await syncJinleeWalletFromMemberTx(client, params.discordId);
+    }
+    return created;
   }
 }

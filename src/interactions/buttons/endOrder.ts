@@ -4,6 +4,7 @@ import { OrderStatus } from '@prisma/client';
 import { endOrder } from '../../services/orderService.js';
 import { cancelOrderTimers } from '../../services/timerService.js';
 import { notifyOrderEnded } from '../../services/orderNotificationService.js';
+import { resolveJinleeIdentityTx } from '../../services/jinleeAccountService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const END_BUTTON_PREFIX = 'order:end:';
@@ -29,13 +30,16 @@ export async function handleEndOrderButton(i: ButtonInteraction) {
   try {
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      select: { status: true, hostId: true, workerId: true, displayNo: true },
+      select: { status: true, hostId: true, hostJinleeId: true, workerId: true, displayNo: true },
     });
     if (!order) {
       await i.editReply('订单不存在，请确认后再试。');
       return;
     }
-    const isHost = order.hostId === i.user.id;
+    const actorIdentity = await resolveJinleeIdentityTx(prisma, i.user.id);
+    const isHost =
+      order.hostId === i.user.id
+      || (!!actorIdentity && !!order.hostJinleeId && order.hostJinleeId === actorIdentity.jinleeId);
     const isWorker = order.workerId === i.user.id;
     if (!isHost && !isWorker) {
       await i.editReply('只有该订单的老板或陪玩才能使用此按钮结单。');

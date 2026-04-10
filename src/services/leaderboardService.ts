@@ -266,6 +266,7 @@ async function loadActualSpend(start: Date, end: Date) {
 
   const spendMap = new Map<string, Prisma.Decimal>();
   rows.forEach((row) => {
+    if (!row.discordId) return;
     const before = new Prisma.Decimal(row.balanceBefore ?? 0);
     const after = new Prisma.Decimal(row.balanceAfter ?? 0);
     const delta = before.sub(after);
@@ -287,6 +288,7 @@ async function loadActualIncome(start: Date, end: Date) {
 
   const incomeMap = new Map<string, Prisma.Decimal>();
   rows.forEach((row) => {
+    if (!row.discordId) return;
     const before = new Prisma.Decimal(row.balanceBefore ?? 0);
     const after = new Prisma.Decimal(row.balanceAfter ?? 0);
     const delta = after.sub(before);

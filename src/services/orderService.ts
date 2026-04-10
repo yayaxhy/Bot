@@ -1,5 +1,5 @@
 import prisma from '../db/prisma.js';
-import { Prisma, OrderStatus, PeiwanStatus, MemberStatus } from '@prisma/client';
+import { AccountProvider, Prisma, OrderStatus, PeiwanStatus, MemberStatus } from '@prisma/client';
 import { round2, minutesBetweenCeil } from '../lib/money.js';
 import { addMinutes, minutesBetweenFloor } from '../lib/time.js';
 import { addHeart } from './heartService.js';
@@ -7,6 +7,15 @@ import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { evaluateAutoCommissionBuff, getAutoCommissionBoost } from './autoCommissionBuffService.js';
+import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
+import {
+  applyJinleeWalletDeltaTx,
+  ensureJinleeIdentityForDiscordTx,
+  getJinleeWalletSnapshotTx,
+  lockJinleeUserForUpdateTx,
+  requireJinleeIdentityTx,
+  resolveJinleeIdentityTx,
+} from './jinleeAccountService.js';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 import { PrismaClientKnownRequestError as PrismaKnownError } from '@prisma/client/runtime/library.js';
 
@@ -52,6 +61,43 @@ async function lockOrderForUpdate(tx: Prisma.TransactionClient, orderId: string)
   await tx.$executeRaw`SELECT 1 FROM "Order" WHERE "id" = ${orderId} FOR UPDATE`;
 }
 
+async function resolveOrderHostIdentityTx(
+  tx: Prisma.TransactionClient,
+  order: { hostId?: string | null; hostJinleeId?: string | null }
+) {
+  if (order.hostJinleeId) {
+    return requireJinleeIdentityTx(tx, order.hostJinleeId);
+  }
+  if (order.hostId) {
+    return ensureJinleeIdentityForDiscordTx(tx, order.hostId);
+  }
+  throw new Error('Host missing');
+}
+
+function buildHostOrderWhere(identity: { jinleeId: string; discordUserId: string | null }) {
+  if (identity.discordUserId) {
+    return {
+      OR: [{ hostJinleeId: identity.jinleeId }, { hostId: identity.discordUserId }],
+    };
+  }
+  return { hostJinleeId: identity.jinleeId };
+}
+
+async function getWechatProgramOpenIdTx(
+  tx: Prisma.TransactionClient,
+  jinleeId: string,
+): Promise<string | null> {
+  const binding = await tx.accountBinding.findFirst({
+    where: {
+      jinleeId,
+      provider: AccountProvider.WECHAT_MINIPROGRAM,
+    },
+    select: { providerUserId: true },
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }],
+  });
+  return binding?.providerUserId ?? null;
+}
+
 /** Accept an existing PENDING order and lock the peiwan busy */
 export async function acceptOrder(orderId: string) {
   return prisma.$transaction(async (tx) => {
@@ -72,14 +118,15 @@ export async function acceptOrder(orderId: string) {
     if (!pw) throw new Error('PEIWAN missing');
     if (pw.status !== PeiwanStatus.free) throw new Error('该陪玩繁忙');
 
+    const hostIdentity = await resolveOrderHostIdentityTx(tx, order);
+
     // host balance & unit price
-    const host = await tx.member.findUnique({ where: { discordUserId: order.hostId }, select: { totalBalance: true } });
-    if (!host) throw new Error('Host missing');
+    const host = await getJinleeWalletSnapshotTx(tx, hostIdentity);
     const unitPrice = new Prisma.Decimal(order.unitPrice ?? 0);
 
     // derive initial cutoff by balance considering concurrent orders
     const runningForHost = await tx.order.findMany({
-      where: { hostId: order.hostId, status: OrderStatus.RUNNING },
+      where: { ...buildHostOrderWhere(hostIdentity), status: OrderStatus.RUNNING },
       select: { unitPrice: true },
     });
     let totalHourlyCost = new Prisma.Decimal(order.unitPrice ?? 0);
@@ -91,7 +138,7 @@ export async function acceptOrder(orderId: string) {
     let maxMinutesAtAccept: number | null = null;
     let cutoffAt: Date | null = null;
     if (perMinuteCost.gt(0)) {
-      const minutesCoverable = new Prisma.Decimal(host.totalBalance ?? 0).div(perMinuteCost);
+      const minutesCoverable = host.totalBalance.div(perMinuteCost);
       const remainMinutes = Math.floor(minutesCoverable.toNumber());
       if (remainMinutes > 0) {
         maxMinutesAtAccept = remainMinutes;
@@ -113,6 +160,7 @@ export async function acceptOrder(orderId: string) {
         acceptedAt: now,
         stopwatchStartAt: now,
         billableStartAt,
+        hostJinleeId: hostIdentity.jinleeId,
         commissionRate: worker.commissionRate,
         maxMinutesAtAccept,
         cutoffAt,
@@ -170,16 +218,13 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
     const perMinute = round2(unitPrice.div(60));
     if (perMinute.lte(0)) return { charged: false, insufficient: false };
 
-    // 读取最新余额（行锁），避免使用旧快照
-    await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
-    const hostMember = await tx.member.findUnique({
-      where: { discordUserId: order.hostId },
-      select: { totalBalance: true },
-    });
-    const hostBalance = new Prisma.Decimal(hostMember?.totalBalance ?? 0);
+    const hostIdentity = await resolveOrderHostIdentityTx(tx, order);
+    await lockJinleeUserForUpdateTx(tx, hostIdentity.jinleeId);
+    const hostWallet = await getJinleeWalletSnapshotTx(tx, hostIdentity);
+    const hostBalance = hostWallet.totalBalance;
     const runningReserved = await tx.order.aggregate({
       _sum: { chargedGross: true },
-      where: { hostId: order.hostId, status: OrderStatus.RUNNING },
+      where: { ...buildHostOrderWhere(hostIdentity), status: OrderStatus.RUNNING },
     });
     const reserved = new Prisma.Decimal(runningReserved._sum?.chargedGross ?? 0);
     let hostAvailable = hostBalance.sub(reserved);
@@ -207,7 +252,7 @@ export async function chargePendingMinutes(orderId: string): Promise<ChargeResul
   }, { timeout: TX_TIMEOUT_MS }));
 }
 
-type RecalcResult = { order: any | null; ended: boolean; heartAmount?: number; hostId?: string; workerId?: string };
+type RecalcResult = { order: any | null; ended: boolean; heartAmount?: number; hostId?: string | null; workerId?: string };
 
 /** Recompute remaining minutes; auto-end if balance can’t cover next minute */
 export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
@@ -228,6 +273,7 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
                 id: true,
                 status: true,
                 hostId: true,
+                hostJinleeId: true,
                 workerId: true,
                 peiwanId: true,
                 unitPrice: true,
@@ -249,21 +295,18 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
             const now = new Date();
             const elapsedTotalMinutes = minutesBetweenCeil(order.stopwatchStartAt!, now);
 
-            // 最新余额 + 预留已计费金额
-            await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
-            const hostMember = await tx.member.findUnique({
-              where: { discordUserId: order.hostId },
-              select: { totalBalance: true },
-            });
+            const hostIdentity = await resolveOrderHostIdentityTx(tx, order);
+            await lockJinleeUserForUpdateTx(tx, hostIdentity.jinleeId);
+            const hostWallet = await getJinleeWalletSnapshotTx(tx, hostIdentity);
             const runningForHost = await tx.order.findMany({
-              where: { hostId: order.hostId, status: OrderStatus.RUNNING },
+              where: { ...buildHostOrderWhere(hostIdentity), status: OrderStatus.RUNNING },
               select: { unitPrice: true, chargedGross: true },
             });
             const reserved = runningForHost.reduce(
               (sum, r) => (r.chargedGross ? sum.add(new Prisma.Decimal(r.chargedGross)) : sum),
               new Prisma.Decimal(0)
             );
-            let hostBalance = new Prisma.Decimal(hostMember?.totalBalance ?? 0).sub(reserved);
+            let hostBalance = hostWallet.totalBalance.sub(reserved);
             if (hostBalance.lt(0)) hostBalance = new Prisma.Decimal(0);
             let totalHourlyCost = new Prisma.Decimal(0);
             for (const r of runningForHost) {
@@ -325,8 +368,11 @@ export async function recalcOrAutoEnd(orderId: string): Promise<RecalcResult> {
 }
 
 export async function recalcAllOrdersForHost(hostId: string) {
+  const hostIdentity = await resolveJinleeIdentityTx(prisma, hostId);
   const running = await prisma.order.findMany({
-    where: { hostId, status: OrderStatus.RUNNING },
+    where: hostIdentity
+      ? { ...buildHostOrderWhere(hostIdentity), status: OrderStatus.RUNNING }
+      : { hostId, status: OrderStatus.RUNNING },
     select: { id: true },
   });
   for (const o of running) {
@@ -360,6 +406,7 @@ export async function endOrder(orderId: string, byDiscordId: string) {
                 id: true,
                 status: true,
                 hostId: true,
+                hostJinleeId: true,
                 workerId: true,
                 peiwanId: true,
                 unitPrice: true,
@@ -380,7 +427,12 @@ export async function endOrder(orderId: string, byDiscordId: string) {
             if (!order) throw new Error('Order not running');
             // Idempotency guard: if订单已结束，直接返回现状
             if (order.status !== OrderStatus.RUNNING) return { order, heartAmount: undefined, hostId: order.hostId, workerId: order.workerId };
-            if (order.hostId !== byDiscordId && order.workerId !== byDiscordId) throw new Error('Not participant');
+            const actorIdentity = await resolveJinleeIdentityTx(tx, byDiscordId);
+            const isParticipant =
+              order.hostId === byDiscordId
+              || order.workerId === byDiscordId
+              || (!!actorIdentity && !!order.hostJinleeId && order.hostJinleeId === actorIdentity.jinleeId);
+            if (!isParticipant) throw new Error('Not participant');
 
             const ended = await endOrderInternal(tx, order, new Date());
             return { ...ended, hostId: order.hostId, workerId: order.workerId };
@@ -452,6 +504,8 @@ async function settle(
   feeToPlatform: Prisma.Decimal,
   payoutShare: Prisma.Decimal
 ) {
+  await suppressRechargeNotifications(tx);
+
   await tx.order.update({
     where: { id: order.id },
     data: {
@@ -464,23 +518,20 @@ async function settle(
     },
   });
 
-  // 串行化老板扣款，防止并发结算读取相同余额
-  await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
-
-  const hostAccount = await tx.member.findUnique({
-    where: { discordUserId: order.hostId },
-    select: { income: true, recharge: true, totalBalance: true },
-  });
-  if (!hostAccount) throw new Error('Host missing');
-
-  const hostIncome = new Prisma.Decimal(hostAccount.income ?? 0);
-  const hostRecharge = new Prisma.Decimal(hostAccount.recharge ?? 0);
-  const hostBalanceBefore = new Prisma.Decimal(hostAccount.totalBalance ?? 0);
+  const hostIdentity = await resolveOrderHostIdentityTx(tx, order);
+  await lockJinleeUserForUpdateTx(tx, hostIdentity.jinleeId);
+  const hostWallet = await getJinleeWalletSnapshotTx(tx, hostIdentity);
+  const hostIncome = hostWallet.income;
+  const hostRecharge = hostWallet.recharge;
+  const hostBalanceBefore = hostWallet.totalBalance;
   let hostBalanceAfter = hostBalanceBefore;
   let hostFromIncome = new Prisma.Decimal(0);
   let hostFromRecharge = new Prisma.Decimal(0);
 
-  const spendBonus = await consumeSpendBuff(tx, order.hostId, gross);
+  const spendBonus =
+    hostIdentity.discordUserId != null
+      ? await consumeSpendBuff(tx, hostIdentity.discordUserId, gross)
+      : { extra: new Prisma.Decimal(0), remaining: new Prisma.Decimal(0) };
   const spendRemainingBefore = spendBonus.extra.add(spendBonus.remaining);
   const totalSpentIncrement = gross.add(spendBonus.extra);
   let hostIndividualTxId: string | null = null;
@@ -491,19 +542,19 @@ async function settle(
 
     hostBalanceAfter = hostBalanceBefore.sub(gross);
 
-    await tx.member.update({
-      where: { discordUserId: order.hostId },
-      data: {
-        income: { decrement: hostFromIncome },
-        recharge: { decrement: hostFromRecharge },
-        totalBalance: { decrement: gross },
-        totalSpent: { increment: totalSpentIncrement },
-      },
+    await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: hostIdentity.jinleeId,
+      discordUserId: hostIdentity.discordUserId,
+      incomeDelta: hostFromIncome.neg(),
+      rechargeDelta: hostFromRecharge.neg(),
+      totalBalanceDelta: gross.neg(),
+      totalSpentDelta: totalSpentIncrement,
     });
-    await adjustLoyaltyPointsTx(tx, order.hostId, gross);
+    await adjustLoyaltyPointsTx(tx, hostIdentity, gross);
 
     const hostIndividualTx = await recordIndividualTransaction(tx, {
-      discordId: order.hostId,
+      discordId: hostIdentity.discordUserId,
+      jinleeId: hostIdentity.jinleeId,
       thirdPartydiscordId: order.workerId,
       balanceBefore: hostBalanceBefore,
       amountChange: gross,
@@ -512,30 +563,27 @@ async function settle(
     });
     hostIndividualTxId = hostIndividualTx.transactionId;
   } else {
-    await tx.member.update({
-      where: { discordUserId: order.hostId },
-      data: {
-        totalSpent: { increment: totalSpentIncrement },
-      },
+    await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: hostIdentity.jinleeId,
+      discordUserId: hostIdentity.discordUserId,
+      totalSpentDelta: totalSpentIncrement,
     });
   }
 
-  const workerAccount = await tx.member.findUnique({
-    where: { discordUserId: order.workerId },
-    select: { income: true, recharge: true, totalBalance: true },
+  const workerIdentity = await ensureJinleeIdentityForDiscordTx(tx, order.workerId);
+  const workerWalletBefore = await getJinleeWalletSnapshotTx(tx, workerIdentity);
+  const workerBalanceBefore = workerWalletBefore.totalBalance;
+  const workerWalletAfter = await applyJinleeWalletDeltaTx(tx, {
+    jinleeId: workerIdentity.jinleeId,
+    discordUserId: workerIdentity.discordUserId,
+    incomeDelta: netToWorker,
+    totalBalanceDelta: netToWorker,
+    offsetNegativeRechargeWithIncome: true,
   });
-  if (!workerAccount) throw new Error('Worker missing');
-
-  const workerBalanceBefore = new Prisma.Decimal(workerAccount.totalBalance ?? 0);
-  const workerBalanceAfter = workerBalanceBefore.add(netToWorker);
-
+  const workerBalanceAfter = workerWalletAfter.totalBalance;
   await tx.member.update({
     where: { discordUserId: order.workerId },
-    data: {
-      income: { increment: netToWorker },
-      totalBalance: { increment: netToWorker },
-      status: MemberStatus.PEIWAN,
-    },
+    data: { status: MemberStatus.PEIWAN },
   });
 
   if (order.peiwan) {
@@ -549,8 +597,9 @@ async function settle(
   }
 
   const workerIndividualTx = await recordIndividualTransaction(tx, {
-    discordId: order.workerId,
-    thirdPartydiscordId: order.hostId,
+    discordId: workerIdentity.discordUserId,
+    jinleeId: workerIdentity.jinleeId,
+    thirdPartydiscordId: hostIdentity.discordUserId ?? 'SYSTEM',
     balanceBefore: workerBalanceBefore,
     amountChange: netToWorker,
     balanceAfter: workerBalanceAfter,
@@ -559,8 +608,10 @@ async function settle(
 
   const trans = await tx.transaction.create({
     data: {
-      fromId: order.hostId,
+      fromId: hostIdentity.discordUserId ?? null,
       toId: order.workerId,
+      fromJinleeId: hostIdentity.jinleeId,
+      toJinleeId: workerIdentity.jinleeId,
       amount: gross,
       feeAmount: feeToPlatform,
       netAmount: netToWorker,
@@ -571,8 +622,10 @@ async function settle(
     data: {
       transactionId: trans.Transid,
       orderID: trans.orderID,
-      fromId: order.hostId,
+      fromId: hostIdentity.discordUserId ?? null,
       toId: order.workerId,
+      fromJinleeId: hostIdentity.jinleeId,
+      toJinleeId: workerIdentity.jinleeId,
       feeAmount: feeToPlatform,
     },
   });
@@ -585,6 +638,7 @@ async function settle(
     endedAt,
   });
 
+  const hostWechatOpenId = await getWechatProgramOpenIdTx(tx, hostIdentity.jinleeId);
   await tx.orderAudit.create({
     data: {
       orderId: order.id,
@@ -592,8 +646,11 @@ async function settle(
       transactionOrderId: trans.orderID,
       hostIndividualTransactionId: hostIndividualTxId ?? undefined,
       workerIndividualTransactionId: workerIndividualTx.transactionId,
-      hostId: order.hostId,
+      hostId: hostIdentity.discordUserId ?? null,
+      hostJinleeId: hostIdentity.jinleeId,
+      hostWechatOpenId,
       workerId: order.workerId,
+      workerJinleeId: workerIdentity.jinleeId,
       peiwanId: order.peiwanId,
       gross,
       pointsEarned: gross,
@@ -639,11 +696,9 @@ async function grantReferralCommission(
   const payReferral = async ({
     referral,
     amount,
-    baseLabel,
   }: {
     referral: { inviterId: string; inviteeId: string; type: 'LAOBAN' | 'PEIWAN'; payoutCap: Prisma.Decimal | null };
     amount: Prisma.Decimal;
-    baseLabel: string;
   }): Promise<ReferralAppliedSummary | null> => {
     if (amount.lte(0)) return null;
 
@@ -687,20 +742,21 @@ async function grantReferralCommission(
       update: {},
       select: { totalBalance: true, recharge: true },
     });
+    const inviterIdentity = await ensureJinleeIdentityForDiscordTx(tx, referral.inviterId);
 
     const balanceBefore = new Prisma.Decimal(inviter.totalBalance ?? 0);
     const balanceAfter = balanceBefore.add(amount);
 
-    await tx.member.update({
-      where: { discordUserId: referral.inviterId },
-      data: {
-        recharge: { increment: amount },
-        totalBalance: { increment: amount },
-      },
+    await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: inviterIdentity.jinleeId,
+      discordUserId: inviterIdentity.discordUserId,
+      rechargeDelta: amount,
+      totalBalanceDelta: amount,
     });
 
     await recordIndividualTransaction(tx, {
       discordId: referral.inviterId,
+      jinleeId: inviterIdentity.jinleeId,
       thirdPartydiscordId: referral.inviteeId,
       balanceBefore,
       amountChange: amount,
@@ -717,10 +773,12 @@ async function grantReferralCommission(
   };
 
   // boss side: 1% of worker net
-  const bossReferral = await tx.referral.findUnique({
-    where: { inviteeId: order.hostId },
-    select: { inviterId: true, inviteeId: true, type: true, payoutRate: true, payoutCap: true },
-  });
+  const bossReferral = order.hostId
+    ? await tx.referral.findUnique({
+        where: { inviteeId: order.hostId },
+        select: { inviterId: true, inviteeId: true, type: true, payoutRate: true, payoutCap: true },
+      })
+    : null;
   if (bossReferral?.type === 'LAOBAN') {
     const amount = round2(netToWorker.mul(new Prisma.Decimal(bossReferral.payoutRate ?? REF_RATE)));
     bossSummary = await payReferral({
@@ -731,7 +789,6 @@ async function grantReferralCommission(
         payoutCap: bossReferral.payoutCap,
       },
       amount,
-      baseLabel: '老板1%',
     });
   }
 
@@ -750,7 +807,6 @@ async function grantReferralCommission(
         payoutCap: workerReferral.payoutCap,
       },
       amount,
-      baseLabel: '陪玩1%',
     });
   }
 

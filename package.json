@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.2",
+    "cuid": "^3.0.0",
     "discord.js": "^14.25.1",
     "dotenv": "^16.6.1",
     "pg": "^8.20.0"

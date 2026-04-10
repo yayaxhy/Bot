@@ -4,6 +4,7 @@ import { CouponStatus, CouponType, LotteryPool, LotteryStatus } from '@prisma/cl
 import crypto from 'node:crypto';
 import { isUniqueConstraintError, realignCouponSequence } from '../services/sequenceService.js';
 import { isCashAdmin } from './cash.js';
+import { ensureJinleeIdentityForDiscordTx } from '../services/jinleeAccountService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 
 type GrantItem = {
@@ -118,9 +119,11 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
     const quantityText = quantity === 1 ? '一张' : `${quantity} 张`;
 
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    const targetIdentity = await ensureJinleeIdentityForDiscordTx(prisma, target.id);
     if (grantItem.couponType) {
       const data = Array.from({ length: quantity }, () => ({
         discordId: target.id,
+        jinleeId: targetIdentity.jinleeId,
         type: grantItem.couponType!,
         status: CouponStatus.ACTIVE,
         expiresAt,
@@ -156,6 +159,7 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
             nonce,
             requestId: `grant:${i.id}`,
             userId: target.id,
+            jinleeId: targetIdentity.jinleeId,
             pool: prize.pool ?? LotteryPool.ADVANCED,
             prizeId: prize.id,
             cost: '0',

@@ -127,10 +127,10 @@ enum RedEnvelopeStatus {
 }
 
 enum LotteryPool {
-  NORMAL   // 银色
-  MEDIUM   // 金色
+  NORMAL // 银色
+  MEDIUM // 金色
   ADVANCED // 高级（有限）
-  SPECIAL  // 特级（有限）
+  SPECIAL // 特级（有限）
 }
 
 enum LotteryPrizeType {
@@ -140,14 +140,97 @@ enum LotteryPrizeType {
   SELFUSE
 }
 
+enum AccountProvider {
+  DISCORD
+  WECHAT_MINIPROGRAM
+}
+
 /**
  * ---------------- Models ----------------
  */
 
 model Activity {
-  title       String   @id
+  title       String  @id
   description String?
   type        String?
+}
+
+model JinleeUser {
+  jinleeId           String   @id
+  discordUserId      String?  @unique
+  discordDisplayName String?
+  discordAvatarUrl   String?
+  wechatDisplayName  String?
+  wechatAvatarUrl    String?
+  totalBalance       Decimal  @default(0) @db.Decimal(19, 4)
+  income             Decimal  @default(0) @db.Decimal(19, 4)
+  recharge           Decimal  @default(0) @db.Decimal(19, 4)
+  totalSpent         Decimal  @default(0) @db.Decimal(19, 4)
+  loyaltyPoints      Decimal  @default(0) @db.Decimal(19, 4)
+  withdrawAccount1   String?
+  withdrawAccount2   String?
+  withdrawAccount3   String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  member                  Member?                 @relation("JinleeUserMember", fields: [discordUserId], references: [discordUserId], onDelete: SetNull)
+  accountBindings         AccountBinding[]
+  wechatProgramSessions   WechatProgramSession[]
+  hostedOrders            Order[]
+  rechargeOrders          ZPayRechargeOrder[]
+  rechargeRecords         Recharge[]
+  withdrawals             Withdraw[]
+  individualTransactions  IndividualTransaction[]
+  coupons                 Coupon[]
+  loyaltyPoint            LoyaltyPoint?
+  withdrawalAccount       WithdrawalAccount?
+  lotteryDraws            LotteryDraw[]
+  lotteryPity             LotteryPity?
+  pointShopCarts          PointShopCart[]
+  pointShopOrders         PointShopOrder[]
+  pointShopGrants         PointShopGrant[]
+  pointShopPointLedgers   PointShopPointLedger[]
+  consumedCoupons         Coupon[]                @relation("CouponConsumeTargetJinleeUser")
+  consumedLotteryDraws    LotteryDraw[]           @relation("LotteryConsumeTargetJinleeUser")
+  consumedPointShopGrants PointShopGrant[]        @relation("PointShopGrantConsumeTargetJinleeUser")
+  sentTransactions        Transaction[]           @relation("TransactionFromJinleeUser")
+  receivedTransactions    Transaction[]           @relation("TransactionToJinleeUser")
+  commissionsFrom         Commission[]            @relation("CommissionFromJinleeUser")
+  commissionsTo           Commission[]            @relation("CommissionToJinleeUser")
+}
+
+model AccountBinding {
+  id             String          @id @default(cuid())
+  jinleeId       String
+  provider       AccountProvider
+  providerUserId String
+  unionId        String?
+  profile        Json?
+  lastLoginAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  jinleeUser            JinleeUser             @relation(fields: [jinleeId], references: [jinleeId], onDelete: Cascade)
+  wechatProgramSessions WechatProgramSession[]
+
+  @@unique([provider, providerUserId])
+  @@index([jinleeId])
+  @@index([provider, unionId])
+}
+
+model WechatProgramSession {
+  id                String    @id @default(cuid())
+  tokenHash         String    @unique
+  jinleeId          String
+  providerAccountId String?
+  expiresAt         DateTime
+  createdAt         DateTime  @default(now())
+  lastUsedAt        DateTime?
+
+  jinleeUser      JinleeUser      @relation(fields: [jinleeId], references: [jinleeId], onDelete: Cascade)
+  providerAccount AccountBinding? @relation(fields: [providerAccountId], references: [id], onDelete: SetNull)
+
+  @@index([jinleeId, expiresAt])
 }
 
 model Member {
@@ -156,32 +239,32 @@ model Member {
   status        MemberStatus @default(LAOBAN)
 
   // Money
-  totalBalance Decimal @default(0) @db.Decimal(19, 4)
-  income       Decimal @default(0) @db.Decimal(19, 4)
-  recharge     Decimal @default(0) @db.Decimal(19, 4)
-  totalSpent   Decimal @default(0) @db.Decimal(19, 4)
+  totalBalance  Decimal @default(0) @db.Decimal(19, 4)
+  income        Decimal @default(0) @db.Decimal(19, 4)
+  recharge      Decimal @default(0) @db.Decimal(19, 4)
+  totalSpent    Decimal @default(0) @db.Decimal(19, 4)
   VIPRoleOptOut Boolean @default(false)
 
   // Payout rate (user receives this share of gross), default 75%
-  commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
+  commissionRate     Decimal @default(0.75) @db.Decimal(7, 6)
   // Original payout share baseline, used when temporary boosts expire
   baseCommissionRate Decimal @default(0.75) @db.Decimal(7, 6)
 
   // Relations
-  commissionFrom Commission[] @relation("CommissionFrom")
-  commissionTo   Commission[] @relation("CommissionTo")
+  commissionFrom Commission[]    @relation("CommissionFrom")
+  commissionTo   Commission[]    @relation("CommissionTo")
   dailySnapshots DailySnapshot[]
 
-  sentTransactions     Transaction[] @relation("FromMember")
-  receivedTransactions Transaction[] @relation("ToMember")
+  sentTransactions     Transaction[]       @relation("FromMember")
+  receivedTransactions Transaction[]       @relation("ToMember")
   zpayRechargeOrders   ZPayRechargeOrder[]
 
   // One-to-one: every 陪玩 is a member; not every member is a 陪玩
-  peiwan PEIWAN? @relation("MemberToPeiwan")
+  peiwan            PEIWAN?            @relation("MemberToPeiwan")
   // Loyalty points (one-to-one)
-  loyaltyPoint LoyaltyPoint?
+  loyaltyPoint      LoyaltyPoint?
   // Farm profile (one-to-one)
-  farmProfile FarmProfile?
+  farmProfile       FarmProfile?
   // Withdrawal account presets (one-to-one)
   withdrawalAccount WithdrawalAccount?
 
@@ -194,19 +277,19 @@ model Member {
   heartTo   HeartCounter[] @relation("HeartTo")
 
   // Lottery draws
-  lotteryDraws LotteryDraw[]
-  lotteryPity  LotteryPity?
-  scratchTickets ScratchTicket[] @relation("ScratchTicketOwner")
-  pointShopCarts PointShopCart[]
-  pointShopOrders PointShopOrder[]
-  pointShopPointLedgers PointShopPointLedger[]
-  pointShopGrants PointShopGrant[] @relation("PointShopGrantOwner")
-  pointShopGrantConsumes PointShopGrant[] @relation("PointShopGrantConsumeTarget")
-  authoredPeiwanReviews PeiwanReview[] @relation("PeiwanReviewReviewer")
-  receivedPeiwanReviews PeiwanReview[] @relation("PeiwanReviewPeiwan")
-  voicePointSessions VoicePointSession[]
-  voicePointLedgers VoicePointLedger[]
-  pageViewEvents PageViewEvent[]
+  lotteryDraws           LotteryDraw[]
+  lotteryPity            LotteryPity?
+  scratchTickets         ScratchTicket[]        @relation("ScratchTicketOwner")
+  pointShopCarts         PointShopCart[]
+  pointShopOrders        PointShopOrder[]
+  pointShopPointLedgers  PointShopPointLedger[]
+  pointShopGrants        PointShopGrant[]       @relation("PointShopGrantOwner")
+  pointShopGrantConsumes PointShopGrant[]       @relation("PointShopGrantConsumeTarget")
+  authoredPeiwanReviews  PeiwanReview[]         @relation("PeiwanReviewReviewer")
+  receivedPeiwanReviews  PeiwanReview[]         @relation("PeiwanReviewPeiwan")
+  voicePointSessions     VoicePointSession[]
+  voicePointLedgers      VoicePointLedger[]
+  pageViewEvents         PageViewEvent[]
 
   // Gift wall unlocks/rewards
   giftUnlocks      PeiwanGiftUnlock[]
@@ -226,27 +309,32 @@ model Member {
   // Display name inside target Discord guild
   serverDisplayName String?
 
+  // Optional app-level identity shared by web and mini program clients.
+  jinleeUser JinleeUser? @relation("JinleeUserMember")
+
   // Order request logs/clicks
-  orderRequestsCreated OrderRequestLog[] @relation("OrderRequestOwner")
+  orderRequestsCreated OrderRequestLog[]   @relation("OrderRequestOwner")
   orderRequestClicks   OrderRequestClick[] @relation("OrderRequestWorker")
   bossProfile          BossProfile?
 
   // Expense & profit logs
-    expensesAsOperator Expense[] @relation("ExpenseOperator")
-    expensesAsTarget   Expense[] @relation("ExpenseTarget")
-    profitsAsOperator  PureProfit[] @relation("PureProfitOperator")
-    profitsAsTarget    PureProfit[] @relation("PureProfitTarget")
-    couponsAsConsumeTarget Coupon[] @relation("CouponConsumeTarget")
-    lotteryConsumeTargets LotteryDraw[] @relation("LotteryConsumeTarget")
-  }
+  expensesAsOperator     Expense[]     @relation("ExpenseOperator")
+  expensesAsTarget       Expense[]     @relation("ExpenseTarget")
+  profitsAsOperator      PureProfit[]  @relation("PureProfitOperator")
+  profitsAsTarget        PureProfit[]  @relation("PureProfitTarget")
+  couponsAsConsumeTarget Coupon[]      @relation("CouponConsumeTarget")
+  lotteryConsumeTargets  LotteryDraw[] @relation("LotteryConsumeTarget")
+}
 
 model LoyaltyPoint {
   discordUserId String   @id
+  jinleeId      String?  @unique
   points        Decimal  @default(0) @db.Decimal(19, 4)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+  member     Member      @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+  jinleeUser JinleeUser? @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
 }
 
 model FarmProfile {
@@ -257,7 +345,7 @@ model FarmProfile {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+  member Member          @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
   plots  FarmPlot[]
   logs   FarmActionLog[]
 }
@@ -315,19 +403,19 @@ model FarmVisit {
 }
 
 model VoicePointSession {
-  id              String   @id @default(cuid())
+  id              String    @id @default(cuid())
   discordUserId   String
   guildId         String
   channelId       String
-  joinedAt        DateTime @default(now())
+  joinedAt        DateTime  @default(now())
   leftAt          DateTime?
-  eligibleSeconds Int      @default(0)
-  pointsAwarded   Decimal  @default(0) @db.Decimal(19, 4)
+  eligibleSeconds Int       @default(0)
+  pointsAwarded   Decimal   @default(0) @db.Decimal(19, 4)
   closeReason     String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  member Member            @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
   ledger VoicePointLedger?
 
   @@index([discordUserId, joinedAt])
@@ -371,56 +459,74 @@ model PageViewEvent {
 }
 
 model Transaction {
-  Transid   String   @id @default(cuid())
-  orderID   Int      @unique @default(autoincrement())
-  fromId    String
-  toId      String
-  amount    Decimal  @db.Decimal(19, 4)
-  feeAmount Decimal  @db.Decimal(19, 4)
-  netAmount Decimal  @db.Decimal(19, 4)
-  createdAt DateTime @default(now())
+  Transid      String   @id @default(cuid())
+  orderID      Int      @unique @default(autoincrement())
+  fromId       String?
+  toId         String
+  fromJinleeId String?
+  toJinleeId   String?
+  amount       Decimal  @db.Decimal(19, 4)
+  feeAmount    Decimal  @db.Decimal(19, 4)
+  netAmount    Decimal  @db.Decimal(19, 4)
+  createdAt    DateTime @default(now())
 
   commissionById    Commission? @relation("commissionById")
   commissionByOrder Commission? @relation("commissionByOrder")
 
-  from Member @relation("FromMember", fields: [fromId], references: [discordUserId])
-  to   Member @relation("ToMember", fields: [toId], references: [discordUserId])
+  from           Member?     @relation("FromMember", fields: [fromId], references: [discordUserId])
+  to             Member      @relation("ToMember", fields: [toId], references: [discordUserId])
+  fromJinleeUser JinleeUser? @relation("TransactionFromJinleeUser", fields: [fromJinleeId], references: [jinleeId], onDelete: SetNull)
+  toJinleeUser   JinleeUser? @relation("TransactionToJinleeUser", fields: [toJinleeId], references: [jinleeId], onDelete: SetNull)
+
+  @@index([fromJinleeId, createdAt])
+  @@index([toJinleeId, createdAt])
 }
 
 model Withdraw {
-  id         String   @id @default(dbgenerated("concat('W', nextval('\"Withdraw_id_seq\"'::regclass))"))
-  discordId  String
-  createdAt  DateTime @default(now())
-  amount     Decimal  @db.Decimal(19, 4)
+  id         String    @id @default(dbgenerated("concat('W', nextval('\"Withdraw_id_seq\"'::regclass))"))
+  discordId  String?
+  jinleeId   String?
+  createdAt  DateTime  @default(now())
+  amount     Decimal   @db.Decimal(19, 4)
   method     String
   notifiedAt DateTime?
 
+  jinleeUser JinleeUser? @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+
   @@index([discordId])
+  @@index([jinleeId, createdAt])
 }
 
 model IndividualTransaction {
-  transactionId      String   @id @default(dbgenerated("concat('IT', nextval('\"IndividualTransaction_transactionId_seq\"'::regclass))"))
-  timeCreatedAt      DateTime @default(now())
-  discordId          String
+  transactionId       String   @id @default(dbgenerated("concat('IT', nextval('\"IndividualTransaction_transactionId_seq\"'::regclass))"))
+  timeCreatedAt       DateTime @default(now())
+  discordId           String?
+  jinleeId            String?
   thirdPartydiscordId String
-  balanceBefore      Decimal  @db.Decimal(19, 4)
-  amountChange       Decimal  @db.Decimal(19, 4)
-  balanceAfter       Decimal  @db.Decimal(19, 4)
-  typeOfTransaction  String
+  balanceBefore       Decimal  @db.Decimal(19, 4)
+  amountChange        Decimal  @db.Decimal(19, 4)
+  balanceAfter        Decimal  @db.Decimal(19, 4)
+  typeOfTransaction   String
+
+  jinleeUser JinleeUser? @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
 
   @@index([discordId])
+  @@index([jinleeId])
   @@index([discordId, timeCreatedAt, typeOfTransaction])
+  @@index([jinleeId, timeCreatedAt, typeOfTransaction])
 }
 
 model WithdrawalAccount {
   discordUserId String   @id
+  jinleeId      String?  @unique
   account1      String?
   account2      String?
   account3      String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+  member     Member      @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
+  jinleeUser JinleeUser? @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
 }
 
 enum CouponType {
@@ -458,18 +564,25 @@ enum CouponStatus {
 }
 
 model Coupon {
-  id        String      @id @default(dbgenerated("concat('C', nextval('\"Coupon_id_seq\"'::regclass))"))
-  discordId String
-  type      CouponType
-  status    CouponStatus @default(ACTIVE)
-  issuedAt  DateTime    @default(now())
-  expiresAt DateTime
-  consumedAt DateTime?
-  orderId   String?
-  consumeAmount Decimal? @db.Decimal(19, 4)
-  consumeTargetId String?
+  id                    String       @id @default(dbgenerated("concat('C', nextval('\"Coupon_id_seq\"'::regclass))"))
+  discordId             String?
+  jinleeId              String?
+  type                  CouponType
+  status                CouponStatus @default(ACTIVE)
+  issuedAt              DateTime     @default(now())
+  expiresAt             DateTime
+  consumedAt            DateTime?
+  orderId               String?
+  consumeAmount         Decimal?     @db.Decimal(19, 4)
+  consumeTargetId       String?
+  consumeTargetJinleeId String?
 
-  consumeTarget Member? @relation("CouponConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+  consumeTarget           Member?     @relation("CouponConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+  jinleeUser              JinleeUser? @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+  consumeTargetJinleeUser JinleeUser? @relation("CouponConsumeTargetJinleeUser", fields: [consumeTargetJinleeId], references: [jinleeId], onDelete: SetNull)
+
+  @@index([jinleeId, status, expiresAt])
+  @@index([consumeTargetJinleeId])
 }
 
 model Expense {
@@ -480,7 +593,7 @@ model Expense {
   reason     String
   createdAt  DateTime @default(now())
 
-  operator Member @relation("ExpenseOperator", fields: [operatorId], references: [discordUserId])
+  operator Member  @relation("ExpenseOperator", fields: [operatorId], references: [discordUserId])
   target   Member? @relation("ExpenseTarget", fields: [targetId], references: [discordUserId])
 
   @@index([operatorId])
@@ -496,7 +609,7 @@ model PureProfit {
   reason     String
   createdAt  DateTime @default(now())
 
-  operator Member @relation("PureProfitOperator", fields: [operatorId], references: [discordUserId])
+  operator Member  @relation("PureProfitOperator", fields: [operatorId], references: [discordUserId])
   target   Member? @relation("PureProfitTarget", fields: [targetId], references: [discordUserId])
 
   @@index([operatorId])
@@ -520,16 +633,23 @@ model DailySnapshot {
 model Commission {
   transactionId String   @id
   orderID       Int      @unique @default(autoincrement())
-  fromId        String
+  fromId        String?
   toId          String
+  fromJinleeId  String?
+  toJinleeId    String?
   feeAmount     Decimal  @db.Decimal(19, 4)
   createdAt     DateTime @default(now())
 
   transactionByID    Transaction @relation("commissionById", fields: [transactionId], references: [Transid], onDelete: Cascade)
   transactionByOrder Transaction @relation("commissionByOrder", fields: [orderID], references: [orderID], onDelete: Cascade)
 
-  from Member @relation("CommissionFrom", fields: [fromId], references: [discordUserId])
-  to   Member @relation("CommissionTo", fields: [toId], references: [discordUserId])
+  from           Member?     @relation("CommissionFrom", fields: [fromId], references: [discordUserId])
+  to             Member      @relation("CommissionTo", fields: [toId], references: [discordUserId])
+  fromJinleeUser JinleeUser? @relation("CommissionFromJinleeUser", fields: [fromJinleeId], references: [jinleeId], onDelete: SetNull)
+  toJinleeUser   JinleeUser? @relation("CommissionToJinleeUser", fields: [toJinleeId], references: [jinleeId], onDelete: SetNull)
+
+  @@index([fromJinleeId])
+  @@index([toJinleeId])
 }
 
 model InteractionLog {
@@ -547,78 +667,84 @@ model Gift {
   active   Boolean  @default(true)
   rate     Decimal  @default(1) @db.Decimal(10, 2)
 
-  unlocks PeiwanGiftUnlock[]
+  unlocks   PeiwanGiftUnlock[]
   giftImage GiftImage?
 }
 
 model GiftImage {
-  giftName  String   @id
-  fileName  String
-  category  String   @default("默认")
+  giftName   String   @id
+  fileName   String
+  category   String   @default("默认")
   uploadedAt DateTime @default(now())
 
   gift Gift @relation(fields: [giftName], references: [GiftName], onDelete: Cascade)
 }
 
 model GiftAudit {
-  id                       String   @id @default(cuid())
-  paymentTransactionId     String   @unique
-  individualTransactionId  String   @unique
-  orderId                  Int
-  giftName                 String
-  quantity                 Decimal  @db.Decimal(19, 4)
-  unitPrice                Decimal  @db.Decimal(19, 4)
-  gross                    Decimal  @db.Decimal(19, 4)
-  payable                  Decimal  @db.Decimal(19, 4)
-  pointsEarned             Decimal  @db.Decimal(19, 4) // loyalty points awarded to giver for this gift
-  feeAmount                Decimal  @db.Decimal(19, 4)
-  netAmount                Decimal  @db.Decimal(19, 4)
-  receiverRate             Decimal  @db.Decimal(19, 6)
-  heartGain                Int
-  giverId                  String
-  receiverId               String
-  giverFromIncome          Decimal  @db.Decimal(19, 4)
-  giverFromRecharge        Decimal  @db.Decimal(19, 4)
-  spendBonusExtra          Decimal  @db.Decimal(19, 4)
-  spendRemainingBefore     Decimal  @db.Decimal(19, 4)
-  flowBonusExtra           Decimal  @db.Decimal(19, 4)
-  flowRemainingBefore      Decimal  @db.Decimal(19, 4)
-  voucherIds               Json?
-  couponIds                Json?
-  bossReferralInviterId    String?
-  bossReferralAmount       Decimal? @db.Decimal(19, 4)
-  workerReferralInviterId  String?
-  workerReferralAmount     Decimal? @db.Decimal(19, 4)
-  createdAt                DateTime @default(now())
+  id                      String   @id @default(cuid())
+  paymentTransactionId    String   @unique
+  individualTransactionId String   @unique
+  orderId                 Int
+  giftName                String
+  quantity                Decimal  @db.Decimal(19, 4)
+  unitPrice               Decimal  @db.Decimal(19, 4)
+  gross                   Decimal  @db.Decimal(19, 4)
+  payable                 Decimal  @db.Decimal(19, 4)
+  pointsEarned            Decimal  @db.Decimal(19, 4) // loyalty points awarded to giver for this gift
+  feeAmount               Decimal  @db.Decimal(19, 4)
+  netAmount               Decimal  @db.Decimal(19, 4)
+  receiverRate            Decimal  @db.Decimal(19, 6)
+  heartGain               Int
+  giverId                 String
+  receiverId              String
+  giverFromIncome         Decimal  @db.Decimal(19, 4)
+  giverFromRecharge       Decimal  @db.Decimal(19, 4)
+  spendBonusExtra         Decimal  @db.Decimal(19, 4)
+  spendRemainingBefore    Decimal  @db.Decimal(19, 4)
+  flowBonusExtra          Decimal  @db.Decimal(19, 4)
+  flowRemainingBefore     Decimal  @db.Decimal(19, 4)
+  voucherIds              Json?
+  couponIds               Json?
+  bossReferralInviterId   String?
+  bossReferralAmount      Decimal? @db.Decimal(19, 4)
+  workerReferralInviterId String?
+  workerReferralAmount    Decimal? @db.Decimal(19, 4)
+  createdAt               DateTime @default(now())
 
   @@map("gift_audit")
 }
 
 model OrderAudit {
-  id                          String   @id @default(cuid())
-  orderId                     String   @unique
-  paymentTransactionId        String   @unique
-  transactionOrderId          Int      @unique
-  hostIndividualTransactionId String?  @unique
-  workerIndividualTransactionId String? @unique
-  hostId                      String
-  workerId                    String
-  peiwanId                    Int
-  gross                       Decimal  @db.Decimal(19, 4)
-  pointsEarned                Decimal  @db.Decimal(19, 4)
-  feeAmount                   Decimal  @db.Decimal(19, 4)
-  netAmount                   Decimal  @db.Decimal(19, 4)
-  commissionRate              Decimal  @db.Decimal(19, 6)
-  hostFromIncome              Decimal  @db.Decimal(19, 4)
-  hostFromRecharge            Decimal  @db.Decimal(19, 4)
-  spendBonusExtra             Decimal  @db.Decimal(19, 4)
-  spendRemainingBefore        Decimal  @db.Decimal(19, 4)
-  bossReferralInviterId       String?
-  bossReferralAmount          Decimal? @db.Decimal(19, 4)
-  workerReferralInviterId     String?
-  workerReferralAmount        Decimal? @db.Decimal(19, 4)
-  createdAt                   DateTime @default(now())
+  id                            String   @id @default(cuid())
+  orderId                       String   @unique
+  paymentTransactionId          String   @unique
+  transactionOrderId            Int      @unique
+  hostIndividualTransactionId   String?  @unique
+  workerIndividualTransactionId String?  @unique
+  hostId                        String?
+  hostJinleeId                  String
+  hostWechatOpenId              String?
+  workerId                      String
+  workerJinleeId                String
+  peiwanId                      Int
+  gross                         Decimal  @db.Decimal(19, 4)
+  pointsEarned                  Decimal  @db.Decimal(19, 4)
+  feeAmount                     Decimal  @db.Decimal(19, 4)
+  netAmount                     Decimal  @db.Decimal(19, 4)
+  commissionRate                Decimal  @db.Decimal(19, 6)
+  hostFromIncome                Decimal  @db.Decimal(19, 4)
+  hostFromRecharge              Decimal  @db.Decimal(19, 4)
+  spendBonusExtra               Decimal  @db.Decimal(19, 4)
+  spendRemainingBefore          Decimal  @db.Decimal(19, 4)
+  bossReferralInviterId         String?
+  bossReferralAmount            Decimal? @db.Decimal(19, 4)
+  workerReferralInviterId       String?
+  workerReferralAmount          Decimal? @db.Decimal(19, 4)
+  createdAt                     DateTime @default(now())
 
+  @@index([hostJinleeId, createdAt])
+  @@index([workerJinleeId, createdAt])
+  @@index([hostId, createdAt])
   @@map("order_audit")
 }
 
@@ -670,28 +796,36 @@ model PeiwanGiftRewardClaim {
 }
 
 model Recharge {
-  RechargeID String  @id @default(dbgenerated("concat('C', nextval('\"Recharge_RechargeID_seq\"'::regclass))"))
-  amount     Decimal @db.Decimal(19, 4)
-  toWhom     String
-  fromWhom   String  @default("1421651539247894549")
+  RechargeID String   @id @default(dbgenerated("concat('C', nextval('\"Recharge_RechargeID_seq\"'::regclass))"))
+  amount     Decimal  @db.Decimal(19, 4)
+  toWhom     String?
+  jinleeId   String?
+  fromWhom   String   @default("1421651539247894549")
   createdAt  DateTime @default(now())
+
+  jinleeUser JinleeUser? @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+
+  @@index([jinleeId, createdAt])
 }
 
 model ZPayRechargeOrder {
-  id            String               @id @default(dbgenerated("concat('ZPAY', replace((gen_random_uuid())::text, '-'::text, ''::text))"))
-  outTradeNo    String               @unique
-  discordUserId String
-  amount        Decimal              @db.Decimal(19, 4)
-  channel       String
-  status        RechargeOrderStatus  @default(PENDING)
+  id             String              @id @default(dbgenerated("concat('ZPAY', replace((gen_random_uuid())::text, '-'::text, ''::text))"))
+  outTradeNo     String              @unique
+  discordUserId  String?
+  jinleeId       String?
+  amount         Decimal             @db.Decimal(19, 4)
+  channel        String
+  status         RechargeOrderStatus @default(PENDING)
   gatewayTradeNo String?
-  notifyPayload Json?
-  createdAt     DateTime             @default(now())
-  paidAt        DateTime?
+  notifyPayload  Json?
+  createdAt      DateTime            @default(now())
+  paidAt         DateTime?
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  member     Member?     @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  jinleeUser JinleeUser? @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
 
   @@index([status, createdAt])
+  @@index([jinleeId, status, createdAt])
 }
 
 model PEIWAN {
@@ -703,30 +837,30 @@ model PEIWAN {
 
   // Price slots (include DEFAULT)
   quotation_Q1 Decimal? @db.Decimal(10, 2)
-  lolPrice    Decimal? @db.Decimal(10, 2)
-  valPrice    Decimal? @db.Decimal(10, 2)
-  deltaPrice  Decimal? @db.Decimal(10, 2)
-  csgoPrice   Decimal? @db.Decimal(10, 2)
-  narakaPrice Decimal? @db.Decimal(10, 2)
-  apexPrice   Decimal? @db.Decimal(10, 2)
-  owPrice     Decimal? @db.Decimal(10, 2)
-  tftPrice    Decimal? @db.Decimal(10, 2)
-  steamPrice  Decimal? @db.Decimal(10, 2)
+  lolPrice     Decimal? @db.Decimal(10, 2)
+  valPrice     Decimal? @db.Decimal(10, 2)
+  deltaPrice   Decimal? @db.Decimal(10, 2)
+  csgoPrice    Decimal? @db.Decimal(10, 2)
+  narakaPrice  Decimal? @db.Decimal(10, 2)
+  apexPrice    Decimal? @db.Decimal(10, 2)
+  owPrice      Decimal? @db.Decimal(10, 2)
+  tftPrice     Decimal? @db.Decimal(10, 2)
+  steamPrice   Decimal? @db.Decimal(10, 2)
 
   // Payout rate copy on PEIWAN (synced → Member via DB trigger)
-  commissionRate Decimal @default(0.75) @db.Decimal(7, 6)
+  commissionRate     Decimal @default(0.75) @db.Decimal(7, 6)
   // Original payout share baseline for future reset logic
   baseCommissionRate Decimal @default(0.75) @db.Decimal(7, 6)
 
-  totalEarn Decimal      @default(0) @db.Decimal(19, 4)
-  balance   Decimal      @default(0) @db.Decimal(19, 4)
-  MP_url    String?
-  status    PeiwanStatus @default(free)
+  totalEarn         Decimal      @default(0) @db.Decimal(19, 4)
+  balance           Decimal      @default(0) @db.Decimal(19, 4)
+  MP_url            String?
+  status            PeiwanStatus @default(free)
   serverDisplayName String?
-  sex       PeiwanSex    @default(小姐姐)
-  exclusive Boolean      @default(false)
-  type      PeiwanType   @default(娱乐陪玩)
-  level     PeiwanLevel  @default(优选陪玩)
+  sex               PeiwanSex    @default(小姐姐)
+  exclusive         Boolean      @default(false)
+  type              PeiwanType   @default(娱乐陪玩)
+  level             PeiwanLevel  @default(优选陪玩)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -734,7 +868,7 @@ model PEIWAN {
   member Member @relation("MemberToPeiwan", fields: [discordUserId], references: [discordUserId], onDelete: Cascade)
 
   // Back-relation to Order for the peiwan relation
-  orders Order[] @relation("PeiwanOrders")
+  orders       Order[]             @relation("PeiwanOrders")
   gameProfiles PeiwanGameProfile[]
 
   @@index([status])
@@ -759,15 +893,17 @@ model PeiwanGameProfile {
 }
 
 model Order {
-  id       String @id @default(cuid()) // orderId
-  hostId   String
-  workerId String
-  peiwanId Int
-  displayNo Int @default(autoincrement()) @unique
+  id           String  @id @default(cuid()) // orderId
+  hostId       String?
+  hostJinleeId String?
+  workerId     String
+  peiwanId     Int
+  displayNo    Int     @unique @default(autoincrement())
 
-  host   Member @relation("HostOrders", fields: [hostId], references: [discordUserId], onDelete: Restrict)
-  worker Member @relation("WorkerOrders", fields: [workerId], references: [discordUserId], onDelete: Restrict)
-  peiwan PEIWAN @relation("PeiwanOrders", fields: [peiwanId], references: [PEIWANID], onDelete: Restrict)
+  host           Member?     @relation("HostOrders", fields: [hostId], references: [discordUserId], onDelete: Restrict)
+  hostJinleeUser JinleeUser? @relation(fields: [hostJinleeId], references: [jinleeId], onDelete: SetNull)
+  worker         Member      @relation("WorkerOrders", fields: [workerId], references: [discordUserId], onDelete: Restrict)
+  peiwan         PEIWAN      @relation("PeiwanOrders", fields: [peiwanId], references: [PEIWANID], onDelete: Restrict)
 
   mode   OrderMode
   status OrderStatus @default(PENDING)
@@ -786,8 +922,8 @@ model Order {
   // Recalc snapshot & telemetry
   maxMinutesAtAccept Int?
   lastRecalcAt       DateTime?
-  chargedMinutes     Int      @default(0)
-  chargedGross       Decimal  @default(0) @db.Decimal(19, 4)
+  chargedMinutes     Int       @default(0)
+  chargedGross       Decimal   @default(0) @db.Decimal(19, 4)
 
   endedAt      DateTime?
   notifiedAt   DateTime?
@@ -806,27 +942,28 @@ model Order {
   @@index([status, cutoffAt])
   @@index([workerId, status])
   @@index([hostId, status])
+  @@index([hostJinleeId, status])
 }
 
 model OrderRequestLog {
-  orderId   String   @id
-  ownerId   String
+  orderId          String   @id
+  ownerId          String
   ownerDisplayName String?
-  content   String
-  createdAt DateTime @default(now())
+  content          String
+  createdAt        DateTime @default(now())
 
-  owner  Member             @relation("OrderRequestOwner", fields: [ownerId], references: [discordUserId], onDelete: Cascade)
+  owner  Member              @relation("OrderRequestOwner", fields: [ownerId], references: [discordUserId], onDelete: Cascade)
   clicks OrderRequestClick[]
 
   @@index([ownerId])
 }
 
 model OrderRequestClick {
-  id        String   @id @default(cuid())
-  orderId   String
-  workerId  String
+  id                String   @id @default(cuid())
+  orderId           String
+  workerId          String
   workerDisplayName String?
-  clickedAt DateTime @default(now())
+  clickedAt         DateTime @default(now())
 
   request OrderRequestLog @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
   worker  Member          @relation("OrderRequestWorker", fields: [workerId], references: [discordUserId], onDelete: Cascade)
@@ -837,36 +974,36 @@ model OrderRequestClick {
 }
 
 model BossProfile {
-  bossId                 String   @id
-  displayName            String?
-  spendLevelLabel        String?
-  styleLabel             String?
+  bossId                  String    @id
+  displayName             String?
+  spendLevelLabel         String?
+  styleLabel              String?
   preferredCompanionLabel String?
-  activeWindowLabel      String?
-  repeatWorkerLabel      String?
-  rankLabel              String?
-  topGames               Json?
-  evidenceLines          Json?
-  totalSpentSnapshot     Decimal  @default(0) @db.Decimal(19, 4)
-  totalBalanceSnapshot   Decimal  @default(0) @db.Decimal(19, 4)
-  totalRequestCount      Int      @default(0)
-  sampledRequestCount    Int      @default(0)
-  totalEndedOrderCount   Int      @default(0)
-  sampledEndedOrderCount Int      @default(0)
-  averageSpendPerOrder   Decimal  @default(0) @db.Decimal(19, 4)
-  averageUnitPrice       Decimal  @default(0) @db.Decimal(19, 4)
-  averageClickCount      Decimal  @default(0) @db.Decimal(19, 4)
-  firstSeenAt            DateTime?
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @updatedAt
+  activeWindowLabel       String?
+  repeatWorkerLabel       String?
+  rankLabel               String?
+  topGames                Json?
+  evidenceLines           Json?
+  totalSpentSnapshot      Decimal   @default(0) @db.Decimal(19, 4)
+  totalBalanceSnapshot    Decimal   @default(0) @db.Decimal(19, 4)
+  totalRequestCount       Int       @default(0)
+  sampledRequestCount     Int       @default(0)
+  totalEndedOrderCount    Int       @default(0)
+  sampledEndedOrderCount  Int       @default(0)
+  averageSpendPerOrder    Decimal   @default(0) @db.Decimal(19, 4)
+  averageUnitPrice        Decimal   @default(0) @db.Decimal(19, 4)
+  averageClickCount       Decimal   @default(0) @db.Decimal(19, 4)
+  firstSeenAt             DateTime?
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
 
   member Member @relation(fields: [bossId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
 }
 
 model BossChannelBinding {
-  channelId String  @id
+  channelId String   @id
   ownerId   String
-  enabled   Boolean @default(true)
+  enabled   Boolean  @default(true)
   note      String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -910,36 +1047,36 @@ model HeartCounter {
 }
 
 model RedEnvelope {
-  id              String             @id @default(cuid())
+  id              String            @id @default(cuid())
   creatorId       String
-  totalAmount     Decimal            @db.Decimal(19, 4)
-  remainingAmount Decimal            @db.Decimal(19, 4)
+  totalAmount     Decimal           @db.Decimal(19, 4)
+  remainingAmount Decimal           @db.Decimal(19, 4)
   totalCount      Int
   remainingCount  Int
   note            String?
-  status          RedEnvelopeStatus  @default(ACTIVE)
+  status          RedEnvelopeStatus @default(ACTIVE)
   expiresAt       DateTime
-  createdAt       DateTime           @default(now())
-  updatedAt       DateTime           @updatedAt
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
   messageId       String?
   channelId       String?
-  refundedAmount  Decimal?           @db.Decimal(19, 4)
-  incomePool      Decimal            @db.Decimal(19, 4)
-  rechargePool    Decimal            @db.Decimal(19, 4)
+  refundedAmount  Decimal?          @db.Decimal(19, 4)
+  incomePool      Decimal           @db.Decimal(19, 4)
+  rechargePool    Decimal           @db.Decimal(19, 4)
 
   @@index([status, expiresAt])
 }
 
 model LotteryPrize {
-  id           String      @id @default(cuid())
-  name         String
-  pool         LotteryPool
-  type         LotteryPrizeType @default(COUPON)
-  weight       Int
-  unlimited    Boolean     @default(false)
-  stock        Int?
-  imageUrl     String?
-  active       Boolean     @default(true)
+  id        String           @id @default(cuid())
+  name      String
+  pool      LotteryPool
+  type      LotteryPrizeType @default(COUPON)
+  weight    Int
+  unlimited Boolean          @default(false)
+  stock     Int?
+  imageUrl  String?
+  active    Boolean          @default(true)
 
   draws LotteryDraw[]
 }
@@ -955,25 +1092,25 @@ model CommissionBuff {
 }
 
 model AutoCommissionBuff {
-  userId          String   @id @map("user_id")
-  targetShare     Decimal  @db.Decimal(10, 4) @default(0.91) @map("target_share")
-  thresholdAmount Decimal  @db.Decimal(19, 4) @default(12000) @map("threshold_amount")
-  windowDays      Int      @default(30) @map("window_days")
-  windowStart     DateTime @map("window_start")
-  windowEnd       DateTime @map("window_end")
-  currentAmount   Decimal  @db.Decimal(19, 4) @default(0) @map("current_amount")
-  tierExpiries    Json?    @map("tier_expiries")
+  userId          String    @id @map("user_id")
+  targetShare     Decimal   @default(0.91) @map("target_share") @db.Decimal(10, 4)
+  thresholdAmount Decimal   @default(12000) @map("threshold_amount") @db.Decimal(19, 4)
+  windowDays      Int       @default(30) @map("window_days")
+  windowStart     DateTime  @map("window_start")
+  windowEnd       DateTime  @map("window_end")
+  currentAmount   Decimal   @default(0) @map("current_amount") @db.Decimal(19, 4)
+  tierExpiries    Json?     @map("tier_expiries")
   activeUntil     DateTime? @map("active_until")
   lastQualifiedAt DateTime? @map("last_qualified_at")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@map("auto_commission_buff")
 }
 
 model FlowBuff {
   userId         String   @id @map("user_id")
-  remainingExtra Decimal  @db.Decimal(19, 4) @map("remaining_extra")
+  remainingExtra Decimal  @map("remaining_extra") @db.Decimal(19, 4)
   expiresAt      DateTime @map("expires_at")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
@@ -983,7 +1120,7 @@ model FlowBuff {
 
 model SpendBuff {
   userId         String   @id @map("user_id")
-  remainingExtra Decimal  @db.Decimal(19, 4) @map("remaining_extra")
+  remainingExtra Decimal  @map("remaining_extra") @db.Decimal(19, 4)
   expiresAt      DateTime @map("expires_at")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
@@ -992,39 +1129,47 @@ model SpendBuff {
 }
 
 model LotteryDraw {
-  id        String      @id @default(cuid())
-  nonce     String      @unique
-  requestId String?
-  userId    String
-  pool      LotteryPool
-  prizeId   String?
-  cost      Decimal     @db.Decimal(19, 4)
-  random    Float?
-  createdAt DateTime    @default(now())
-  status    LotteryStatus @default(UNUSED)
-  code      String?       @unique
-  expiresAt DateTime?
-  consumeAt DateTime?
-  consumeAmount Decimal?  @db.Decimal(19, 4) // 奖品使用时带来的金额（折扣/返利等）
-  consumeOrderId String?  // 关联使用的订单
-  consumeTargetId String?
+  id                    String        @id @default(cuid())
+  nonce                 String        @unique
+  requestId             String?
+  userId                String?
+  jinleeId              String?
+  pool                  LotteryPool
+  prizeId               String?
+  cost                  Decimal       @db.Decimal(19, 4)
+  random                Float?
+  createdAt             DateTime      @default(now())
+  status                LotteryStatus @default(UNUSED)
+  code                  String?       @unique
+  expiresAt             DateTime?
+  consumeAt             DateTime?
+  consumeAmount         Decimal?      @db.Decimal(19, 4) // 奖品使用时带来的金额（折扣/返利等）
+  consumeOrderId        String? // 关联使用的订单
+  consumeTargetId       String?
+  consumeTargetJinleeId String?
 
-  prize  LotteryPrize? @relation(fields: [prizeId], references: [id])
-  member Member        @relation(fields: [userId], references: [discordUserId])
-  consumeTarget Member? @relation("LotteryConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+  prize                   LotteryPrize? @relation(fields: [prizeId], references: [id])
+  member                  Member?       @relation(fields: [userId], references: [discordUserId])
+  jinleeUser              JinleeUser?   @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+  consumeTarget           Member?       @relation("LotteryConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+  consumeTargetJinleeUser JinleeUser?   @relation("LotteryConsumeTargetJinleeUser", fields: [consumeTargetJinleeId], references: [jinleeId], onDelete: SetNull)
 
   @@index([userId, createdAt])
+  @@index([jinleeId, createdAt])
   @@index([pool, createdAt])
   @@index([consumeOrderId])
   @@index([consumeTargetId])
+  @@index([consumeTargetJinleeId])
 }
 
 model LotteryPity {
-  userId    String   @id
+  userId    String?  @unique
+  jinleeId  String   @id
   missCount Int      @default(0)
   updatedAt DateTime @updatedAt
 
-  user Member @relation(fields: [userId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  user       Member?    @relation(fields: [userId], references: [discordUserId], onDelete: SetNull, onUpdate: Cascade)
+  jinleeUser JinleeUser @relation(fields: [jinleeId], references: [jinleeId], onDelete: Cascade)
 }
 
 enum LotteryStatus {
@@ -1101,35 +1246,35 @@ enum ReferralType {
 
 /// 手工指定唯一邀请人及类型（老板/陪玩）
 model Referral {
-  inviteeId String @id
-  inviterId String
-  type      ReferralType
-  payoutRate Decimal @default(0.01) @db.Decimal(10, 4)
-  payoutCap  Decimal? @default(1000) @db.Decimal(19, 4)
-  policyApplied Boolean @default(false)
+  inviteeId     String       @id
+  inviterId     String
+  type          ReferralType
+  payoutRate    Decimal      @default(0.01) @db.Decimal(10, 4)
+  payoutCap     Decimal?     @default(1000) @db.Decimal(19, 4)
+  policyApplied Boolean      @default(false)
   policyRuleId  String?
   policyBoundAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt     DateTime     @default(now())
 
-  inviter Member @relation("ReferralInviter", fields: [inviterId], references: [discordUserId])
-  invitee Member @relation("ReferralInvitee", fields: [inviteeId], references: [discordUserId])
+  inviter Member           @relation("ReferralInviter", fields: [inviterId], references: [discordUserId])
+  invitee Member           @relation("ReferralInvitee", fields: [inviteeId], references: [discordUserId])
   payouts ReferralPayout[]
 
   @@index([inviterId, type])
 }
 
 model ReferralPolicy {
-  id           String       @id @default(cuid())
+  id           String        @id @default(cuid())
   inviterId    String
   referralType ReferralType?
-  rate         Decimal      @db.Decimal(10, 4)
-  capAmount    Decimal?     @db.Decimal(19, 4)
-  enabled      Boolean      @default(true)
+  rate         Decimal       @db.Decimal(10, 4)
+  capAmount    Decimal?      @db.Decimal(19, 4)
+  enabled      Boolean       @default(true)
   startsAt     DateTime?
   endsAt       DateTime?
   note         String?
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   @@index([inviterId, enabled, createdAt])
   @@index([referralType, enabled, createdAt])
@@ -1149,33 +1294,33 @@ model ReferralPayout {
 }
 
 model BlockStackGame {
-  id        String           @id @default(cuid())
-  creatorId String
-  channelId String
-  messageId String?
+  id              String           @id @default(cuid())
+  creatorId       String
+  channelId       String
+  messageId       String?
   actionMessageId String?
-  status    BlockStackStatus @default(ACTIVE)
+  status          BlockStackStatus @default(ACTIVE)
 
-  totalBlocks      Int @default(0)
-  totalSingleDraws Int @default(0)
-  totalTenDraws    Int @default(0)
+  totalBlocks      Int     @default(0)
+  totalSingleDraws Int     @default(0)
+  totalTenDraws    Int     @default(0)
   totalRevenue     Decimal @default(0) @db.Decimal(19, 4)
 
   settledAt     DateTime?
   settledById   String?
-  settledAmount Decimal? @db.Decimal(19, 4)
+  settledAmount Decimal?  @db.Decimal(19, 4)
 
   collapsedAt            DateTime?
   collapsedById          String?
   collapsedByAction      BlockStackAction?
-  collapseChance         Decimal? @db.Decimal(7, 4)
-  collapseRoll           Decimal? @db.Decimal(7, 4)
-  collapseEnvelopeAmount Decimal? @db.Decimal(19, 4)
+  collapseChance         Decimal?          @db.Decimal(7, 4)
+  collapseRoll           Decimal?          @db.Decimal(7, 4)
+  collapseEnvelopeAmount Decimal?          @db.Decimal(19, 4)
   collapseEnvelopeId     String?
 
-  collapseRewardUserId   String?
-  collapseRewardGross    Decimal? @db.Decimal(19, 4)
-  collapseRewardNet      Decimal? @db.Decimal(19, 4)
+  collapseRewardUserId        String?
+  collapseRewardGross         Decimal? @db.Decimal(19, 4)
+  collapseRewardNet           Decimal? @db.Decimal(19, 4)
   collapseRewardTransactionId String?
 
   createdAt DateTime @default(now())
@@ -1209,7 +1354,7 @@ model BlockStackDraw {
   userId      String
   action      BlockStackAction
   blocksAdded Int
-  createdAt   DateTime @default(now())
+  createdAt   DateTime         @default(now())
 
   game BlockStackGame @relation(fields: [gameId], references: [id], onDelete: Cascade)
 
@@ -1218,17 +1363,17 @@ model BlockStackDraw {
 }
 
 model ScratchTicket {
-  id                    String              @id @default(cuid())
-  code                  String              @unique
-  serialNo              Int                 @unique
-  status                ScratchTicketStatus @default(UNSOLD)
-  prizeType             ScratchPrizeType
-  prizeAmount           Decimal             @default(0) @db.Decimal(19, 4)
-  ownerId               String?
-  revealedAt            DateTime?
-  revealMessageId       String?
-  createdAt             DateTime            @default(now())
-  updatedAt             DateTime            @updatedAt
+  id              String              @id @default(cuid())
+  code            String              @unique
+  serialNo        Int                 @unique
+  status          ScratchTicketStatus @default(UNSOLD)
+  prizeType       ScratchPrizeType
+  prizeAmount     Decimal             @default(0) @db.Decimal(19, 4)
+  ownerId         String?
+  revealedAt      DateTime?
+  revealMessageId String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
 
   owner Member? @relation("ScratchTicketOwner", fields: [ownerId], references: [discordUserId], onDelete: SetNull)
 
@@ -1237,20 +1382,20 @@ model ScratchTicket {
 }
 
 model PointShopItem {
-  id              String                @id @default(cuid())
-  sku             String                @unique
-  name            String
-  description     String?
-  pointsCost      Decimal               @db.Decimal(19, 4)
-  stock           Int?
-  isActive        Boolean               @default(true)
-  deliveryType    PointShopDeliveryType @default(COUPON)
-  couponType      CouponType?
-  couponExpireDays Int?
-  balanceCreditAmount Decimal?          @db.Decimal(19, 4)
-  sortOrder       Int                   @default(0)
-  createdAt       DateTime              @default(now())
-  updatedAt       DateTime              @updatedAt
+  id                  String                @id @default(cuid())
+  sku                 String                @unique
+  name                String
+  description         String?
+  pointsCost          Decimal               @db.Decimal(19, 4)
+  stock               Int?
+  isActive            Boolean               @default(true)
+  deliveryType        PointShopDeliveryType @default(COUPON)
+  couponType          CouponType?
+  couponExpireDays    Int?
+  balanceCreditAmount Decimal?              @db.Decimal(19, 4)
+  sortOrder           Int                   @default(0)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
 
   cartItems  PointShopCartItem[]
   orderItems PointShopOrderItem[]
@@ -1260,7 +1405,8 @@ model PointShopItem {
 
 model PointShopCart {
   id            String              @id @default(cuid())
-  discordUserId String
+  discordUserId String?
+  jinleeId      String?
   /// One OPEN cart per user is enforced by migration partial unique index.
   status        PointShopCartStatus @default(OPEN)
   version       Int                 @default(1)
@@ -1268,22 +1414,24 @@ model PointShopCart {
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
-  items  PointShopCartItem[]
-  orders PointShopOrder[]
+  member     Member?             @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  jinleeUser JinleeUser?         @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+  items      PointShopCartItem[]
+  orders     PointShopOrder[]
 
   @@index([discordUserId, status, updatedAt])
+  @@index([jinleeId, status, updatedAt])
 }
 
 model PointShopCartItem {
-  id              String   @id @default(cuid())
-  cartId          String
-  itemId          String
-  quantity        Int      @default(1)
-  unitPoints      Decimal  @db.Decimal(19, 4)
+  id               String   @id @default(cuid())
+  cartId           String
+  itemId           String
+  quantity         Int      @default(1)
+  unitPoints       Decimal  @db.Decimal(19, 4)
   itemNameSnapshot String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   cart PointShopCart @relation(fields: [cartId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   item PointShopItem @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
@@ -1294,7 +1442,8 @@ model PointShopCartItem {
 
 model PointShopOrder {
   id            String               @id @default(cuid())
-  discordUserId String
+  discordUserId String?
+  jinleeId      String?
   cartId        String?
   requestKey    String
   status        PointShopOrderStatus @default(SUCCESS)
@@ -1303,90 +1452,103 @@ model PointShopOrder {
   errorCode     String?
   createdAt     DateTime             @default(now())
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
-  cart   PointShopCart? @relation(fields: [cartId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  items  PointShopOrderItem[]
+  member       Member?                @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  jinleeUser   JinleeUser?            @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+  cart         PointShopCart?         @relation(fields: [cartId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items        PointShopOrderItem[]
   pointLedgers PointShopPointLedger[]
-  grants PointShopGrant[]
+  grants       PointShopGrant[]
 
   @@unique([discordUserId, requestKey])
+  @@unique([jinleeId, requestKey])
   @@index([discordUserId, createdAt])
+  @@index([jinleeId, createdAt])
   @@index([cartId])
 }
 
 model PointShopOrderItem {
-  id            String                  @id @default(cuid())
-  orderId       String
-  itemId        String?
-  itemSku       String
-  itemName      String
-  unitPoints    Decimal                 @db.Decimal(19, 4)
-  quantity      Int
-  subtotalPoints Decimal                @db.Decimal(19, 4)
+  id             String                  @id @default(cuid())
+  orderId        String
+  itemId         String?
+  itemSku        String
+  itemName       String
+  unitPoints     Decimal                 @db.Decimal(19, 4)
+  quantity       Int
+  subtotalPoints Decimal                 @db.Decimal(19, 4)
   deliveryStatus PointShopDeliveryStatus @default(PENDING)
-  deliveryNote  String?
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
+  deliveryNote   String?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
 
-  order PointShopOrder @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  item  PointShopItem? @relation(fields: [itemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  order  PointShopOrder   @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item   PointShopItem?   @relation(fields: [itemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   grants PointShopGrant[]
 
   @@index([orderId, createdAt])
 }
 
 model PointShopGrant {
-  id            String       @id @default(cuid())
-  orderId       String
-  orderItemId   String
-  discordUserId String
-  deliveryType  PointShopDeliveryType @default(COUPON)
-  itemSku       String
-  itemName      String
-  quantity      Int          @default(1)
-  unitPoints    Decimal      @db.Decimal(19, 4)
-  subtotalPoints Decimal     @db.Decimal(19, 4)
-  deliveryStatus PointShopDeliveryStatus @default(PENDING)
-  deliveryNote  String?
-  couponType    CouponType?
-  couponStatus  CouponStatus? @map("status")
-  issuedAt      DateTime     @default(now())
-  expiresAt     DateTime?
-  consumedAt    DateTime?
-  consumeAmount Decimal?     @db.Decimal(19, 4)
-  consumeTargetId String?
-  consumeOrderId String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id                    String                  @id @default(cuid())
+  orderId               String
+  orderItemId           String
+  discordUserId         String?
+  jinleeId              String?
+  deliveryType          PointShopDeliveryType   @default(COUPON)
+  itemSku               String
+  itemName              String
+  quantity              Int                     @default(1)
+  unitPoints            Decimal                 @db.Decimal(19, 4)
+  subtotalPoints        Decimal                 @db.Decimal(19, 4)
+  deliveryStatus        PointShopDeliveryStatus @default(PENDING)
+  deliveryNote          String?
+  couponType            CouponType?
+  couponStatus          CouponStatus?           @map("status")
+  issuedAt              DateTime                @default(now())
+  expiresAt             DateTime?
+  consumedAt            DateTime?
+  consumeAmount         Decimal?                @db.Decimal(19, 4)
+  consumeTargetId       String?
+  consumeTargetJinleeId String?
+  consumeOrderId        String?
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
 
-  order       PointShopOrder @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  orderItem   PointShopOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  owner       Member @relation("PointShopGrantOwner", fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
-  consumeTarget Member? @relation("PointShopGrantConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+  order                   PointShopOrder     @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  orderItem               PointShopOrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  owner                   Member?            @relation("PointShopGrantOwner", fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  jinleeUser              JinleeUser?        @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+  consumeTarget           Member?            @relation("PointShopGrantConsumeTarget", fields: [consumeTargetId], references: [discordUserId])
+  consumeTargetJinleeUser JinleeUser?        @relation("PointShopGrantConsumeTargetJinleeUser", fields: [consumeTargetJinleeId], references: [jinleeId], onDelete: SetNull)
 
   @@index([discordUserId, couponStatus, expiresAt])
+  @@index([jinleeId, couponStatus, expiresAt])
   @@index([discordUserId, deliveryType, deliveryStatus, createdAt])
+  @@index([jinleeId, deliveryType, deliveryStatus, createdAt])
   @@index([orderId])
   @@index([orderItemId])
   @@index([consumeTargetId])
+  @@index([consumeTargetJinleeId])
   @@map("PointShopGrant")
 }
 
 model PointShopPointLedger {
-  id            String                  @id @default(cuid())
-  discordUserId String
+  id            String                   @id @default(cuid())
+  discordUserId String?
+  jinleeId      String?
   orderId       String?
   ledgerType    PointShopPointLedgerType
-  deltaPoints   Decimal                 @db.Decimal(19, 4)
-  balanceBefore Decimal                 @db.Decimal(19, 4)
-  balanceAfter  Decimal                 @db.Decimal(19, 4)
+  deltaPoints   Decimal                  @db.Decimal(19, 4)
+  balanceBefore Decimal                  @db.Decimal(19, 4)
+  balanceAfter  Decimal                  @db.Decimal(19, 4)
   reason        String
-  createdAt     DateTime                @default(now())
+  createdAt     DateTime                 @default(now())
 
-  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
-  order  PointShopOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  member     Member?         @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  jinleeUser JinleeUser?     @relation(fields: [jinleeId], references: [jinleeId], onDelete: SetNull)
+  order      PointShopOrder? @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([discordUserId, createdAt])
+  @@index([jinleeId, createdAt])
   @@index([orderId])
 }
 
@@ -1417,36 +1579,37 @@ model PeiwanReview {
 }
 
 model Revert {
-  id                     String   @id @default(cuid())
-  originalTransactionId  String   @unique
-  operatorId             String
-  reason                 String?
-  status                 String   @default("PENDING")
-  details                Json?
-  createdAt              DateTime @default(now())
+  id                    String   @id @default(cuid())
+  originalTransactionId String   @unique
+  operatorId            String
+  reason                String?
+  status                String   @default("PENDING")
+  details               Json?
+  createdAt             DateTime @default(now())
+
   @@map("revert")
 }
 
 /// 记录用户是否曾经进入过目标 Guild（只插入一次，用于防止重复邀请奖励）
 model GuildJoinRecord {
-  userId       String   @id
-  guildId      String
+  userId        String   @id
+  guildId       String
   firstJoinedAt DateTime @default(now())
-  createdAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   @@index([guildId])
 }
 
 /// 邀请链接使用并发放 2 元奖励的流水（不依赖 Referral 表）
 model InviteLinkUsage {
-  id         String   @id @default(cuid())
-  guildId    String
-  inviteeId  String   @unique
-  inviterId  String
-  code       String?
-  rewardedAt DateTime @default(now())
-  rewardAmount Decimal @db.Decimal(19, 4)
-  createdAt  DateTime @default(now())
+  id           String   @id @default(cuid())
+  guildId      String
+  inviteeId    String   @unique
+  inviterId    String
+  code         String?
+  rewardedAt   DateTime @default(now())
+  rewardAmount Decimal  @db.Decimal(19, 4)
+  createdAt    DateTime @default(now())
 
   inviter Member @relation("MemberToInviteLinkUsage", fields: [inviterId], references: [discordUserId], onDelete: Cascade)
   invitee Member @relation("InviteeToInviteLinkUsage", fields: [inviteeId], references: [discordUserId], onDelete: Cascade)

@@ -7,6 +7,7 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { consumeSpendBuff } from '../services/buffService.js';
 import { consumePityForNewGame } from '../services/blockStackPityState.js';
 import { recordIndividualTransaction } from '../services/individualTransactionService.js';
+import { ensureJinleeIdentityForDiscordTx } from '../services/jinleeAccountService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 import { scheduleSpentRoleSync } from '../services/spentRoleService.js';
 import {
@@ -43,6 +44,7 @@ export function registerBlockStackCommand(client: Client) {
 
       const result = await prisma.$transaction(async (tx) => {
         const now = new Date();
+        const authorIdentity = await ensureJinleeIdentityForDiscordTx(tx, msg.author.id);
         await tx.pointShopGrant.updateMany({
           where: {
             discordUserId: msg.author.id,
@@ -76,6 +78,7 @@ export function registerBlockStackCommand(client: Client) {
               consumedAt: now,
               consumeAmount: START_COST,
               consumeTargetId: msg.author.id,
+              consumeTargetJinleeId: authorIdentity.jinleeId,
             },
           });
 
@@ -120,6 +123,7 @@ export function registerBlockStackCommand(client: Client) {
               requestId: msg.id,
               consumeAmount: START_COST,
               consumeTargetId: msg.author.id,
+              consumeTargetJinleeId: authorIdentity.jinleeId,
             },
           });
 

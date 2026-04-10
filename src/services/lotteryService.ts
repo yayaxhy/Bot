@@ -5,6 +5,11 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import {
+  applyJinleeWalletDeltaTx,
+  ensureJinleeIdentityForDiscordTx,
+  getJinleeWalletSnapshotTx,
+} from './jinleeAccountService.js';
 import { scheduleSpentRoleSync } from './spentRoleService.js';
 
 type TxClient = Prisma.TransactionClient;
@@ -316,7 +321,12 @@ export async function performLotteryDraw(params: {
   const { userId, payerId = userId, nonce, requestId, pool } = params;
   const now = new Date();
   let spentCharged = false;
+  let payerDiscordForRoleSync: string | null = null;
   const result = await prisma.$transaction(async (tx) => {
+    const ownerIdentity = await ensureJinleeIdentityForDiscordTx(tx, userId);
+    const payerIdentity =
+      payerId === userId ? ownerIdentity : await ensureJinleeIdentityForDiscordTx(tx, payerId);
+    payerDiscordForRoleSync = payerIdentity.discordUserId ?? null;
     const existing = await tx.lotteryDraw.findUnique({
       where: { nonce },
       include: { prize: true },
@@ -334,14 +344,14 @@ export async function performLotteryDraw(params: {
 
     // 先过期掉过期券
     await tx.lotteryDraw.updateMany({
-      where: { userId: payerId, status: LotteryStatus.UNUSED, expiresAt: { lte: now } },
+      where: { jinleeId: payerIdentity.jinleeId, status: LotteryStatus.UNUSED, expiresAt: { lte: now } },
       data: { status: LotteryStatus.EXPIRED },
     });
 
     // 抽奖代金券：优先使用 coupon 表
     await tx.coupon.updateMany({
       where: {
-        discordId: payerId,
+        jinleeId: payerIdentity.jinleeId,
         type: CouponType.LOTTERY_VOUCHER,
         status: CouponStatus.ACTIVE,
         expiresAt: { lte: now },
@@ -350,7 +360,7 @@ export async function performLotteryDraw(params: {
     });
     const couponVoucher = await tx.coupon.findFirst({
       where: {
-        discordId: payerId,
+        jinleeId: payerIdentity.jinleeId,
         type: CouponType.LOTTERY_VOUCHER,
         status: CouponStatus.ACTIVE,
         expiresAt: { gt: now },
@@ -361,7 +371,7 @@ export async function performLotteryDraw(params: {
     // 抽奖代金券：按最早优先，如果存在则免扣款
     const freeVoucher = await tx.lotteryDraw.findFirst({
       where: {
-        userId: payerId,
+        jinleeId: payerIdentity.jinleeId,
         status: LotteryStatus.UNUSED,
         expiresAt: { gt: now },
         prize: { name: PRIZE_NAMES.LOTTERY_VOUCHER },
@@ -378,7 +388,8 @@ export async function performLotteryDraw(params: {
           status: CouponStatus.USED,
           consumedAt: now,
           consumeAmount: DRAW_COST,
-          consumeTargetId: userId,
+          consumeTargetId: ownerIdentity.discordUserId ?? null,
+          consumeTargetJinleeId: ownerIdentity.jinleeId,
         },
       });
     } else if (useFreeVoucher) {
@@ -389,53 +400,48 @@ export async function performLotteryDraw(params: {
           consumeAt: now,
           requestId,
           consumeAmount: DRAW_COST, // 抽奖代金券固定面额
-          consumeTargetId: userId,
+          consumeTargetId: ownerIdentity.discordUserId ?? null,
+          consumeTargetJinleeId: ownerIdentity.jinleeId,
         },
       });
     }
 
-    await tx.member.upsert({
-      where: { discordUserId: userId },
-      update: {},
-      create: { discordUserId: userId },
-    });
-    if (payerId !== userId) {
-      await tx.member.upsert({
-        where: { discordUserId: payerId },
-        update: {},
-        create: { discordUserId: payerId },
-      });
+    if (ownerIdentity.discordUserId) {
+      await ensureJinleeIdentityForDiscordTx(tx, ownerIdentity.discordUserId);
+    }
+    if (payerIdentity.discordUserId && payerIdentity.discordUserId !== ownerIdentity.discordUserId) {
+      await ensureJinleeIdentityForDiscordTx(tx, payerIdentity.discordUserId);
     }
 
     if (!useFreeVoucher) {
       spentCharged = true;
-      const account = await tx.member.findUnique({
-        where: { discordUserId: payerId },
-        select: { income: true, recharge: true, totalBalance: true },
-      });
-      const income = new Prisma.Decimal(account?.income ?? 0);
-      const recharge = new Prisma.Decimal(account?.recharge ?? 0);
-      const total = new Prisma.Decimal(account?.totalBalance ?? 0);
+      const walletSnapshot = await getJinleeWalletSnapshotTx(tx, payerIdentity);
+      const income = walletSnapshot.income;
+      const recharge = walletSnapshot.recharge;
+      const total = walletSnapshot.totalBalance;
       if (total.lt(DRAW_COST)) {
         throw new LotteryError('INSUFFICIENT_BALANCE');
       }
       const split = splitIncomeRecharge(income, recharge, DRAW_COST);
-      const spendBonus = await consumeSpendBuff(tx, payerId, DRAW_COST);
+      const spendBonus =
+        payerIdentity.discordUserId != null
+          ? await consumeSpendBuff(tx, payerIdentity.discordUserId, DRAW_COST)
+          : { extra: new Prisma.Decimal(0), remaining: new Prisma.Decimal(0) };
       const totalSpentIncrement = DRAW_COST.add(spendBonus.extra);
-      await tx.member.update({
-        where: { discordUserId: payerId },
-        data: {
-          income: { decrement: split.fromIncome },
-          recharge: { decrement: split.fromRecharge },
-          totalBalance: { decrement: DRAW_COST },
-          totalSpent: { increment: totalSpentIncrement },
-        },
+      await applyJinleeWalletDeltaTx(tx, {
+        jinleeId: payerIdentity.jinleeId,
+        discordUserId: payerIdentity.discordUserId,
+        incomeDelta: split.fromIncome.neg(),
+        rechargeDelta: split.fromRecharge.neg(),
+        totalBalanceDelta: DRAW_COST.neg(),
+        totalSpentDelta: totalSpentIncrement,
       });
-      await adjustLoyaltyPointsTx(tx, payerId, DRAW_COST);
+      await adjustLoyaltyPointsTx(tx, payerIdentity, DRAW_COST);
       const balanceBefore = total;
       const balanceAfter = total.sub(DRAW_COST);
       await recordIndividualTransaction(tx, {
-        discordId: payerId,
+        discordId: payerIdentity.discordUserId,
+        jinleeId: payerIdentity.jinleeId,
         thirdPartydiscordId: 'SYSTEM',
         balanceBefore,
         amountChange: DRAW_COST,
@@ -447,11 +453,15 @@ export async function performLotteryDraw(params: {
 
     // 读取/初始化保底计数
     const pity = await tx.lotteryPity.upsert({
-      where: { userId },
-      update: {},
-      create: { userId, missCount: 0 },
+      where: { jinleeId: ownerIdentity.jinleeId },
+      update: { userId: ownerIdentity.discordUserId ?? null },
+      create: {
+        jinleeId: ownerIdentity.jinleeId,
+        userId: ownerIdentity.discordUserId ?? null,
+        missCount: 0,
+      },
     });
-    const shouldForceSpecial = pity.missCount >= PITY_THRESHOLD;
+    const shouldForceSpecial = (pity?.missCount ?? 0) >= PITY_THRESHOLD;
 
     let picked: PrizeLike | null = null;
     let forcedSpecial = false;
@@ -463,7 +473,7 @@ export async function performLotteryDraw(params: {
         picked = await pickPrize(tx, LotteryPool.SPECIAL);
       } catch (err) {
         forcedButNoSpecial = true;
-        await sendLotteryAlert(`[lottery][pity] 用户 ${userId} 触发保底，但特级奖池无可用库存，回落到其他奖池`);
+        await sendLotteryAlert(`[lottery][pity] 用户 ${ownerIdentity.jinleeId} 触发保底，但特级奖池无可用库存，回落到其他奖池`);
       }
     }
 
@@ -497,7 +507,8 @@ export async function performLotteryDraw(params: {
       data: {
         nonce,
         requestId,
-        userId,
+        userId: ownerIdentity.discordUserId ?? null,
+        jinleeId: ownerIdentity.jinleeId,
         pool: picked.pool,
         prizeId: picked.id,
         cost,
@@ -511,16 +522,18 @@ export async function performLotteryDraw(params: {
     if (!draw.prize) throw new LotteryError('MISSING_PRIZE');
 
     // 更新保底计数：特级命中清零；非特级 +1；保底但无特级库存时不变
-    let nextMiss = pity.missCount;
-    if (draw.prize.pool === LotteryPool.SPECIAL) {
-      nextMiss = 0;
-    } else if (!forcedButNoSpecial) {
-      nextMiss = pity.missCount + 1;
+    if (pity) {
+      let nextMiss = pity.missCount;
+      if (draw.prize.pool === LotteryPool.SPECIAL) {
+        nextMiss = 0;
+      } else if (!forcedButNoSpecial) {
+        nextMiss = pity.missCount + 1;
+      }
+      await tx.lotteryPity.update({
+        where: { jinleeId: ownerIdentity.jinleeId },
+        data: { userId: ownerIdentity.discordUserId ?? null, missCount: nextMiss },
+      });
     }
-    await tx.lotteryPity.update({
-      where: { userId },
-      data: { missCount: nextMiss },
-    });
 
     return {
       drawId: draw.id,
@@ -530,8 +543,8 @@ export async function performLotteryDraw(params: {
       cost: draw.cost,
     };
   });
-  if (spentCharged) {
-    scheduleSpentRoleSync(payerId, { announceVipUpgrade: true });
+  if (spentCharged && payerDiscordForRoleSync) {
+    scheduleSpentRoleSync(payerDiscordForRoleSync, { announceVipUpgrade: true });
   }
   return result;
 }

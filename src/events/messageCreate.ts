@@ -19,8 +19,6 @@ import {
   ongoing_order_request_embed,
   anonymous_ongoing_order_request_embed,
   order_request_sent_successfully_embed,
-  order_end_boss_embed,
-  order_end_pw_embed,
   buildQuotationSelect,
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
@@ -28,6 +26,8 @@ import prisma from '../db/prisma.js';
 import { OrderStatus, OrderMode, QuotationCode } from '@prisma/client';
 import { endOrder } from '../services/orderService.js';
 import { cancelOrderTimers } from '../services/timerService.js';
+import { notifyOrderEnded } from '../services/orderNotificationService.js';
+import { resolveJinleeIdentityTx } from '../services/jinleeAccountService.js';
 import {
   scheduleOrderRequestClosure,
   isInvitationExpired,
@@ -218,6 +218,19 @@ async function resolveOrderForCommand(
   userId: string,
   identifier: OrderIdentifier | null
 ): Promise<ResolveOrderSuccess | ResolveOrderError> {
+  const identity = await resolveJinleeIdentityTx(prisma, userId);
+  const participantMatch = identity
+    ? {
+        OR: [
+          { hostJinleeId: identity.jinleeId },
+          { hostId: userId },
+          { workerId: userId },
+        ],
+      }
+    : {
+        OR: [{ hostId: userId }, { workerId: userId }],
+      };
+
   if (identifier) {
     const where =
       identifier.kind === 'display'
@@ -226,18 +239,22 @@ async function resolveOrderForCommand(
 
     const order = await prisma.order.findUnique({
       where,
-      select: { id: true, displayNo: true, status: true, hostId: true, workerId: true },
+      select: { id: true, displayNo: true, status: true, hostId: true, hostJinleeId: true, workerId: true },
     });
     if (!order) return { error: 'not_found' };
     if (order.status !== OrderStatus.RUNNING) return { error: 'not_running' };
-    if (order.hostId !== userId && order.workerId !== userId) return { error: 'not_participant' };
+    const isParticipant =
+      order.workerId === userId
+      || order.hostId === userId
+      || (!!identity && order.hostJinleeId === identity.jinleeId);
+    if (!isParticipant) return { error: 'not_participant' };
     return { order: { id: order.id, displayNo: order.displayNo } };
   }
 
   const orders = await prisma.order.findMany({
     where: {
       status: OrderStatus.RUNNING,
-      OR: [{ hostId: userId }, { workerId: userId }],
+      ...participantMatch,
     },
     select: { id: true, displayNo: true },
   });
@@ -370,98 +387,11 @@ async function tryHandleEndOrderCommand(message: Message): Promise<boolean> {
     await message.reply('结单失败，请稍后重试或联系工作人员。');
     return true;
   }
-
-  const ended = await prisma.order.findUnique({
-    where: { id: order.id },
-    select: {
-      id: true,
-      displayNo: true,
-      peiwanId: true,
-      totalMinutes: true,
-      chargedMinutes: true,
-      grossAmount: true,
-      netAmount: true,
-      hostId: true,
-      workerId: true,
-      host: { select: { totalBalance: true, discordUserId: true } },
-      worker: { select: { totalBalance: true, discordUserId: true } },
-    },
-  });
-
-  if (!ended) {
-    await message.reply('订单已结单，但未能读取订单详情。');
-    return true;
-  }
-
-  const totalMinutes = ended.totalMinutes ?? 0;
-  const chargedMinutes = ended.chargedMinutes ?? 0;
-  const gross = ended.grossAmount ? Number(ended.grossAmount.toString()) : 0;
-  const net = ended.netAmount ? Number(ended.netAmount.toString()) : 0;
-  const hostBalance = ended.host?.totalBalance ? Number(ended.host.totalBalance.toString()) : 0;
-  const heartInc = Math.max(0, Math.round(gross));
-
-  const heartCounter = await prisma.heartCounter.findUnique({
-    where: {
-      fromMemberId_toMemberId: {
-        fromMemberId: ended.hostId,
-        toMemberId: ended.workerId,
-      },
-    },
-    select: { total: true },
-  });
-  const currentHeart = heartCounter?.total ?? 0;
-  const pointsRow = await prisma.loyaltyPoint.findUnique({
-    where: { discordUserId: ended.hostId },
-    select: { points: true },
-  });
-  const pointsTotal = pointsRow ? Number(pointsRow.points.toString()) : 0;
-  const pointsEarned = Math.max(0, gross);
-
-  const endedLabel = formatOrderLabel(ended.displayNo, ended.id);
-
-  await message.reply(`订单 ${endedLabel} 已结单。`);
-
+  await message.reply(`订单 ${orderLabel} 已结单。`);
   try {
-    const boss = await message.client.users.fetch(ended.hostId);
-    await boss.send({
-      embeds: [
-        order_end_boss_embed(
-          ended.displayNo ?? ended.id,
-          ended.workerId,
-          ended.peiwanId ?? '—',
-          totalMinutes,
-          chargedMinutes,
-          gross,
-          hostBalance,
-          heartInc,
-          currentHeart,
-          pointsEarned,
-          pointsTotal
-        ),
-      ],
-    });
+    await notifyOrderEnded(order.id);
   } catch (err) {
-    console.error('[messageCreate:endOrder] notify host failed:', err);
-  }
-
-  try {
-    const worker = await message.client.users.fetch(ended.workerId);
-    await worker.send({
-      embeds: [
-        order_end_pw_embed(
-          ended.displayNo ?? ended.id,
-          ended.hostId,
-          totalMinutes,
-          chargedMinutes,
-          gross,
-          net,
-          heartInc,
-          currentHeart
-        ),
-      ],
-    });
-  } catch (err) {
-    console.error('[messageCreate:endOrder] notify worker failed:', err);
+    console.error('[messageCreate:endOrder] notifyOrderEnded failed:', err);
   }
 
   return true;

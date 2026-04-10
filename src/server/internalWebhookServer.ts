@@ -14,6 +14,11 @@ import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
+import {
+  ensureJinleeIdentityForDiscordTx,
+  isJinleeIdentityNotFoundError,
+  requireJinleeIdentityTx,
+} from '../services/jinleeAccountService.js';
 import { syncAllPeiwanRoles, syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
 import { sendPeiwanNotification } from '../services/peiwanWatcher.js';
 
@@ -78,6 +83,21 @@ function sendJson(res: ServerResponse, statusCode: number, body: Record<string, 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(body));
 }
+
+const getIdentityErrorResponse = (error: unknown) => {
+  if (isJinleeIdentityNotFoundError(error)) {
+    return {
+      statusCode: 404,
+      body: {
+        ok: false,
+        error: 'user_not_found',
+        userId: error.requestedId,
+      },
+    };
+  }
+
+  return null;
+};
 
 function redirect(res: ServerResponse, location: string, statusCode = 303) {
   applyCorsHeaders(res);
@@ -169,6 +189,109 @@ async function resolveDiscordId(input: { discordId?: string | null; peiwanId?: n
   return null;
 }
 
+async function consumeCouponRecordTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    couponId: string;
+    jinleeId: string;
+    couponType: CouponType;
+    now: Date;
+    requestId?: string;
+    discordUserId: string | null;
+  },
+): Promise<boolean> {
+  const { couponId, jinleeId, couponType, now, requestId, discordUserId } = params;
+  const result = await tx.coupon.updateMany({
+    where: {
+      id: couponId,
+      jinleeId,
+      type: couponType,
+      status: CouponStatus.ACTIVE,
+      expiresAt: { gt: now },
+      consumedAt: null,
+      orderId: null,
+    },
+    data: {
+      status: CouponStatus.USED,
+      consumedAt: now,
+      consumeAmount: 0,
+      consumeTargetId: discordUserId,
+      consumeTargetJinleeId: jinleeId,
+      orderId: requestId ?? null,
+    },
+  });
+  return result.count === 1;
+}
+
+async function consumePointShopVoucherRecordTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    grantId: string;
+    jinleeId: string;
+    couponType: CouponType;
+    now: Date;
+    requestId?: string;
+    discordUserId: string | null;
+  },
+): Promise<boolean> {
+  const { grantId, jinleeId, couponType, now, requestId, discordUserId } = params;
+  const result = await tx.pointShopGrant.updateMany({
+    where: {
+      id: grantId,
+      jinleeId,
+      deliveryType: PointShopDeliveryType.COUPON,
+      deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+      couponType,
+      couponStatus: CouponStatus.ACTIVE,
+      consumedAt: null,
+      consumeOrderId: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    data: {
+      couponStatus: CouponStatus.USED,
+      consumedAt: now,
+      consumeAmount: 0,
+      consumeTargetId: discordUserId,
+      consumeTargetJinleeId: jinleeId,
+      consumeOrderId: requestId ?? null,
+    },
+  });
+  return result.count === 1;
+}
+
+async function consumeLotteryVoucherRecordTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    voucherId: string;
+    jinleeId: string;
+    prizeName: string;
+    now: Date;
+    requestId?: string;
+    discordUserId: string | null;
+  },
+): Promise<boolean> {
+  const { voucherId, jinleeId, prizeName, now, requestId, discordUserId } = params;
+  const result = await tx.lotteryDraw.updateMany({
+    where: {
+      id: voucherId,
+      jinleeId,
+      status: LotteryStatus.UNUSED,
+      consumeAt: null,
+      requestId: null,
+      expiresAt: { gt: now },
+      prize: { name: prizeName },
+    },
+    data: {
+      status: LotteryStatus.USED,
+      consumeAt: now,
+      requestId: requestId ?? null,
+      consumeTargetId: discordUserId,
+      consumeTargetJinleeId: jinleeId,
+    },
+  });
+  return result.count === 1;
+}
+
 async function consumeVoucher(
   params: {
     userId: string;
@@ -177,15 +300,16 @@ async function consumeVoucher(
     voucherId?: string;
   },
   tx: import('@prisma/client').Prisma.TransactionClient
-): Promise<{ voucherId: string } | null> {
+  ): Promise<{ voucherId: string } | null> {
   const { userId, prizeName, requestId, voucherId } = params;
   const now = new Date();
   const couponType = VOUCHER_COUPON_TYPE_BY_PRIZE[prizeName];
+  const userIdentity = await requireJinleeIdentityTx(tx, userId);
 
   if (couponType) {
     await tx.coupon.updateMany({
       where: {
-        discordId: userId,
+        jinleeId: userIdentity.jinleeId,
         type: couponType,
         status: CouponStatus.ACTIVE,
         expiresAt: { lte: now },
@@ -193,46 +317,51 @@ async function consumeVoucher(
       data: { status: CouponStatus.EXPIRED },
     });
 
-    const coupon = voucherId
-      ? await tx.coupon.findFirst({
-          where: {
-            id: voucherId,
-            discordId: userId,
-            type: couponType,
-            status: CouponStatus.ACTIVE,
-            expiresAt: { gt: now },
-          },
-          select: { id: true },
-        })
-      : await tx.coupon.findFirst({
-          where: {
-            discordId: userId,
-            type: couponType,
-            status: CouponStatus.ACTIVE,
-            expiresAt: { gt: now },
-          },
-          select: { id: true },
-          orderBy: { issuedAt: 'asc' },
-        });
+      if (voucherId) {
+        if (
+          await consumeCouponRecordTx(tx, {
+            couponId: voucherId,
+            jinleeId: userIdentity.jinleeId,
+            couponType,
+            now,
+            requestId,
+            discordUserId: userIdentity.discordUserId ?? null,
+          })
+        ) {
+          return { voucherId };
+        }
+      } else {
+        while (true) {
+          const coupon = await tx.coupon.findFirst({
+            where: {
+              jinleeId: userIdentity.jinleeId,
+              type: couponType,
+              status: CouponStatus.ACTIVE,
+              expiresAt: { gt: now },
+            },
+            select: { id: true },
+            orderBy: [{ expiresAt: 'asc' }, { issuedAt: 'asc' }, { id: 'asc' }],
+          });
+          if (!coupon) break;
+          if (
+            await consumeCouponRecordTx(tx, {
+              couponId: coupon.id,
+              jinleeId: userIdentity.jinleeId,
+              couponType,
+              now,
+              requestId,
+              discordUserId: userIdentity.discordUserId ?? null,
+            })
+          ) {
+            return { voucherId: coupon.id };
+          }
+        }
+      }
 
-    if (coupon) {
-      await tx.coupon.update({
-        where: { id: coupon.id },
-        data: {
-          status: CouponStatus.USED,
-          consumedAt: now,
-          consumeAmount: 0,
-          consumeTargetId: userId,
-          orderId: requestId ?? null,
-        },
-      });
-      return { voucherId: coupon.id };
-    }
-
-    try {
+      try {
       await tx.pointShopGrant.updateMany({
         where: {
-          discordUserId: userId,
+          jinleeId: userIdentity.jinleeId,
           deliveryType: PointShopDeliveryType.COUPON,
           deliveryStatus: PointShopDeliveryStatus.DELIVERED,
           couponType,
@@ -242,53 +371,56 @@ async function consumeVoucher(
         data: { couponStatus: CouponStatus.EXPIRED },
       });
 
-      const pointShopGrant = voucherId
-        ? await tx.pointShopGrant.findFirst({
-            where: {
-              id: voucherId,
-              discordUserId: userId,
-              deliveryType: PointShopDeliveryType.COUPON,
-              deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+        if (voucherId) {
+          if (
+            await consumePointShopVoucherRecordTx(tx, {
+              grantId: voucherId,
+              jinleeId: userIdentity.jinleeId,
               couponType,
-              couponStatus: CouponStatus.ACTIVE,
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            },
-            select: { id: true },
-          })
-        : await tx.pointShopGrant.findFirst({
-            where: {
-              discordUserId: userId,
-              deliveryType: PointShopDeliveryType.COUPON,
-              deliveryStatus: PointShopDeliveryStatus.DELIVERED,
-              couponType,
-              couponStatus: CouponStatus.ACTIVE,
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            },
-            select: { id: true },
-            orderBy: { issuedAt: 'asc' },
-          });
-
-      if (pointShopGrant) {
-        await tx.pointShopGrant.update({
-          where: { id: pointShopGrant.id },
-          data: {
-            couponStatus: CouponStatus.USED,
-            consumedAt: now,
-            consumeAmount: 0,
-            consumeTargetId: userId,
-            consumeOrderId: requestId ?? null,
-          },
-        });
-        return { voucherId: pointShopGrant.id };
-      }
-    } catch (error) {
-      console.warn('[internal-api] consume point shop voucher fallback failed', error);
+              now,
+              requestId,
+              discordUserId: userIdentity.discordUserId ?? null,
+            })
+          ) {
+            return { voucherId };
+          }
+        } else {
+          while (true) {
+            const pointShopGrant = await tx.pointShopGrant.findFirst({
+              where: {
+                jinleeId: userIdentity.jinleeId,
+                deliveryType: PointShopDeliveryType.COUPON,
+                deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+                couponType,
+                couponStatus: CouponStatus.ACTIVE,
+                OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+              },
+              select: { id: true },
+              orderBy: [{ expiresAt: 'asc' }, { issuedAt: 'asc' }, { id: 'asc' }],
+            });
+            if (!pointShopGrant) break;
+            if (
+              await consumePointShopVoucherRecordTx(tx, {
+                grantId: pointShopGrant.id,
+                jinleeId: userIdentity.jinleeId,
+                couponType,
+                now,
+                requestId,
+                discordUserId: userIdentity.discordUserId ?? null,
+              })
+            ) {
+              return { voucherId: pointShopGrant.id };
+            }
+          }
+        }
+      } catch (error) {
+        console.warn('[internal-api] consume point shop voucher fallback failed', error);
     }
   }
 
   await tx.lotteryDraw.updateMany({
     where: {
-      userId,
+      jinleeId: userIdentity.jinleeId,
       status: LotteryStatus.UNUSED,
       expiresAt: { lte: now },
       prize: { name: prizeName },
@@ -296,36 +428,48 @@ async function consumeVoucher(
     data: { status: LotteryStatus.EXPIRED },
   });
 
-  const voucher = voucherId
-    ? await tx.lotteryDraw.findFirst({
+    if (voucherId) {
+      if (
+        await consumeLotteryVoucherRecordTx(tx, {
+          voucherId,
+          jinleeId: userIdentity.jinleeId,
+          prizeName,
+          now,
+          requestId,
+          discordUserId: userIdentity.discordUserId ?? null,
+        })
+      ) {
+        return { voucherId };
+      }
+      return null;
+    }
+
+    while (true) {
+      const voucher = await tx.lotteryDraw.findFirst({
         where: {
-          id: voucherId,
-          userId,
+          jinleeId: userIdentity.jinleeId,
           status: LotteryStatus.UNUSED,
           expiresAt: { gt: now },
           prize: { name: prizeName },
         },
         select: { id: true },
-      })
-    : await tx.lotteryDraw.findFirst({
-        where: {
-          userId,
-          status: LotteryStatus.UNUSED,
-          expiresAt: { gt: now },
-          prize: { name: prizeName },
-        },
-        select: { id: true },
-        orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+        orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
       });
-  if (!voucher) return null;
-
-  await tx.lotteryDraw.update({
-    where: { id: voucher.id },
-    data: { status: LotteryStatus.USED, consumeAt: now, requestId, consumeTargetId: userId },
-  });
-
-  return { voucherId: voucher.id };
-}
+      if (!voucher) return null;
+      if (
+        await consumeLotteryVoucherRecordTx(tx, {
+          voucherId: voucher.id,
+          jinleeId: userIdentity.jinleeId,
+          prizeName,
+          now,
+          requestId,
+          discordUserId: userIdentity.discordUserId ?? null,
+        })
+      ) {
+        return { voucherId: voucher.id };
+      }
+    }
+  }
 
 const normalizeVoucherId = (payload: any): string | undefined => {
   if (!payload || typeof payload !== 'object') return undefined;
@@ -392,7 +536,7 @@ async function deliverWithdrawalNotification(
 
     payload = {
       ...payload,
-      userDiscordId: record.discordId,
+      ...(record.discordId ? { userDiscordId: record.discordId } : {}),
       amount: record.amount.toString(),
       requestedAt: record.createdAt,
       withdrawalId: record.id,
@@ -608,6 +752,11 @@ async function handleCustomVoucherUse(
     console.log('[internal-api] custom voucher consumed', { prizeName, userId, voucherId: result.voucherId });
     sendJson(res, 200, { ok: true, voucherId: result.voucherId });
   } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
     console.error('[internal-api] custom voucher use failed', err);
     sendJson(res, 500, { ok: false, error: 'internal_error' });
   }
@@ -659,6 +808,11 @@ async function handleCommissionBoost(req: IncomingMessage, res: ServerResponse) 
       expiresAt: result.expiresAt.toISOString(),
     });
   } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
     console.error('[internal-api] commission boost failed', err);
     sendJson(res, 500, { ok: false, error: 'internal_error' });
   }
@@ -707,6 +861,11 @@ async function handleDoubleFlow(req: IncomingMessage, res: ServerResponse) {
       remaining: result.remaining.toString(),
     });
   } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
     console.error('[internal-api] double flow boost failed', err);
     sendJson(res, 500, { ok: false, error: 'internal_error' });
   }
@@ -755,6 +914,11 @@ async function handleDoubleSpend(req: IncomingMessage, res: ServerResponse) {
       remaining: result.remaining.toString(),
     });
   } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
     console.error('[internal-api] double spend boost failed', err);
     sendJson(res, 500, { ok: false, error: 'internal_error' });
   }
@@ -786,10 +950,14 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
   try {
     const result = await prisma.$transaction(async (tx) => {
       const now = new Date();
+      const reviewerIdentity = await requireJinleeIdentityTx(tx, reviewerId);
+      if (!reviewerIdentity.discordUserId) {
+        return { code: 'discord_required' as const };
+      }
 
       await tx.pointShopGrant.updateMany({
         where: {
-          discordUserId: reviewerId,
+          jinleeId: reviewerIdentity.jinleeId,
           deliveryType: PointShopDeliveryType.COUPON,
           deliveryStatus: PointShopDeliveryStatus.DELIVERED,
           couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
@@ -803,7 +971,7 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
         ? await tx.pointShopGrant.findFirst({
             where: {
               id: voucherId,
-              discordUserId: reviewerId,
+              jinleeId: reviewerIdentity.jinleeId,
               deliveryType: PointShopDeliveryType.COUPON,
               deliveryStatus: PointShopDeliveryStatus.DELIVERED,
               couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
@@ -814,7 +982,7 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
           })
         : await tx.pointShopGrant.findFirst({
             where: {
-              discordUserId: reviewerId,
+              jinleeId: reviewerIdentity.jinleeId,
               deliveryType: PointShopDeliveryType.COUPON,
               deliveryStatus: PointShopDeliveryStatus.DELIVERED,
               couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
@@ -833,10 +1001,11 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
       if (!targetPeiwan?.discordUserId) {
         return { code: 'target_not_peiwan' as const };
       }
+      const targetIdentity = await ensureJinleeIdentityForDiscordTx(tx, targetDiscordId);
 
       const [reviewerMember, peiwanMember] = await Promise.all([
         tx.member.findUnique({
-          where: { discordUserId: reviewerId },
+          where: { discordUserId: reviewerIdentity.discordUserId },
           select: { serverDisplayName: true },
         }),
         tx.member.findUnique({
@@ -852,6 +1021,7 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
           consumedAt: now,
           consumeAmount: 0,
           consumeTargetId: targetDiscordId,
+          consumeTargetJinleeId: targetIdentity.jinleeId,
           consumeOrderId: requestId ?? null,
         },
       });
@@ -859,7 +1029,7 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
       const review = await tx.peiwanReview.create({
         data: {
           sourceGrantId: grant.id,
-          reviewerDiscordId: reviewerId,
+          reviewerDiscordId: reviewerIdentity.discordUserId,
           reviewerName: reviewerMember?.serverDisplayName ?? null,
           peiwanDiscordId: targetDiscordId,
           peiwanName: peiwanMember?.serverDisplayName ?? targetPeiwan.serverDisplayName ?? null,
@@ -883,6 +1053,10 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
       sendJson(res, 404, { ok: false, error: 'target_not_peiwan' });
       return;
     }
+    if (result.code === 'discord_required') {
+      sendJson(res, 400, { ok: false, error: 'discord_required' });
+      return;
+    }
 
     try {
       const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
@@ -901,6 +1075,11 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
 
     sendJson(res, 200, { ok: true, reviewId: result.reviewId });
   } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
     console.error('[internal-api] peiwan review voucher failed', err);
     sendJson(res, 500, { ok: false, error: 'internal_error' });
   }
@@ -959,6 +1138,11 @@ async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
       kind: result.kind,
     });
   } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
     console.error('[internal-api] discount failed', err);
     sendJson(res, 500, { ok: false, error: 'internal_error' });
   }
@@ -983,170 +1167,205 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
 
   const now = new Date();
 
-  const result = await prisma.$transaction(async (tx) => {
-    const couponTypes = RENAME_CARD_COUPON_TYPES;
+  let result:
+    | { used: true; prizeName: string; discordUserId: string | null }
+    | { used: false; error: 'discord_required' }
+    | { used: false };
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      const userIdentity = await requireJinleeIdentityTx(tx, String(userId));
+      if (!userIdentity.discordUserId) {
+        return { used: false as const, error: 'discord_required' as const };
+      }
+      const couponTypes = RENAME_CARD_COUPON_TYPES;
 
-    await tx.coupon.updateMany({
-      where: {
-        discordId: userId,
-        type: { in: couponTypes },
-        status: CouponStatus.ACTIVE,
-        expiresAt: { lte: now },
-      },
-      data: { status: CouponStatus.EXPIRED },
-    });
-
-    await tx.pointShopGrant.updateMany({
-      where: {
-        discordUserId: userId,
-        deliveryType: PointShopDeliveryType.COUPON,
-        deliveryStatus: PointShopDeliveryStatus.DELIVERED,
-        couponType: { in: couponTypes },
-        couponStatus: CouponStatus.ACTIVE,
-        expiresAt: { lte: now },
-      },
-      data: { couponStatus: CouponStatus.EXPIRED },
-    });
-
-    await tx.lotteryDraw.updateMany({
-      where: {
-        userId,
-        status: LotteryStatus.UNUSED,
-        expiresAt: { lte: now },
-        prize: { name: { in: RENAME_CARD_NAMES } },
-      },
-      data: { status: LotteryStatus.EXPIRED },
-    });
-
-    const consumeCouponById = async (targetId: string) => {
-      const result = await tx.coupon.updateMany({
+      await tx.coupon.updateMany({
         where: {
-          id: targetId,
-          discordId: userId,
+          jinleeId: userIdentity.jinleeId,
           type: { in: couponTypes },
           status: CouponStatus.ACTIVE,
-          expiresAt: { gt: now },
+          expiresAt: { lte: now },
         },
-        data: {
-          status: CouponStatus.USED,
-          consumedAt: now,
-          consumeAmount: 0,
-          consumeTargetId: userId,
-        },
+        data: { status: CouponStatus.EXPIRED },
       });
-      return result.count === 1;
-    };
 
-    const consumePointShopById = async (targetId: string) => {
-      const result = await tx.pointShopGrant.updateMany({
+      await tx.pointShopGrant.updateMany({
         where: {
-          id: targetId,
-          discordUserId: userId,
+          jinleeId: userIdentity.jinleeId,
           deliveryType: PointShopDeliveryType.COUPON,
           deliveryStatus: PointShopDeliveryStatus.DELIVERED,
           couponType: { in: couponTypes },
           couponStatus: CouponStatus.ACTIVE,
-          OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+          expiresAt: { lte: now },
         },
-        data: {
-          couponStatus: CouponStatus.USED,
-          consumedAt: now,
-          consumeAmount: 0,
-          consumeTargetId: userId,
-        },
+        data: { couponStatus: CouponStatus.EXPIRED },
       });
-      return result.count > 0;
-    };
 
-    if (voucherId) {
-      if (await consumeCouponById(voucherId)) {
-        return { used: true, prizeName: '改名卡' };
-      }
-      if (await consumePointShopById(voucherId)) {
-        return { used: true, prizeName: '改名卡' };
-      }
-    } else {
-      const [couponCandidate, pointShopCandidate] = await Promise.all([
-        tx.coupon.findFirst({
+      await tx.lotteryDraw.updateMany({
+        where: {
+          jinleeId: userIdentity.jinleeId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { lte: now },
+          prize: { name: { in: RENAME_CARD_NAMES } },
+        },
+        data: { status: LotteryStatus.EXPIRED },
+      });
+
+      const consumeCouponById = async (targetId: string) => {
+        const result = await tx.coupon.updateMany({
           where: {
-            discordId: userId,
+            id: targetId,
+            jinleeId: userIdentity.jinleeId,
             type: { in: couponTypes },
             status: CouponStatus.ACTIVE,
             expiresAt: { gt: now },
           },
-          select: { id: true, issuedAt: true },
-          orderBy: { issuedAt: 'asc' },
-        }),
-        tx.pointShopGrant.findFirst({
+          data: {
+            status: CouponStatus.USED,
+            consumedAt: now,
+            consumeAmount: 0,
+            consumeTargetId: userIdentity.discordUserId,
+            consumeTargetJinleeId: userIdentity.jinleeId,
+          },
+        });
+        return result.count === 1;
+      };
+
+      const consumePointShopById = async (targetId: string) => {
+        const result = await tx.pointShopGrant.updateMany({
           where: {
-            discordUserId: userId,
+            id: targetId,
+            jinleeId: userIdentity.jinleeId,
             deliveryType: PointShopDeliveryType.COUPON,
             deliveryStatus: PointShopDeliveryStatus.DELIVERED,
             couponType: { in: couponTypes },
             couponStatus: CouponStatus.ACTIVE,
             OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
           },
-          select: { id: true, issuedAt: true },
-          orderBy: { issuedAt: 'asc' },
-        }),
-      ]);
+          data: {
+            couponStatus: CouponStatus.USED,
+            consumedAt: now,
+            consumeAmount: 0,
+            consumeTargetId: userIdentity.discordUserId,
+            consumeTargetJinleeId: userIdentity.jinleeId,
+          },
+        });
+        return result.count > 0;
+      };
 
-      const pointShopRow = pointShopCandidate;
-      if (couponCandidate && pointShopRow) {
-        if (couponCandidate.issuedAt <= pointShopRow.issuedAt) {
-          if (await consumeCouponById(couponCandidate.id)) {
-            return { used: true, prizeName: '改名卡' };
+      if (voucherId) {
+        if (await consumeCouponById(voucherId)) {
+          return { used: true as const, prizeName: '改名卡', discordUserId: userIdentity.discordUserId };
+        }
+        if (await consumePointShopById(voucherId)) {
+          return { used: true as const, prizeName: '改名卡', discordUserId: userIdentity.discordUserId };
+        }
+      } else {
+        const [couponCandidate, pointShopCandidate] = await Promise.all([
+          tx.coupon.findFirst({
+            where: {
+              jinleeId: userIdentity.jinleeId,
+              type: { in: couponTypes },
+              status: CouponStatus.ACTIVE,
+              expiresAt: { gt: now },
+            },
+            select: { id: true, issuedAt: true },
+            orderBy: { issuedAt: 'asc' },
+          }),
+          tx.pointShopGrant.findFirst({
+            where: {
+              jinleeId: userIdentity.jinleeId,
+              deliveryType: PointShopDeliveryType.COUPON,
+              deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+              couponType: { in: couponTypes },
+              couponStatus: CouponStatus.ACTIVE,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            },
+            select: { id: true, issuedAt: true },
+            orderBy: { issuedAt: 'asc' },
+          }),
+        ]);
+
+        const pointShopRow = pointShopCandidate;
+        if (couponCandidate && pointShopRow) {
+          if (couponCandidate.issuedAt <= pointShopRow.issuedAt) {
+            if (await consumeCouponById(couponCandidate.id)) {
+              return { used: true as const, prizeName: '改名卡', discordUserId: userIdentity.discordUserId };
+            }
+          } else if (await consumePointShopById(pointShopRow.id)) {
+            return { used: true as const, prizeName: '改名卡', discordUserId: userIdentity.discordUserId };
           }
-        } else if (await consumePointShopById(pointShopRow.id)) {
-          return { used: true, prizeName: '改名卡' };
-        }
-      } else if (couponCandidate) {
-        if (await consumeCouponById(couponCandidate.id)) {
-          return { used: true, prizeName: '改名卡' };
-        }
-      } else if (pointShopRow) {
-        if (await consumePointShopById(pointShopRow.id)) {
-          return { used: true, prizeName: '改名卡' };
+        } else if (couponCandidate) {
+          if (await consumeCouponById(couponCandidate.id)) {
+            return { used: true as const, prizeName: '改名卡', discordUserId: userIdentity.discordUserId };
+          }
+        } else if (pointShopRow) {
+          if (await consumePointShopById(pointShopRow.id)) {
+            return { used: true as const, prizeName: '改名卡', discordUserId: userIdentity.discordUserId };
+          }
         }
       }
-    }
 
-    const card = voucherId
-      ? await tx.lotteryDraw.findFirst({
-          where: {
-            id: voucherId,
-            userId,
-            status: LotteryStatus.UNUSED,
-            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            prize: { name: { in: RENAME_CARD_NAMES } },
-          },
-          select: { id: true, prize: { select: { name: true } } },
-        })
-      : await tx.lotteryDraw.findFirst({
-          where: {
-            userId,
-            status: LotteryStatus.UNUSED,
-            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            prize: { name: { in: RENAME_CARD_NAMES } },
-          },
-          select: { id: true, prize: { select: { name: true } } },
-          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-        });
-    if (!card) return { used: false };
+      const card = voucherId
+        ? await tx.lotteryDraw.findFirst({
+            where: {
+              id: voucherId,
+              jinleeId: userIdentity.jinleeId,
+              status: LotteryStatus.UNUSED,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+              prize: { name: { in: RENAME_CARD_NAMES } },
+            },
+            select: { id: true, prize: { select: { name: true } } },
+          })
+        : await tx.lotteryDraw.findFirst({
+            where: {
+              jinleeId: userIdentity.jinleeId,
+              status: LotteryStatus.UNUSED,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+              prize: { name: { in: RENAME_CARD_NAMES } },
+            },
+            select: { id: true, prize: { select: { name: true } } },
+            orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+          });
+      if (!card) return { used: false as const };
 
-    await tx.lotteryDraw.update({
-      where: { id: card.id },
-      data: { status: LotteryStatus.USED, consumeAt: now, consumeTargetId: userId },
+      await tx.lotteryDraw.update({
+        where: { id: card.id },
+        data: {
+          status: LotteryStatus.USED,
+          consumeAt: now,
+          consumeTargetId: userIdentity.discordUserId,
+          consumeTargetJinleeId: userIdentity.jinleeId,
+        },
+      });
+      return {
+        used: true as const,
+        prizeName: card.prize?.name ?? '改名卡',
+        discordUserId: userIdentity.discordUserId,
+      };
     });
-    return { used: true, prizeName: card.prize?.name ?? '改名卡' };
-  });
+  } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
+    console.error('[internal-api] rename card failed', err);
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+    return;
+  }
 
+  if ('error' in result) {
+    sendJson(res, 400, { ok: false, error: result.error });
+    return;
+  }
   if (!result.used) {
     sendJson(res, 404, { ok: false, error: 'no_card' });
     return;
   }
 
-  const notifyText = `老板 <@${userId}> 使用了${result.prizeName ?? '改名卡'}，请联系老板。`;
+  const notifyDiscordId = result.discordUserId ?? String(userId);
+  const notifyText = `老板 <@${notifyDiscordId}> 使用了${result.prizeName ?? '改名卡'}，请联系老板。`;
   try {
     const channel = await client.channels.fetch(RENAME_NOTIFY_CHANNEL_ID).catch(() => null);
     if (channel && channel.isTextBased()) {

@@ -7,11 +7,24 @@ import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { getSpendBuffRemaining } from './buffService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
 import { evaluateAutoCommissionBuffWithReason } from './autoCommissionBuffService.js';
+import {
+  applyJinleeWalletDeltaTx,
+  ensureJinleeIdentityForDiscordTx,
+  getJinleeWalletSnapshotTx,
+  lockJinleeUserForUpdateTx,
+  requireJinleeIdentityTx,
+} from './jinleeAccountService.js';
 
 type TxLike = PrismaClient | Prisma.TransactionClient;
 
 const DEC = (n: Prisma.Decimal | number | string) =>
   n instanceof Prisma.Decimal ? n : new Prisma.Decimal(n);
+
+const clampNegativeDelta = (current: Prisma.Decimal, requestedDelta: Prisma.Decimal) => {
+  if (requestedDelta.gte(0)) return requestedDelta;
+  const floorDelta = DEC(0).sub(current);
+  return requestedDelta.lt(floorDelta) ? floorDelta : requestedDelta;
+};
 
 const DISCOUNT_PRIZE_NAMES = [
   PRIZE_NAMES.DISCOUNT_80,
@@ -46,6 +59,7 @@ async function findOrderForRevert(tx: TxLike, rawOrderId: string) {
     id: true,
     displayNo: true,
     hostId: true,
+    hostJinleeId: true,
     workerId: true,
     peiwanId: true,
     status: true,
@@ -107,6 +121,12 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
     });
     if (!audit) throw new Error('order_audit_not_found');
 
+    const hostIdentity = await requireJinleeIdentityTx(
+      tx,
+      audit.hostJinleeId ?? order.hostJinleeId ?? order.hostId,
+    );
+    const workerIdentity = await ensureJinleeIdentityForDiscordTx(tx, order.workerId);
+
     const gross = DEC(audit.gross);
     const netAmount = DEC(audit.netAmount);
     if (gross.lte(0) && netAmount.lte(0)) throw new Error('order_amount_empty');
@@ -119,7 +139,7 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
 
     const usedCoupons = await tx.coupon.findMany({
       where: {
-        discordId: order.hostId,
+        jinleeId: hostIdentity.jinleeId,
         orderId: order.id,
         status: 'USED',
       },
@@ -132,7 +152,7 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
 
     const usedLottery = await tx.lotteryDraw.findMany({
       where: {
-        userId: order.hostId,
+        jinleeId: hostIdentity.jinleeId,
         status: LotteryStatus.USED,
         requestId: order.id,
         prize: { name: { in: DISCOUNT_PRIZE_NAMES } },
@@ -162,81 +182,69 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
       },
     });
 
-    await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.hostId} FOR UPDATE`;
-    await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${order.workerId} FOR UPDATE`;
+    await lockJinleeUserForUpdateTx(tx, hostIdentity.jinleeId);
+    await lockJinleeUserForUpdateTx(tx, workerIdentity.jinleeId);
 
-    const host = await tx.member.findUnique({
-      where: { discordUserId: order.hostId },
-      select: { totalBalance: true, income: true, recharge: true, totalSpent: true },
-    });
-    const worker = await tx.member.findUnique({
-      where: { discordUserId: order.workerId },
-      select: { totalBalance: true, income: true },
-    });
-    if (!host || !worker) throw new Error('member_missing');
-
-    const hostBalanceBefore = DEC(host.totalBalance ?? 0);
-    const hostIncomeBefore = DEC(host.income ?? 0);
-    const hostRechargeBefore = DEC(host.recharge ?? 0);
-    const hostTotalSpentBefore = DEC(host.totalSpent ?? 0);
+    const hostWalletBefore = await getJinleeWalletSnapshotTx(tx, hostIdentity);
+    const hostBalanceBefore = DEC(hostWalletBefore.totalBalance);
 
     const hostBalanceDelta = gross.sub(totalDiscountAmount);
-    const hostRechargeDelta = hostFromRecharge.sub(totalDiscountAmount);
-
-    let hostIncomeAfter = hostIncomeBefore.add(hostFromIncome);
-    let hostRechargeAfter = hostRechargeBefore.add(hostRechargeDelta);
-    let hostBalanceAfter = hostBalanceBefore.add(hostBalanceDelta);
-    let hostTotalSpentAfter = hostTotalSpentBefore.sub(gross.add(spendExtra));
-    if (hostIncomeAfter.lt(0)) hostIncomeAfter = DEC(0);
-    if (hostRechargeAfter.lt(0)) hostRechargeAfter = DEC(0);
-    if (hostBalanceAfter.lt(0)) hostBalanceAfter = DEC(0);
-    if (hostTotalSpentAfter.lt(0)) hostTotalSpentAfter = DEC(0);
-
-    await tx.member.update({
-      where: { discordUserId: order.hostId },
-      data: {
-        income: hostIncomeAfter,
-        recharge: hostRechargeAfter,
-        totalBalance: hostBalanceAfter,
-        totalSpent: hostTotalSpentAfter,
-      },
+    const hostRechargeDelta = clampNegativeDelta(
+      DEC(hostWalletBefore.recharge),
+      hostFromRecharge.sub(totalDiscountAmount),
+    );
+    const hostTotalSpentDelta = clampNegativeDelta(
+      DEC(hostWalletBefore.totalSpent),
+      gross.add(spendExtra).neg(),
+    );
+    const hostWalletAfter = await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: hostIdentity.jinleeId,
+      discordUserId: hostIdentity.discordUserId,
+      incomeDelta: hostFromIncome,
+      rechargeDelta: hostRechargeDelta,
+      totalBalanceDelta: hostBalanceDelta,
+      totalSpentDelta: hostTotalSpentDelta,
     });
-    await adjustLoyaltyPointsTx(tx, order.hostId, pointsEarned.mul(-1));
+    await adjustLoyaltyPointsTx(tx, hostIdentity, pointsEarned.mul(-1));
 
-    const hostNetRefund = hostBalanceAfter.sub(hostBalanceBefore);
+    const hostNetRefund = DEC(hostWalletAfter.totalBalance).sub(hostBalanceBefore);
     if (hostNetRefund.gt(0)) {
       await recordIndividualTransaction(tx, {
-        discordId: order.hostId,
+        discordId: hostIdentity.discordUserId,
+        jinleeId: hostIdentity.jinleeId,
         thirdPartydiscordId: order.workerId,
         balanceBefore: hostBalanceBefore,
         amountChange: hostNetRefund,
-        balanceAfter: hostBalanceAfter,
+        balanceAfter: hostWalletAfter.totalBalance,
         typeOfTransaction: '订单撤销',
       });
     }
 
-    const workerBalanceBefore = DEC(worker.totalBalance ?? 0);
-    const workerIncomeBefore = DEC(worker.income ?? 0);
-    let workerBalanceAfter = workerBalanceBefore.sub(netAmount);
-    let workerIncomeAfter = workerIncomeBefore.sub(netAmount);
-    if (workerBalanceAfter.lt(0)) workerBalanceAfter = DEC(0);
-    if (workerIncomeAfter.lt(0)) workerIncomeAfter = DEC(0);
-
-    await tx.member.update({
-      where: { discordUserId: order.workerId },
-      data: {
-        income: workerIncomeAfter,
-        totalBalance: workerBalanceAfter,
-      },
+    const workerWalletBefore = await getJinleeWalletSnapshotTx(tx, workerIdentity);
+    const workerBalanceBefore = DEC(workerWalletBefore.totalBalance);
+    const workerIncomeDelta = clampNegativeDelta(
+      DEC(workerWalletBefore.income),
+      netAmount.neg(),
+    );
+    const workerBalanceDelta = clampNegativeDelta(
+      DEC(workerWalletBefore.totalBalance),
+      netAmount.neg(),
+    );
+    const workerWalletAfter = await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: workerIdentity.jinleeId,
+      discordUserId: workerIdentity.discordUserId,
+      incomeDelta: workerIncomeDelta,
+      totalBalanceDelta: workerBalanceDelta,
     });
 
     if (netAmount.gt(0)) {
       await recordIndividualTransaction(tx, {
-        discordId: order.workerId,
-        thirdPartydiscordId: order.hostId,
+        discordId: workerIdentity.discordUserId,
+        jinleeId: workerIdentity.jinleeId,
+        thirdPartydiscordId: hostIdentity.discordUserId ?? 'SYSTEM',
         balanceBefore: workerBalanceBefore,
         amountChange: netAmount,
-        balanceAfter: workerBalanceAfter,
+        balanceAfter: workerWalletAfter.totalBalance,
         typeOfTransaction: '订单撤销',
       });
     }
@@ -252,7 +260,7 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
         where: { PEIWANID: order.peiwanId },
         data: {
           totalEarn: totalEarnAfter,
-          balance: workerBalanceAfter,
+          balance: workerWalletAfter.totalBalance,
         },
       });
     }
@@ -265,6 +273,7 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
           consumedAt: null,
           consumeAmount: null,
           consumeTargetId: null,
+          consumeTargetJinleeId: null,
           orderId: null,
         },
       });
@@ -278,18 +287,21 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
           consumeAmount: null,
           consumeOrderId: null,
           consumeTargetId: null,
+          consumeTargetJinleeId: null,
           requestId: null,
         },
       });
     }
 
-    await restoreSpendBuff(tx, order.hostId, spendExtra, spendCap);
+    if (hostIdentity.discordUserId) {
+      await restoreSpendBuff(tx, hostIdentity.discordUserId, spendExtra, spendCap);
+    }
 
     const referralRollbacks: Array<{ inviterId: string; inviteeId: string; amount: Prisma.Decimal }> = [];
     if (audit.bossReferralInviterId && DEC(audit.bossReferralAmount ?? 0).gt(0)) {
       referralRollbacks.push({
         inviterId: audit.bossReferralInviterId,
-        inviteeId: order.hostId,
+        inviteeId: audit.hostId ?? order.hostId ?? 'SYSTEM',
         amount: DEC(audit.bossReferralAmount ?? 0),
       });
     }
@@ -302,34 +314,32 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
     }
 
     for (const rollback of referralRollbacks) {
-      const inviter = await tx.member.upsert({
-        where: { discordUserId: rollback.inviterId },
-        create: { discordUserId: rollback.inviterId },
-        update: {},
-        select: { totalBalance: true, recharge: true },
-      });
-
-      const inviterBalanceBefore = DEC(inviter.totalBalance ?? 0);
-      const inviterRechargeBefore = DEC(inviter.recharge ?? 0);
-      let inviterBalanceAfter = inviterBalanceBefore.sub(rollback.amount);
-      let inviterRechargeAfter = inviterRechargeBefore.sub(rollback.amount);
-      if (inviterBalanceAfter.lt(0)) inviterBalanceAfter = DEC(0);
-      if (inviterRechargeAfter.lt(0)) inviterRechargeAfter = DEC(0);
-
-      await tx.member.update({
-        where: { discordUserId: rollback.inviterId },
-        data: {
-          totalBalance: inviterBalanceAfter,
-          recharge: inviterRechargeAfter,
-        },
+      const inviterIdentity = await ensureJinleeIdentityForDiscordTx(tx, rollback.inviterId);
+      await lockJinleeUserForUpdateTx(tx, inviterIdentity.jinleeId);
+      const inviterWalletBefore = await getJinleeWalletSnapshotTx(tx, inviterIdentity);
+      const inviterBalanceBefore = DEC(inviterWalletBefore.totalBalance);
+      const inviterRechargeDelta = clampNegativeDelta(
+        DEC(inviterWalletBefore.recharge),
+        rollback.amount.neg(),
+      );
+      const inviterBalanceDelta = clampNegativeDelta(
+        DEC(inviterWalletBefore.totalBalance),
+        rollback.amount.neg(),
+      );
+      const inviterWalletAfter = await applyJinleeWalletDeltaTx(tx, {
+        jinleeId: inviterIdentity.jinleeId,
+        discordUserId: inviterIdentity.discordUserId,
+        rechargeDelta: inviterRechargeDelta,
+        totalBalanceDelta: inviterBalanceDelta,
       });
 
       await recordIndividualTransaction(tx, {
         discordId: rollback.inviterId,
+        jinleeId: inviterIdentity.jinleeId,
         thirdPartydiscordId: rollback.inviteeId,
         balanceBefore: inviterBalanceBefore,
         amountChange: rollback.amount,
-        balanceAfter: inviterBalanceAfter,
+        balanceAfter: inviterWalletAfter.totalBalance,
         typeOfTransaction: '邀请提成撤销',
       });
     }
@@ -375,7 +385,9 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
     };
   });
 
-  scheduleSpentRoleSync(result.order.hostId);
+  if (result.order.hostId) {
+    scheduleSpentRoleSync(result.order.hostId);
+  }
   scheduleSpentRoleSync(result.order.workerId, { includeSpendRoles: false });
   evaluateAutoCommissionBuffWithReason(result.order.workerId, 'revert').catch((err) =>
     console.error('[revert-order] auto commission eval failed', err),
@@ -384,12 +396,14 @@ export async function revertOrderByOrderId(params: RevertOrderParams) {
   try {
     const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
     if (client) {
-      const host = await client.users.fetch(result.order.hostId).catch(() => null);
+      const host = result.order.hostId
+        ? await client.users.fetch(result.order.hostId).catch(() => null)
+        : null;
       const worker = await client.users.fetch(result.order.workerId).catch(() => null);
       const hostDelta = DEC(result.hostNetRefund);
       const hostDeltaText = Number(hostDelta.abs().toString()).toFixed(2);
       const deductText = Number(result.netAmount.toString()).toFixed(2);
-      const hostName = host?.username || (host as any)?.displayName || result.order.hostId;
+      const hostName = host?.username || (host as any)?.displayName || result.order.hostId || '未知老板';
       const workerName = worker?.username || (worker as any)?.displayName || result.order.workerId;
       const couponText = result.returnedCouponNames.join('、');
 

@@ -15,6 +15,11 @@ import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
 import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { getAutoCommissionBoost } from './autoCommissionBuffService.js';
+import {
+  applyJinleeWalletDeltaTx,
+  ensureJinleeIdentityForDiscordTx,
+  lockJinleeUserForUpdateTx,
+} from './jinleeAccountService.js';
 import { scheduleSpentRoleSync } from './spentRoleService.js';
 
 type DbClient = PrismaClient | Prisma.TransactionClient;
@@ -836,7 +841,10 @@ export async function claimRedEnvelope(
       },
     });
 
+    await suppressRechargeNotifications(tx);
     await ensureMemberExists(tx, claimerId);
+    const claimerIdentity = await ensureJinleeIdentityForDiscordTx(tx, claimerId);
+    await lockJinleeUserForUpdateTx(tx, claimerIdentity.jinleeId);
     const member = await tx.member.findUnique({
       where: { discordUserId: claimerId },
       select: { totalBalance: true, income: true, recharge: true, commissionRate: true },
@@ -850,15 +858,14 @@ export async function claimRedEnvelope(
     let effectiveRate = baseRate.add(manualBoost).add(autoBoost);
     if (effectiveRate.gt(1)) effectiveRate = new Prisma.Decimal(1);
     const netAmount = new Prisma.Decimal(share.mul(effectiveRate).toFixed(2));
-    const balanceAfter = balanceBefore.add(netAmount);
-
-    await tx.member.update({
-      where: { discordUserId: claimerId },
-      data: {
-        income: { increment: netAmount },
-        totalBalance: { increment: netAmount },
-      },
+    const walletAfter = await applyJinleeWalletDeltaTx(tx, {
+      jinleeId: claimerIdentity.jinleeId,
+      discordUserId: claimerIdentity.discordUserId,
+      incomeDelta: netAmount,
+      totalBalanceDelta: netAmount,
+      offsetNegativeRechargeWithIncome: true,
     });
+    const balanceAfter = walletAfter.totalBalance;
 
     const peiwan = await tx.pEIWAN.findUnique({
       where: { discordUserId: claimerId },

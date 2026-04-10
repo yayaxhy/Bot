@@ -1,13 +1,55 @@
 import { order_end_boss_embed, order_end_pw_embed, discount_prompt_embed } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
 import type { Client } from 'discord.js';
+import { resolveJinleeIdentityTx } from './jinleeAccountService.js';
 import { scheduleSpentRoleSync } from './spentRoleService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
-import { LotteryStatus } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryStatus, PointShopDeliveryType } from '@prisma/client';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const notifiedOrders = new Map<string, number>();
 const NOTIFY_DEDUP_MS = 2 * 60 * 1000;
+const LEGACY_DISCOUNT_90_NAME = '特殊九折券';
+const DISCOUNT_COUPON_TYPES = [
+  CouponType.DISCOUNT_90,
+  CouponType.DISCOUNT_80,
+  CouponType.DISCOUNT_70,
+  CouponType.DISCOUNT_90_LOTTERY,
+] as const;
+
+function isExpectedDiscordDeliveryError(err: unknown): boolean {
+  const error = err as { code?: number | string; message?: string } | null;
+  const code = typeof error?.code === 'number' ? error.code : Number(error?.code);
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return (
+    code === 50007
+    || code === 50001
+    || code === 10013
+    || message.includes('Cannot send messages to this user')
+    || message.includes('Missing Access')
+    || message.includes('Unknown User')
+  );
+}
+
+function logDiscordDeliveryResult(
+  context: 'boss_dm' | 'worker_dm',
+  orderId: string,
+  discordUserId: string,
+  err: unknown,
+) {
+  const error = err as { code?: number | string; message?: string } | null;
+  const payload = {
+    orderId,
+    discordUserId,
+    code: error?.code ?? null,
+    message: error?.message ?? String(err),
+  };
+  if (isExpectedDiscordDeliveryError(err)) {
+    console.log('[notifyOrderEnded] delivery skipped', { context, ...payload });
+    return;
+  }
+  console.error('[notifyOrderEnded] delivery failed', { context, ...payload, err });
+}
 
 function shouldNotify(orderId: string): boolean {
   const now = Date.now();
@@ -36,6 +78,7 @@ async function fetchOrderSummary(orderId: string) {
       grossAmount: true,
       netAmount: true,
       hostId: true,
+      hostJinleeId: true,
       workerId: true,
       host: { select: { totalBalance: true } },
     },
@@ -66,95 +109,197 @@ export async function notifyOrderEnded(orderId: string) {
   }
 
   const order = await fetchOrderSummary(orderId);
-  if (!order || !order.hostId || !order.workerId) {
+  if (!order || !order.workerId) {
     console.log('[notifyOrderEnded] skip', { orderId, reason: 'missing order or participants' });
     return;
   }
-  scheduleSpentRoleSync(order.hostId, { announceVipUpgrade: true });
+  const hostIdentity =
+    order.hostJinleeId
+      ? { jinleeId: order.hostJinleeId, discordUserId: order.hostId ?? null }
+      : order.hostId
+        ? await resolveJinleeIdentityTx(prisma, order.hostId)
+        : null;
+  if (order.hostId) {
+    scheduleSpentRoleSync(order.hostId, { announceVipUpgrade: true });
+  }
   scheduleSpentRoleSync(order.workerId, { includeSpendRoles: false });
   const now = new Date();
-  const [availableCoupons, bazheCouponCount, qizheCouponCount, specialJiuzheCouponCount] =
-    await Promise.all([
-      prisma.coupon.count({
-        where: {
-          discordId: order.hostId,
-          type: 'DISCOUNT_90',
-          status: 'ACTIVE',
-          expiresAt: { gt: now },
-        },
-      }),
-      prisma.coupon.count({
-        where: {
-          discordId: order.hostId,
-          type: 'DISCOUNT_80',
-          status: 'ACTIVE',
-          expiresAt: { gt: now },
-        },
-      }),
-      prisma.coupon.count({
-        where: {
-          discordId: order.hostId,
-          type: 'DISCOUNT_70',
-          status: 'ACTIVE',
-          expiresAt: { gt: now },
-        },
-      }),
-      prisma.coupon.count({
-        where: {
-          discordId: order.hostId,
-          type: 'DISCOUNT_90_LOTTERY',
-          status: 'ACTIVE',
-          expiresAt: { gt: now },
-        },
-      }),
-    ]);
-  const existingUsage = await prisma.coupon.findFirst({
-    where: { orderId, status: 'USED' },
-    select: { id: true },
-  });
+  const hostJinleeId = hostIdentity?.jinleeId ?? null;
+  const [
+    availableCoupons,
+    bazheCouponCount,
+    qizheCouponCount,
+    specialJiuzheCouponCount,
+    availablePointShopCoupons,
+    bazhePointShopCouponCount,
+    qizhePointShopCouponCount,
+    specialJiuzhePointShopCouponCount,
+  ] = await Promise.all([
+    hostJinleeId
+      ? prisma.coupon.count({
+          where: {
+            jinleeId: hostJinleeId,
+            type: CouponType.DISCOUNT_90,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+        })
+      : Promise.resolve(0),
+    hostJinleeId
+      ? prisma.coupon.count({
+          where: {
+            jinleeId: hostJinleeId,
+            type: CouponType.DISCOUNT_80,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+        })
+      : Promise.resolve(0),
+    hostJinleeId
+      ? prisma.coupon.count({
+          where: {
+            jinleeId: hostJinleeId,
+            type: CouponType.DISCOUNT_70,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+        })
+      : Promise.resolve(0),
+    hostJinleeId
+      ? prisma.coupon.count({
+          where: {
+            jinleeId: hostJinleeId,
+            type: CouponType.DISCOUNT_90_LOTTERY,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+        })
+      : Promise.resolve(0),
+    hostJinleeId
+      ? prisma.pointShopGrant.count({
+          where: {
+            jinleeId: hostJinleeId,
+            deliveryType: PointShopDeliveryType.COUPON,
+            couponStatus: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+            couponType: CouponType.DISCOUNT_90,
+          },
+        })
+      : Promise.resolve(0),
+    hostJinleeId
+      ? prisma.pointShopGrant.count({
+          where: {
+            jinleeId: hostJinleeId,
+            deliveryType: PointShopDeliveryType.COUPON,
+            couponStatus: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+            couponType: CouponType.DISCOUNT_80,
+          },
+        })
+      : Promise.resolve(0),
+    hostJinleeId
+      ? prisma.pointShopGrant.count({
+          where: {
+            jinleeId: hostJinleeId,
+            deliveryType: PointShopDeliveryType.COUPON,
+            couponStatus: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+            couponType: CouponType.DISCOUNT_70,
+          },
+        })
+      : Promise.resolve(0),
+    hostJinleeId
+      ? prisma.pointShopGrant.count({
+          where: {
+            jinleeId: hostJinleeId,
+            deliveryType: PointShopDeliveryType.COUPON,
+            couponStatus: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+            couponType: CouponType.DISCOUNT_90_LOTTERY,
+          },
+        })
+      : Promise.resolve(0),
+  ]);
 
   const lotteryDiscountNames = [
     PRIZE_NAMES.DISCOUNT_80,
     PRIZE_NAMES.DISCOUNT_70,
     PRIZE_NAMES.DISCOUNT_90_LOTTERY,
-    '特殊九折券',
+    LEGACY_DISCOUNT_90_NAME,
   ];
-  await prisma.lotteryDraw.updateMany({
-    where: {
-      userId: order.hostId,
-      status: LotteryStatus.UNUSED,
-      expiresAt: { lte: now },
-      prize: { name: { in: lotteryDiscountNames } },
-    },
-    data: { status: LotteryStatus.EXPIRED },
-  });
-  const bazheLotteryCount = await prisma.lotteryDraw.count({
-    where: {
-      userId: order.hostId,
-      status: LotteryStatus.UNUSED,
-      expiresAt: { gt: now },
-      prize: { name: PRIZE_NAMES.DISCOUNT_80 },
-    },
-  });
-  const qizheLotteryCount = await prisma.lotteryDraw.count({
-    where: {
-      userId: order.hostId,
-      status: LotteryStatus.UNUSED,
-      expiresAt: { gt: now },
-      prize: { name: PRIZE_NAMES.DISCOUNT_70 },
-    },
-  });
-  const specialJiuzheLotteryCount = await prisma.lotteryDraw.count({
-    where: {
-      userId: order.hostId,
-      status: LotteryStatus.UNUSED,
-      expiresAt: { gt: now },
-      prize: { name: { in: [PRIZE_NAMES.DISCOUNT_90_LOTTERY, '特殊九折券'] } },
-    },
-  });
-  const bazheCount = bazheLotteryCount + bazheCouponCount;
-  const qizheCount = qizheLotteryCount + qizheCouponCount;
-  const specialJiuzheCount = specialJiuzheLotteryCount + specialJiuzheCouponCount;
+  if (hostJinleeId) {
+    await prisma.lotteryDraw.updateMany({
+      where: {
+        jinleeId: hostJinleeId,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { lte: now },
+        prize: { name: { in: lotteryDiscountNames } },
+      },
+      data: { status: LotteryStatus.EXPIRED },
+    });
+  }
+  const bazheLotteryCount = hostJinleeId
+    ? await prisma.lotteryDraw.count({
+        where: {
+          jinleeId: hostJinleeId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { gt: now },
+          prize: { name: PRIZE_NAMES.DISCOUNT_80 },
+        },
+      })
+    : 0;
+  const qizheLotteryCount = hostJinleeId
+    ? await prisma.lotteryDraw.count({
+        where: {
+          jinleeId: hostJinleeId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { gt: now },
+          prize: { name: PRIZE_NAMES.DISCOUNT_70 },
+        },
+      })
+    : 0;
+  const specialJiuzheLotteryCount = hostJinleeId
+    ? await prisma.lotteryDraw.count({
+        where: {
+          jinleeId: hostJinleeId,
+          status: LotteryStatus.UNUSED,
+          expiresAt: { gt: now },
+          prize: { name: { in: [PRIZE_NAMES.DISCOUNT_90_LOTTERY, LEGACY_DISCOUNT_90_NAME] } },
+        },
+      })
+    : 0;
+  const existingUsage = hostJinleeId
+    ? await Promise.all([
+        prisma.coupon.findFirst({
+          where: { orderId, status: CouponStatus.USED },
+          select: { id: true },
+        }),
+        prisma.pointShopGrant.findFirst({
+          where: {
+            consumeOrderId: orderId,
+            jinleeId: hostJinleeId,
+            deliveryType: PointShopDeliveryType.COUPON,
+            couponStatus: CouponStatus.USED,
+            couponType: { in: [...DISCOUNT_COUPON_TYPES] },
+          },
+          select: { id: true },
+        }),
+        prisma.lotteryDraw.findFirst({
+          where: {
+            jinleeId: hostJinleeId,
+            status: LotteryStatus.USED,
+            requestId: orderId,
+            prize: { name: { in: lotteryDiscountNames } },
+          },
+          select: { id: true },
+        }),
+      ]).then(([couponUsage, pointShopUsage, lotteryUsage]) => couponUsage ?? pointShopUsage ?? lotteryUsage)
+    : null;
+  const totalJiuzheCount = availableCoupons + availablePointShopCoupons;
+  const bazheCount = bazheLotteryCount + bazheCouponCount + bazhePointShopCouponCount;
+  const qizheCount = qizheLotteryCount + qizheCouponCount + qizhePointShopCouponCount;
+  const specialJiuzheCount =
+    specialJiuzheLotteryCount + specialJiuzheCouponCount + specialJiuzhePointShopCouponCount;
 
   const totalMinutes = order.totalMinutes ?? 0;
   const chargedMinutes = order.chargedMinutes ?? 0;
@@ -162,27 +307,35 @@ export async function notifyOrderEnded(orderId: string) {
   const net = order.netAmount ? Number(order.netAmount.toString()) : 0;
   const hostBalance = order.host?.totalBalance ? Number(order.host.totalBalance.toString()) : 0;
   const heartInc = Math.max(0, Math.round(gross));
-  const heartCounter = await prisma.heartCounter.findUnique({
-    where: {
-      fromMemberId_toMemberId: {
-        fromMemberId: order.hostId,
-        toMemberId: order.workerId,
-      },
-    },
-    select: { total: true },
-  });
+  const heartCounter = order.hostId
+    ? await prisma.heartCounter.findUnique({
+        where: {
+          fromMemberId_toMemberId: {
+            fromMemberId: order.hostId,
+            toMemberId: order.workerId,
+          },
+        },
+        select: { total: true },
+      })
+    : null;
   const currentHeart = heartCounter?.total ?? 0;
-  const pointsRow = await prisma.loyaltyPoint.findUnique({
-    where: { discordUserId: order.hostId },
-    select: { points: true },
-  });
-  const pointsTotal = pointsRow ? Number(pointsRow.points.toString()) : 0;
+  const pointsTotal = hostJinleeId
+    ? Number(
+        (
+          await prisma.jinleeUser.findUnique({
+            where: { jinleeId: hostJinleeId },
+            select: { loyaltyPoints: true },
+          })
+        )?.loyaltyPoints?.toString() ?? '0'
+      )
+    : 0;
   const pointsEarned = Math.max(0, gross);
   const displayNo = order.displayNo;
   const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
 
-  try {
-    const boss = await client.users.fetch(order.hostId);
+  if (order.hostId) {
+    try {
+      const boss = await client.users.fetch(order.hostId);
     const embeds = [
       order_end_boss_embed(
         displayNo,
@@ -200,12 +353,12 @@ export async function notifyOrderEnded(orderId: string) {
     ];
     let components: any[] = [];
 
-    const totalCoupons = availableCoupons + bazheCount + qizheCount + specialJiuzheCount;
+    const totalCoupons = totalJiuzheCount + bazheCount + qizheCount + specialJiuzheCount;
     if (totalCoupons > 0 && !existingUsage) {
       const prompt = discount_prompt_embed(
         orderLabel,
         order.id,
-        availableCoupons,
+        totalJiuzheCount,
         bazheCount,
         qizheCount,
         specialJiuzheCount
@@ -216,7 +369,7 @@ export async function notifyOrderEnded(orderId: string) {
         console.log('[discount] sending prompt', {
           orderId: order.id,
           hostId: order.hostId,
-          availableCoupons,
+          availableCoupons: totalJiuzheCount,
           bazheCount,
           qizheCount,
           specialJiuzheCount,
@@ -226,7 +379,7 @@ export async function notifyOrderEnded(orderId: string) {
         console.log('[discount] prompt missing', {
           orderId: order.id,
           hostId: order.hostId,
-          availableCoupons,
+          availableCoupons: totalJiuzheCount,
           bazheCount,
           qizheCount,
           specialJiuzheCount,
@@ -236,7 +389,7 @@ export async function notifyOrderEnded(orderId: string) {
       console.log('[discount] no coupon prompt', {
         orderId: order.id,
         hostId: order.hostId,
-        availableCoupons,
+        availableCoupons: totalJiuzheCount,
         bazheCount,
         qizheCount,
         specialJiuzheCount,
@@ -245,8 +398,9 @@ export async function notifyOrderEnded(orderId: string) {
     }
 
     await boss.send({ embeds, components });
-  } catch (err) {
-    console.error('[notifyOrderEnded] notify boss failed:', err);
+    } catch (err) {
+      logDiscordDeliveryResult('boss_dm', order.id, order.hostId, err);
+    }
   }
 
   try {
@@ -266,6 +420,6 @@ export async function notifyOrderEnded(orderId: string) {
       ],
     });
   } catch (err) {
-    console.error('[notifyOrderEnded] notify worker failed:', err);
+    logDiscordDeliveryResult('worker_dm', order.id, order.workerId, err);
   }
 }

@@ -187,6 +187,7 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
           consumedAt: null,
           consumeAmount: null,
           consumeTargetId: null,
+          consumeTargetJinleeId: null,
           orderId: null,
         },
       });

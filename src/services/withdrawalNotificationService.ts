@@ -26,6 +26,38 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
 const DEFAULT_CURRENCY = process.env.WITHDRAWAL_CURRENCY ?? 'CNY';
 const DEFAULT_TIMEZONE = process.env.WITHDRAWAL_TIMEZONE ?? 'Asia/Shanghai';
 
+function isExpectedDiscordDeliveryError(err: unknown): boolean {
+  const error = err as { code?: number | string; message?: string } | null;
+  const code = typeof error?.code === 'number' ? error.code : Number(error?.code);
+  const message = typeof error?.message === 'string' ? error.message : '';
+  return (
+    code === 50007
+    || code === 50001
+    || code === 10013
+    || message.includes('Cannot send messages to this user')
+    || message.includes('Missing Access')
+    || message.includes('Unknown User')
+  );
+}
+
+function logWithdrawalDeliveryFailure(
+  context: 'dm' | 'announce',
+  meta: Record<string, unknown>,
+  err: unknown,
+) {
+  const error = err as { code?: number | string; message?: string } | null;
+  const payload = {
+    ...meta,
+    code: error?.code ?? null,
+    message: error?.message ?? String(err),
+  };
+  if (context === 'dm' && isExpectedDiscordDeliveryError(err)) {
+    console.log('[withdraw.notify] delivery skipped', { context, ...payload });
+    return;
+  }
+  console.error('[withdraw.notify] delivery failed', { context, ...payload, err });
+}
+
 let formatter: Intl.DateTimeFormat;
 try {
   formatter = new Intl.DateTimeFormat('zh-CN', {
@@ -162,7 +194,7 @@ export async function notifyWithdrawal(
       withdrawalId: payload.withdrawalId,
     });
   } catch (err) {
-    console.error('[withdraw.notify] failed to send DM', { userDiscordId, err });
+    logWithdrawalDeliveryFailure('dm', { userDiscordId, withdrawalId: payload.withdrawalId }, err);
   }
 
   const announceChannelId = process.env.WITHDRAW_ANNOUNCE_CHANNEL_ID;
@@ -198,7 +230,7 @@ export async function notifyWithdrawal(
         console.warn('[withdraw.notify] announce channel not text based', { announceChannelId });
       }
     } catch (err) {
-      console.error('[withdraw.notify] failed to send announce message', { announceChannelId, err });
+      logWithdrawalDeliveryFailure('announce', { announceChannelId, withdrawalId: payload.withdrawalId }, err);
     }
   }
 
