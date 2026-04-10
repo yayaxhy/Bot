@@ -97,7 +97,7 @@ BEGIN
     END IF;
 
     WHILE num > 0 LOOP
-        result := substr(chars, (num % 36) + 1, 1) || result;
+        result := substr(chars, ((num % 36)::integer) + 1, 1) || result;
         num := num / 36;
     END LOOP;
 
