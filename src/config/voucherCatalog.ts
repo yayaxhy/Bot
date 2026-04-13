@@ -4,7 +4,7 @@ import { PRIZE_NAMES } from '../services/lotteryService.js';
 type GiftVoucherOption = {
   giftName: string;
   prizeName: string;
-  couponType: CouponType;
+  couponType?: CouponType;
   payRate: number;
 };
 
@@ -35,6 +35,10 @@ const GIFT_VOUCHER_OPTIONS: GiftVoucherOption[] = [
   { giftName: '三日冠', prizeName: PRIZE_NAMES.CROWN_3DAY_90_VOUCHER, couponType: CouponType.CROWN_3DAY_90_VOUCHER, payRate: 0.9 },
   { giftName: '一周冠', prizeName: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER, couponType: CouponType.CROWN_WEEK_90_VOUCHER, payRate: 0.9 },
   { giftName: '月冠名', prizeName: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER, couponType: CouponType.CROWN_MONTH_90_VOUCHER, payRate: 0.9 },
+  { giftName: '兔兔宝宝', prizeName: PRIZE_NAMES.RABBIT_BABY, payRate: 0 },
+  { giftName: '狐狸宝宝', prizeName: PRIZE_NAMES.FOX_BABY, payRate: 0 },
+  { giftName: '猪猪宝宝', prizeName: PRIZE_NAMES.PIGGY_BABY, payRate: 0 },
+  { giftName: '小鸡宝宝', prizeName: PRIZE_NAMES.CHICK_BABY, payRate: 0 },
 ];
 
 const SPECIAL_ACTION_VOUCHERS = [
@@ -53,7 +57,9 @@ const RENAME_CARD_VOUCHERS = [
 ] as const;
 
 const ALL_VOUCHERS = [
-  ...GIFT_VOUCHER_OPTIONS.map((entry) => ({ prizeName: entry.prizeName, couponType: entry.couponType })),
+  ...GIFT_VOUCHER_OPTIONS
+    .filter((entry): entry is GiftVoucherOption & { couponType: CouponType } => !!entry.couponType)
+    .map((entry) => ({ prizeName: entry.prizeName, couponType: entry.couponType })),
   ...SPECIAL_ACTION_VOUCHERS,
   ...RENAME_CARD_VOUCHERS,
 ];
@@ -69,12 +75,12 @@ export const GIFT_VOUCHER_CONFIGS: Record<string, Array<{ prizeName: string; pay
 
 export const GIFT_VOUCHER_NAMES = new Set(GIFT_VOUCHER_OPTIONS.map((entry) => entry.prizeName));
 
-export const VOUCHER_COUPON_TYPE_BY_PRIZE: Record<string, CouponType> = ALL_VOUCHERS.reduce(
+export const VOUCHER_COUPON_TYPE_BY_PRIZE: Partial<Record<string, CouponType>> = ALL_VOUCHERS.reduce(
   (acc, entry) => {
     acc[entry.prizeName] = entry.couponType;
     return acc;
   },
-  {} as Record<string, CouponType>,
+  {} as Partial<Record<string, CouponType>>,
 );
 
 export const PRIZE_BY_VOUCHER_COUPON_TYPE: Partial<Record<CouponType, string>> = ALL_VOUCHERS.reduce(

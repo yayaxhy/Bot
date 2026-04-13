@@ -1,4 +1,4 @@
-import { CouponStatus, CouponType, LotteryPool, LotteryStatus, Prisma } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryPool, LotteryPrizeType, LotteryStatus, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import crypto from 'crypto';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
@@ -15,10 +15,10 @@ import { scheduleSpentRoleSync } from './spentRoleService.js';
 type TxClient = Prisma.TransactionClient;
 
 export const DRAW_COST = new Prisma.Decimal(29);
+export const TEN_DRAW_COST = new Prisma.Decimal(290);
 const VOUCHER_EXPIRES_MS = 30 * 24 * 60 * 60 * 1000; // 30 天
 const SHORT_ID_BYTES = 4;
 const ALERT_CHANNEL_ID = '1446819752692416542';
-const PITY_THRESHOLD = 149; // 150 抽保底（missCount >= 149 时强制特级）
 
 export const PRIZE_NAMES = {
   CAKE_VOUCHER: '小蛋糕代金券',
@@ -46,7 +46,32 @@ export const PRIZE_NAMES = {
   DOUBLE_SPEND_5000_VOUCHER: '双倍消费5000券',
   DISCOUNT_70: '7折券',
   DISCOUNT_90_LOTTERY: '特殊9折券',
+  RABBIT_BABY: '兔兔宝宝',
+  FOX_BABY: '狐狸宝宝',
+  PIGGY_BABY: '猪猪宝宝',
+  CHICK_BABY: '小鸡宝宝',
 } as const;
+
+export const TEN_DRAW_GUARANTEE_PRIZE_NAMES = [
+  PRIZE_NAMES.RABBIT_BABY,
+  PRIZE_NAMES.FOX_BABY,
+  PRIZE_NAMES.PIGGY_BABY,
+  PRIZE_NAMES.CHICK_BABY,
+] as const;
+
+const TEN_DRAW_ROTATION_RECIPES: ReadonlyArray<{
+  normal: number;
+  baby: number;
+  random: number;
+}> = [
+  { normal: 4, baby: 1, random: 5 },
+  { normal: 4, baby: 1, random: 5 },
+  { normal: 4, baby: 1, random: 5 },
+  { normal: 3, baby: 1, random: 6 },
+  { normal: 3, baby: 1, random: 6 },
+  { normal: 2, baby: 1, random: 7 },
+];
+const TEN_DRAW_COUNTER_ROW_ID = 1;
 
 export const RENAME_CARD_NAMES: string[] = [
   PRIZE_NAMES.RENAME_CARD_3,
@@ -79,6 +104,11 @@ const PRIZE_NAME_BY_KIND: Record<PrizeKind, string | null> = {
   DOUBLE_SPEND_5000_VOUCHER: PRIZE_NAMES.DOUBLE_SPEND_5000_VOUCHER,
   DISCOUNT_70: PRIZE_NAMES.DISCOUNT_70,
   DISCOUNT_90_LOTTERY: PRIZE_NAMES.DISCOUNT_90_LOTTERY,
+  RABBIT_BABY: PRIZE_NAMES.RABBIT_BABY,
+  FOX_BABY: PRIZE_NAMES.FOX_BABY,
+  PIGGY_BABY: PRIZE_NAMES.PIGGY_BABY,
+  CHICK_BABY: PRIZE_NAMES.CHICK_BABY,
+  GIFT: null,
   OTHER: null,
 };
 
@@ -107,6 +137,11 @@ export type PrizeKind =
   | 'DOUBLE_SPEND_5000_VOUCHER'
   | 'DISCOUNT_70'
   | 'DISCOUNT_90_LOTTERY'
+  | 'RABBIT_BABY'
+  | 'FOX_BABY'
+  | 'PIGGY_BABY'
+  | 'CHICK_BABY'
+  | 'GIFT'
   | 'OTHER';
 
 export const POOL_LABEL: Record<LotteryPool, string> = {
@@ -132,6 +167,7 @@ type PrizeLike = {
   id: string;
   name: string;
   pool: LotteryPool;
+  type: LotteryPrizeType;
   weight: number;
   unlimited: boolean;
   stock: number | null;
@@ -191,6 +227,14 @@ export function classifyPrize(prizeName?: string | null): PrizeKind {
       return 'DISCOUNT_70';
     case PRIZE_NAMES.DISCOUNT_90_LOTTERY:
       return 'DISCOUNT_90_LOTTERY';
+    case PRIZE_NAMES.RABBIT_BABY:
+      return 'RABBIT_BABY';
+    case PRIZE_NAMES.FOX_BABY:
+      return 'FOX_BABY';
+    case PRIZE_NAMES.PIGGY_BABY:
+      return 'PIGGY_BABY';
+    case PRIZE_NAMES.CHICK_BABY:
+      return 'CHICK_BABY';
     default:
       return 'OTHER';
   }
@@ -222,6 +266,11 @@ const generateCode = (kind: PrizeKind): string => {
     DOUBLE_SPEND_5000_VOUCHER: 'SPEND2',
     DISCOUNT_70: 'D70',
     DISCOUNT_90_LOTTERY: 'D90',
+    RABBIT_BABY: 'RBABY',
+    FOX_BABY: 'FBABY',
+    PIGGY_BABY: 'PBABY',
+    CHICK_BABY: 'CBABY',
+    GIFT: 'GIFT',
     OTHER: 'PRIZE',
   };
   const short = crypto.randomBytes(SHORT_ID_BYTES).toString('hex');
@@ -245,9 +294,7 @@ const sendLotteryAlert = async (text: string) => {
 };
 
 const adjustWeight = (p: PrizeLike) => {
-  if (p.unlimited) return Math.max(0, p.weight);
-  const stockFactor = Math.max(0, p.stock ?? 0);
-  return Math.max(0, p.weight * stockFactor);
+  return Math.max(0, p.weight);
 };
 
 const pickByWeight = (items: PrizeLike[]): PrizeLike | null => {
@@ -265,30 +312,19 @@ const pickByWeight = (items: PrizeLike[]): PrizeLike | null => {
 
 async function loadCandidates(
   tx: TxClient,
-  pool?: LotteryPool
+  options?: {
+    pool?: LotteryPool;
+    prizeNames?: string[];
+  }
 ): Promise<PrizeLike[]> {
   return tx.lotteryPrize.findMany({
     where: {
       active: true,
-      ...(pool ? { pool } : {}),
+      ...(options?.pool ? { pool: options.pool } : {}),
+      ...(options?.prizeNames?.length ? { name: { in: options.prizeNames } } : {}),
       OR: [{ unlimited: true }, { stock: { gt: 0 } }],
     },
   });
-}
-
-async function pickPrize(
-  tx: TxClient,
-  pool?: LotteryPool
-): Promise<PrizeLike> {
-  const candidates = await loadCandidates(tx, pool);
-  if (candidates.length === 0) {
-    throw new LotteryError(pool ? 'NO_FALLBACK_PRIZE' : 'NO_PRIZE_AVAILABLE');
-  }
-  const picked = pickByWeight(candidates);
-  if (!picked) {
-    throw new LotteryError(pool ? 'NO_FALLBACK_PRIZE' : 'NO_PRIZE_AVAILABLE');
-  }
-  return picked;
 }
 
 async function consumeStock(
@@ -310,6 +346,109 @@ export type LotteryResult = {
   random: number;
   cost: Prisma.Decimal;
 };
+
+export type LotteryBatchResult = {
+  draws: LotteryResult[];
+  cost: Prisma.Decimal;
+};
+
+async function pickAndConsumePrize(
+  tx: TxClient,
+  options?: {
+    pool?: LotteryPool;
+    prizeNames?: string[];
+  }
+): Promise<PrizeLike> {
+  const exhaustedIds = new Set<string>();
+
+  while (true) {
+    const candidates = (await loadCandidates(tx, options)).filter((candidate) => !exhaustedIds.has(candidate.id));
+    if (candidates.length === 0) {
+      throw new LotteryError(options?.pool || options?.prizeNames?.length ? 'NO_FALLBACK_PRIZE' : 'NO_PRIZE_AVAILABLE');
+    }
+
+    const picked = pickByWeight(candidates);
+    if (!picked) {
+      throw new LotteryError(options?.pool || options?.prizeNames?.length ? 'NO_FALLBACK_PRIZE' : 'NO_PRIZE_AVAILABLE');
+    }
+    if (picked.unlimited) return picked;
+
+    const ok = await consumeStock(tx, picked);
+    if (ok) return picked;
+    exhaustedIds.add(picked.id);
+    await sendLotteryAlert(`[lottery][stock_empty] 奖品「${picked.name}」库存不足，已在当前奖池重试`);
+  }
+}
+
+async function chargeLotteryCostTx(
+  tx: TxClient,
+  params: {
+    payerIdentity: Awaited<ReturnType<typeof ensureJinleeIdentityForDiscordTx>>;
+    amount: Prisma.Decimal;
+    now: Date;
+  }
+) {
+  const { payerIdentity, amount, now } = params;
+  const walletSnapshot = await getJinleeWalletSnapshotTx(tx, payerIdentity);
+  const income = walletSnapshot.income;
+  const recharge = walletSnapshot.recharge;
+  const total = walletSnapshot.totalBalance;
+  if (total.lt(amount)) {
+    throw new LotteryError('INSUFFICIENT_BALANCE');
+  }
+  const split = splitIncomeRecharge(income, recharge, amount);
+  const spendBonus =
+    payerIdentity.discordUserId != null
+      ? await consumeSpendBuff(tx, payerIdentity.discordUserId, amount)
+      : { extra: new Prisma.Decimal(0), remaining: new Prisma.Decimal(0) };
+  const totalSpentIncrement = amount.add(spendBonus.extra);
+  await applyJinleeWalletDeltaTx(tx, {
+    jinleeId: payerIdentity.jinleeId,
+    discordUserId: payerIdentity.discordUserId,
+    incomeDelta: split.fromIncome.neg(),
+    rechargeDelta: split.fromRecharge.neg(),
+    totalBalanceDelta: amount.neg(),
+    totalSpentDelta: totalSpentIncrement,
+  });
+  await adjustLoyaltyPointsTx(tx, payerIdentity, amount);
+  const balanceBefore = total;
+  const balanceAfter = total.sub(amount);
+  await recordIndividualTransaction(tx, {
+    discordId: payerIdentity.discordUserId,
+    jinleeId: payerIdentity.jinleeId,
+    thirdPartydiscordId: 'SYSTEM',
+    balanceBefore,
+    amountChange: amount,
+    balanceAfter,
+    typeOfTransaction: '抽奖消费',
+    timeCreatedAt: now,
+  });
+}
+
+const resolvePrizeKind = (prize: PrizeLike): PrizeKind => {
+  const classified = classifyPrize(prize.name);
+  if (classified !== 'OTHER') return classified;
+  if (prize.type === LotteryPrizeType.GIFT) return 'GIFT';
+  return 'OTHER';
+};
+
+async function allocateTenDrawRotationRecipe(
+  tx: TxClient
+): Promise<(typeof TEN_DRAW_ROTATION_RECIPES)[number]> {
+  const rows = await tx.$queryRaw<Array<{ tenDrawCount: bigint | number | string }>>`
+    UPDATE "LotteryTenDrawCounter"
+    SET "tenDrawCount" = "tenDrawCount" + 1
+    WHERE "id" = ${TEN_DRAW_COUNTER_ROW_ID}
+    RETURNING "tenDrawCount"
+  `;
+  const rawCount = rows[0]?.tenDrawCount;
+  const drawCount = typeof rawCount === 'bigint' ? Number(rawCount) : Number(rawCount ?? NaN);
+  if (!Number.isFinite(drawCount) || drawCount <= 0) {
+    throw new Error('LOTTERY_TEN_DRAW_COUNTER_INVALID');
+  }
+  const recipeIdx = (drawCount - 1) % TEN_DRAW_ROTATION_RECIPES.length;
+  return TEN_DRAW_ROTATION_RECIPES[recipeIdx];
+}
 
 export async function performLotteryDraw(params: {
   userId: string;
@@ -415,90 +554,17 @@ export async function performLotteryDraw(params: {
 
     if (!useFreeVoucher) {
       spentCharged = true;
-      const walletSnapshot = await getJinleeWalletSnapshotTx(tx, payerIdentity);
-      const income = walletSnapshot.income;
-      const recharge = walletSnapshot.recharge;
-      const total = walletSnapshot.totalBalance;
-      if (total.lt(DRAW_COST)) {
-        throw new LotteryError('INSUFFICIENT_BALANCE');
-      }
-      const split = splitIncomeRecharge(income, recharge, DRAW_COST);
-      const spendBonus =
-        payerIdentity.discordUserId != null
-          ? await consumeSpendBuff(tx, payerIdentity.discordUserId, DRAW_COST)
-          : { extra: new Prisma.Decimal(0), remaining: new Prisma.Decimal(0) };
-      const totalSpentIncrement = DRAW_COST.add(spendBonus.extra);
-      await applyJinleeWalletDeltaTx(tx, {
-        jinleeId: payerIdentity.jinleeId,
-        discordUserId: payerIdentity.discordUserId,
-        incomeDelta: split.fromIncome.neg(),
-        rechargeDelta: split.fromRecharge.neg(),
-        totalBalanceDelta: DRAW_COST.neg(),
-        totalSpentDelta: totalSpentIncrement,
-      });
-      await adjustLoyaltyPointsTx(tx, payerIdentity, DRAW_COST);
-      const balanceBefore = total;
-      const balanceAfter = total.sub(DRAW_COST);
-      await recordIndividualTransaction(tx, {
-        discordId: payerIdentity.discordUserId,
-        jinleeId: payerIdentity.jinleeId,
-        thirdPartydiscordId: 'SYSTEM',
-        balanceBefore,
-        amountChange: DRAW_COST,
-        balanceAfter,
-        typeOfTransaction: '抽奖消费',
-        timeCreatedAt: now,
-      });
+      await chargeLotteryCostTx(tx, { payerIdentity, amount: DRAW_COST, now });
     }
 
-    // 读取/初始化保底计数
-    const pity = await tx.lotteryPity.upsert({
-      where: { jinleeId: ownerIdentity.jinleeId },
-      update: { userId: ownerIdentity.discordUserId ?? null },
-      create: {
-        jinleeId: ownerIdentity.jinleeId,
-        userId: ownerIdentity.discordUserId ?? null,
-        missCount: 0,
-      },
-    });
-    const shouldForceSpecial = (pity?.missCount ?? 0) >= PITY_THRESHOLD;
+    const picked = await pickAndConsumePrize(tx, pool ? { pool } : undefined);
 
-    let picked: PrizeLike | null = null;
-    let forcedSpecial = false;
-    let forcedButNoSpecial = false;
-
-    if (shouldForceSpecial) {
-      forcedSpecial = true;
-      try {
-        picked = await pickPrize(tx, LotteryPool.SPECIAL);
-      } catch (err) {
-        forcedButNoSpecial = true;
-        await sendLotteryAlert(`[lottery][pity] 用户 ${ownerIdentity.jinleeId} 触发保底，但特级奖池无可用库存，回落到其他奖池`);
-      }
-    }
-
-    if (!picked) {
-      picked = await pickPrize(tx, pool);
-    }
-
-    if (!picked.unlimited) {
-      if (picked.pool === LotteryPool.SPECIAL && (picked.stock ?? 0) === 1) {
-        await sendLotteryAlert(`[lottery][stock] 特级奖品「${picked.name}」仅剩 1 个库存`);
-      }
-      const ok = await consumeStock(tx, picked);
-      if (!ok) {
-        await sendLotteryAlert(`[lottery][stock_empty] 奖品「${picked.name}」库存不足，回落到金色池`);
-        picked = await pickPrize(tx, LotteryPool.MEDIUM);
-        // medium 也可能有限，再次尝试扣减；失败则抛错
-        if (!picked.unlimited) {
-          const fallbackOk = await consumeStock(tx, picked);
-          if (!fallbackOk) throw new LotteryError('NO_FALLBACK_PRIZE');
-        }
-      }
+    if (!picked.unlimited && picked.pool === LotteryPool.SPECIAL && (picked.stock ?? 0) === 1) {
+      await sendLotteryAlert(`[lottery][stock] 特级奖品「${picked.name}」仅剩 1 个库存`);
     }
 
     const randomVal = Math.random();
-    const kind = classifyPrize(picked.name);
+    const kind = resolvePrizeKind(picked);
     const expiresAt = voucherExpiresAt(kind, now);
     const code = generateCode(kind);
     const cost = useFreeVoucher ? new Prisma.Decimal(0) : DRAW_COST;
@@ -521,20 +587,6 @@ export async function performLotteryDraw(params: {
 
     if (!draw.prize) throw new LotteryError('MISSING_PRIZE');
 
-    // 更新保底计数：特级命中清零；非特级 +1；保底但无特级库存时不变
-    if (pity) {
-      let nextMiss = pity.missCount;
-      if (draw.prize.pool === LotteryPool.SPECIAL) {
-        nextMiss = 0;
-      } else if (!forcedButNoSpecial) {
-        nextMiss = pity.missCount + 1;
-      }
-      await tx.lotteryPity.update({
-        where: { jinleeId: ownerIdentity.jinleeId },
-        data: { userId: ownerIdentity.discordUserId ?? null, missCount: nextMiss },
-      });
-    }
-
     return {
       drawId: draw.id,
       prize: draw.prize as PrizeLike,
@@ -543,6 +595,118 @@ export async function performLotteryDraw(params: {
       cost: draw.cost,
     };
   });
+  if (spentCharged && payerDiscordForRoleSync) {
+    scheduleSpentRoleSync(payerDiscordForRoleSync, { announceVipUpgrade: true });
+  }
+  return result;
+}
+
+export async function performLotteryTenDraw(params: {
+  userId: string;
+  payerId?: string;
+  nonce: string;
+  requestId?: string;
+}): Promise<LotteryBatchResult> {
+  const { userId, payerId = userId, nonce, requestId } = params;
+  const now = new Date();
+  let spentCharged = false;
+  let payerDiscordForRoleSync: string | null = null;
+
+  const result = await prisma.$transaction(async (tx) => {
+    const ownerIdentity = await ensureJinleeIdentityForDiscordTx(tx, userId);
+    const payerIdentity =
+      payerId === userId ? ownerIdentity : await ensureJinleeIdentityForDiscordTx(tx, payerId);
+    payerDiscordForRoleSync = payerIdentity.discordUserId ?? null;
+
+    const existing = await tx.lotteryDraw.findMany({
+      where: { nonce: { startsWith: `${nonce}:` } },
+      include: { prize: true },
+      orderBy: { nonce: 'asc' },
+    });
+    if (existing.length === 10) {
+      return {
+        draws: existing.map((draw) => {
+          if (!draw.prize) throw new LotteryError('MISSING_PRIZE');
+          return {
+            drawId: draw.id,
+            prize: draw.prize as PrizeLike,
+            pool: draw.pool,
+            random: draw.random ?? Math.random(),
+            cost: new Prisma.Decimal(draw.cost ?? 0),
+          };
+        }),
+        cost: existing.reduce((sum, draw) => sum.add(new Prisma.Decimal(draw.cost ?? 0)), new Prisma.Decimal(0)),
+      };
+    }
+
+    if (ownerIdentity.discordUserId) {
+      await ensureJinleeIdentityForDiscordTx(tx, ownerIdentity.discordUserId);
+    }
+    if (payerIdentity.discordUserId && payerIdentity.discordUserId !== ownerIdentity.discordUserId) {
+      await ensureJinleeIdentityForDiscordTx(tx, payerIdentity.discordUserId);
+    }
+
+    spentCharged = true;
+    await chargeLotteryCostTx(tx, { payerIdentity, amount: TEN_DRAW_COST, now });
+
+    const recipe = await allocateTenDrawRotationRecipe(tx);
+    const drawPlans: Array<{ kind: 'normal' | 'baby' | 'random' }> = [
+      ...Array.from({ length: recipe.normal }, () => ({ kind: 'normal' as const })),
+      ...Array.from({ length: recipe.baby }, () => ({ kind: 'baby' as const })),
+      ...Array.from({ length: recipe.random }, () => ({ kind: 'random' as const })),
+    ];
+
+    // Keep the 10 slots visually random while preserving the configured counts.
+    for (let idx = drawPlans.length - 1; idx > 0; idx -= 1) {
+      const swapIdx = Math.floor(Math.random() * (idx + 1));
+      const current = drawPlans[idx];
+      drawPlans[idx] = drawPlans[swapIdx];
+      drawPlans[swapIdx] = current;
+    }
+
+    const draws: LotteryResult[] = [];
+    for (let idx = 0; idx < drawPlans.length; idx += 1) {
+      const plan = drawPlans[idx];
+      const picked =
+        plan.kind === 'normal'
+          ? await pickAndConsumePrize(tx, { pool: LotteryPool.NORMAL })
+          : plan.kind === 'baby'
+            ? await pickAndConsumePrize(tx, { prizeNames: [...TEN_DRAW_GUARANTEE_PRIZE_NAMES] })
+            : await pickAndConsumePrize(tx);
+      const kind = resolvePrizeKind(picked);
+      const drawNonce = `${nonce}:${String(idx + 1).padStart(2, '0')}`;
+      const randomVal = Math.random();
+      const draw = await tx.lotteryDraw.create({
+        data: {
+          nonce: drawNonce,
+          requestId,
+          userId: ownerIdentity.discordUserId ?? null,
+          jinleeId: ownerIdentity.jinleeId,
+          pool: picked.pool,
+          prizeId: picked.id,
+          cost: idx === 0 ? TEN_DRAW_COST : new Prisma.Decimal(0),
+          random: randomVal,
+          expiresAt: voucherExpiresAt(kind, now) ?? undefined,
+          code: generateCode(kind),
+        },
+        include: { prize: true },
+      });
+      if (!draw.prize) throw new LotteryError('MISSING_PRIZE');
+      draws.push({
+        drawId: draw.id,
+        prize: draw.prize as PrizeLike,
+        pool: draw.pool,
+        random: draw.random ?? randomVal,
+        cost: draw.cost,
+      });
+    }
+
+    return {
+      draws,
+      cost: TEN_DRAW_COST,
+    };
+  });
+
   if (spentCharged && payerDiscordForRoleSync) {
     scheduleSpentRoleSync(payerDiscordForRoleSync, { announceVipUpgrade: true });
   }
