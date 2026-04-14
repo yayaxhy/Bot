@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { Client, EmbedBuilder, Events, Message } from 'discord.js';
 import { CouponStatus, CouponType, LotteryPool, LotteryStatus, PrismaClient } from '@prisma/client';
+import { ensureJinleeIdentityForDiscordTx } from './jinleeAccountService.js';
 import { isUniqueConstraintError, realignCouponSequence } from './sequenceService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
 
@@ -224,6 +225,7 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
       let rewardImageUrl: string | null = getRewardImageFromEnv(picked.key);
 
       if (picked.kind === 'COUPON') {
+        const identity = await ensureJinleeIdentityForDiscordTx(prisma, userId);
         const expiresAt = new Date(Date.now() + expireDays * 24 * 60 * 60 * 1000);
 
         while (true) {
@@ -231,6 +233,7 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
             await prisma.coupon.create({
               data: {
                 discordId: userId,
+                jinleeId: identity.jinleeId,
                 type: picked.couponType!,
                 status: CouponStatus.ACTIVE,
                 expiresAt,
@@ -253,6 +256,7 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
           update: { points: { increment: points } },
         });
       } else {
+        const identity = await ensureJinleeIdentityForDiscordTx(prisma, userId);
         const prize = await prisma.lotteryPrize.findFirst({
           where: { name: picked.lotteryPrizeName },
           select: { id: true, pool: true, imageUrl: true },
@@ -266,6 +270,7 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
             nonce: `chat-drop:${userId}:${Date.now()}:${crypto.randomBytes(4).toString('hex')}`,
             requestId: `chat-drop:${message.id}`,
             userId,
+            jinleeId: identity.jinleeId,
             pool: prize.pool ?? LotteryPool.ADVANCED,
             prizeId: prize.id,
             cost: '0',
