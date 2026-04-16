@@ -5,7 +5,7 @@ import { addMinutes, minutesBetweenFloor } from '../lib/time.js';
 import { addHeart } from './heartService.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeFlowBuff, consumeSpendBuff, getActiveCommissionBoost, getFlowBuffRemaining } from './buffService.js';
-import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { awardVipAdjustedLoyaltyPointsTx } from './loyaltyPointService.js';
 import { evaluateAutoCommissionBuff, getAutoCommissionBoost } from './autoCommissionBuffService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import {
@@ -527,6 +527,7 @@ async function settle(
   let hostBalanceAfter = hostBalanceBefore;
   let hostFromIncome = new Prisma.Decimal(0);
   let hostFromRecharge = new Prisma.Decimal(0);
+  let pointsAwarded = new Prisma.Decimal(0);
 
   const spendBonus =
     hostIdentity.discordUserId != null
@@ -550,7 +551,7 @@ async function settle(
       totalBalanceDelta: gross.neg(),
       totalSpentDelta: totalSpentIncrement,
     });
-    await adjustLoyaltyPointsTx(tx, hostIdentity, gross);
+    pointsAwarded = await awardVipAdjustedLoyaltyPointsTx(tx, hostIdentity, gross);
 
     const hostIndividualTx = await recordIndividualTransaction(tx, {
       discordId: hostIdentity.discordUserId,
@@ -657,7 +658,7 @@ async function settle(
       workerJinleeId: workerIdentity.jinleeId,
       peiwanId: order.peiwanId,
       gross,
-      pointsEarned: gross,
+      pointsEarned: pointsAwarded,
       feeAmount: feeToPlatform,
       netAmount: netToWorker,
       commissionRate: payoutShare,

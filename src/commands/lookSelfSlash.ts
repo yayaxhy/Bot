@@ -1,6 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, userMention } from 'discord.js';
 import { MemberStatus, PeiwanReviewDisplayMode } from '@prisma/client';
 import prisma from '../db/prisma.js';
+import { formatBossReviews } from '../services/peiwanReviewDisplayService.js';
 import {
   buildGiftingSelect,
   DEFAULT_GIFTS,
@@ -54,21 +55,12 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
     select: {
       content: true,
       displayMode: true,
+      reviewerDiscordId: true,
       reviewerName: true,
     },
   });
 
-  const bossReviews = reviewRows.map((row) => {
-    const reviewText = String(row.content ?? '').trim();
-    if (row.displayMode === 'ANONYMOUS') {
-      return `匿名老板评语：${reviewText}`;
-    }
-    const reviewerName = (row.reviewerName ?? '').trim();
-    if (reviewerName) {
-      return `老板${reviewerName}评语：${reviewText}`;
-    }
-    return `老板评语：${reviewText}`;
-  });
+  const bossReviews = await formatBossReviews(i.guild, reviewRows);
 
   const peiwanType = resolvePeiwanEmbedTitle(peiwan.type, peiwan.gameProfiles);
   const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);

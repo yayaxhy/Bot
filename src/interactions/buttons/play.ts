@@ -11,6 +11,7 @@ import {
 import prisma from '../../db/prisma.js';
 import { clickStore } from '../../services/clickStore.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
+import { formatBossReviews } from '../../services/peiwanReviewDisplayService.js';
 import { MemberStatus, Prisma, PeiwanReviewDisplayMode, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
@@ -401,20 +402,11 @@ export async function handlePlayButton(i: ButtonInteraction) {
       select: {
         content: true,
         displayMode: true,
+        reviewerDiscordId: true,
         reviewerName: true,
       },
     });
-    const bossReviews = reviewRows.map((row: { content: string; displayMode: PeiwanReviewDisplayMode; reviewerName: string | null }) => {
-      const reviewText = String(row.content ?? '').trim();
-      if (row.displayMode === 'ANONYMOUS') {
-        return `匿名老板评语：${reviewText}`;
-      }
-      const reviewerName = (row.reviewerName ?? '').trim();
-      if (reviewerName) {
-        return `老板${reviewerName}评语：${reviewText}`;
-      }
-      return `老板评语：${reviewText}`;
-    });
+    const bossReviews = await formatBossReviews(i.guild, reviewRows);
 
     const { embed, components } = sent_MP_embed(
       peiwanType,

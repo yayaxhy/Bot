@@ -1,5 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { ensureJinleeIdentityForDiscordTx, type JinleeIdentity } from './jinleeAccountService.js';
+import { getPointBonusRateByTotalSpent } from '../config/vipCatalog.js';
+import {
+  ensureJinleeIdentityForDiscordTx,
+  getJinleeWalletSnapshotTx,
+  type JinleeIdentity,
+} from './jinleeAccountService.js';
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
 
@@ -44,4 +49,28 @@ export async function adjustLoyaltyPointsTx(
     where: { jinleeId: identity.jinleeId },
     data: { loyaltyPoints: next },
   });
+}
+
+export async function awardVipAdjustedLoyaltyPointsTx(
+  tx: Prisma.TransactionClient,
+  target: string | JinleeIdentity | null,
+  basePoints: Prisma.Decimal,
+) {
+  const baseValue = new Prisma.Decimal(basePoints);
+  if (baseValue.lte(0)) return DEC(0);
+  if (!target) return DEC(0);
+
+  const identity =
+    typeof target === 'string'
+      ? await ensureJinleeIdentityForDiscordTx(tx, target)
+      : target;
+
+  const wallet = await getJinleeWalletSnapshotTx(tx, identity);
+  const totalSpent = Number(wallet.totalSpent.toString());
+  const bonusRate = getPointBonusRateByTotalSpent(totalSpent);
+  const bonus = baseValue.mul(bonusRate).toDecimalPlaces(4);
+  const awarded = baseValue.add(bonus).toDecimalPlaces(4);
+
+  await adjustLoyaltyPointsTx(tx, identity, awarded);
+  return awarded;
 }

@@ -45,6 +45,7 @@ import {
   GENERAL_BROADCAST_CHANNEL_ID,
   getOrderChannelBindingSnapshot,
 } from '../services/orderChannelBindingService.js';
+import { tryHandleAssistantMessage } from '../assistant/index.js';
 
 dotenv.config();
 
@@ -677,6 +678,7 @@ export async function execute(message: Message) {
   if (await tryHandleEndOrderCommand(message)) return;
   if (await tryHandleInviteResponseCommand(message)) return;
   if (await tryHandleQuickOrderCommand(message)) return;
+  if (await tryHandleAssistantMessage(message)) return;
 
   if (!orderAnonChannelId) return;
 

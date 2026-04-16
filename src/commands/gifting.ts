@@ -10,7 +10,7 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { scheduleSpentRoleSync } from '../services/spentRoleService.js';
 import { PRIZE_NAMES } from '../services/lotteryService.js';
 import { unlockGiftWallForPeiwan } from '../services/giftWallService.js';
-import { adjustLoyaltyPointsTx } from '../services/loyaltyPointService.js';
+import { awardVipAdjustedLoyaltyPointsTx } from '../services/loyaltyPointService.js';
 import {
   applyJinleeWalletDeltaTx,
   ensureJinleeIdentityForDiscordTx,
@@ -833,6 +833,7 @@ export async function performGift(
     const spendRemainingBefore = await getSpendBuffRemaining(tx, giverId);
     const spendBonus = await consumeSpendBuff(tx, giverId, payable);
     const totalSpentIncrement = payable.add(spendBonus.extra);
+    let pointsAwarded = DEC(0);
 
     await tx.member.update({
       where: { discordUserId: giverId },
@@ -843,7 +844,7 @@ export async function performGift(
         totalSpent: { increment: totalSpentIncrement },
       },
     });
-    await adjustLoyaltyPointsTx(tx, giverId, payable);
+    pointsAwarded = await awardVipAdjustedLoyaltyPointsTx(tx, giverId, payable);
 
     const giverIndTx = await recordIndividualTransaction(tx, {
       discordId: giverId,
@@ -943,7 +944,7 @@ export async function performGift(
         unitPrice,
         gross,
         payable,
-        pointsEarned: payable,
+        pointsEarned: pointsAwarded,
         feeAmount,
         netAmount,
         receiverRate,
@@ -983,6 +984,7 @@ export async function performGift(
       unitPrice,
       gross,
       payable,
+      pointsEarned: pointsAwarded,
       receiverRate,
       feeAmount,
       netAmount,
@@ -1072,7 +1074,7 @@ export async function performGift(
       where: { discordUserId: giverId },
       select: { points: true },
     });
-    const earnedText = Number(result.payable.toString()).toFixed(2);
+    const earnedText = Number(result.pointsEarned.toString()).toFixed(2);
     const totalText = Number((pointsRow?.points ?? 0).toString()).toFixed(2);
     const giverUser = await client.users.fetch(giverId).catch(() => null);
     if (giverUser) {

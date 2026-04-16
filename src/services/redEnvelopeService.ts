@@ -13,7 +13,7 @@ import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { suppressRechargeNotifications } from './rechargeNotifyConfig.js';
 import { consumeSpendBuff, getActiveCommissionBoost } from './buffService.js';
-import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { awardVipAdjustedLoyaltyPointsTx, adjustLoyaltyPointsTx } from './loyaltyPointService.js';
 import { getAutoCommissionBoost } from './autoCommissionBuffService.js';
 import {
   applyJinleeWalletDeltaTx,
@@ -609,7 +609,7 @@ export async function createRedEnvelope(
       },
       select: { totalBalance: true },
     });
-    await adjustLoyaltyPointsTx(tx, params.creatorId, totalAmount);
+    const pointsAwarded = await awardVipAdjustedLoyaltyPointsTx(tx, params.creatorId, totalAmount);
 
     const peiwanRecord = await tx.pEIWAN.findUnique({
       where: { discordUserId: params.creatorId },
@@ -635,6 +635,7 @@ export async function createRedEnvelope(
       data: {
         creatorId: params.creatorId,
         totalAmount,
+        pointsAwarded,
         remainingAmount: totalAmount,
         totalCount: params.count,
         remainingCount: params.count,
@@ -949,6 +950,7 @@ export async function expireEnvelope(
         status: true,
         expiresAt: true,
         totalAmount: true,
+        pointsAwarded: true,
         remainingAmount: true,
         incomePool: true,
         rechargePool: true,
@@ -1003,7 +1005,13 @@ export async function expireEnvelope(
               totalSpent: { decrement: remainingAmount },
             },
           });
-          await adjustLoyaltyPointsTx(tx, envelope.creatorId, remainingAmount.mul(-1));
+          const totalAmount = asDecimal(envelope.totalAmount ?? 0);
+          const pointsAwarded = asDecimal(envelope.pointsAwarded ?? 0);
+          const refundPoints =
+            totalAmount.gt(0) && pointsAwarded.gt(0)
+              ? remainingAmount.mul(pointsAwarded).div(totalAmount).toDecimalPlaces(4)
+              : new Prisma.Decimal(0);
+          await adjustLoyaltyPointsTx(tx, envelope.creatorId, refundPoints.mul(-1));
 
         const peiwan = await tx.pEIWAN.findUnique({
           where: { discordUserId: envelope.creatorId },

@@ -329,7 +329,14 @@ export async function notifyOrderEnded(orderId: string) {
         )?.loyaltyPoints?.toString() ?? '0'
       )
     : 0;
-  const pointsEarned = Math.max(0, gross);
+  const auditedPoints = await prisma.orderAudit.findUnique({
+    where: { orderId: order.id },
+    select: { pointsEarned: true },
+  });
+  const pointsEarned = Math.max(
+    0,
+    Number((auditedPoints?.pointsEarned ?? order.grossAmount ?? 0).toString()),
+  );
   const displayNo = order.displayNo;
   const orderLabel = displayNo != null ? `${ORDER_ID_PREFIX}${displayNo}` : `${ORDER_ID_PREFIX}—`;
 

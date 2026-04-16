@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
 import { consumeSpendBuff } from './buffService.js';
-import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { awardVipAdjustedLoyaltyPointsTx } from './loyaltyPointService.js';
 import {
   applyJinleeWalletDeltaTx,
   ensureJinleeIdentityForDiscordTx,
@@ -410,7 +410,7 @@ async function chargeLotteryCostTx(
     totalBalanceDelta: amount.neg(),
     totalSpentDelta: totalSpentIncrement,
   });
-  await adjustLoyaltyPointsTx(tx, payerIdentity, amount);
+  await awardVipAdjustedLoyaltyPointsTx(tx, payerIdentity, amount);
   const balanceBefore = total;
   const balanceAfter = total.sub(amount);
   await recordIndividualTransaction(tx, {

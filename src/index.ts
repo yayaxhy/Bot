@@ -30,6 +30,8 @@ import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
 import { getAvatarCommand, handleGetAvatarSlash } from './commands/getAvatarSlash.js';
 import { channelMessageCommand, handleChannelMessageSlash } from './commands/channelMessageSlash.js';
 import { handleLookSelfSlash, lookSelfCommand } from './commands/lookSelfSlash.js';
+import { handleAssistantConfirmationButton } from './assistant/confirmButtons.js';
+import { getAssistantProviderStatus } from './assistant/providers/index.js';
 import { registerBalanceCommands } from './commands/balanceCommands.js';
 import { registerBlockStackCommand } from './commands/blockStack.js';
 import { registerScratchCommand } from './commands/scratch.js';
@@ -82,6 +84,18 @@ await Promise.race([
   process.exit(1);
 });
 console.log('[startup] prisma ready');
+
+const assistantProviderStatus = getAssistantProviderStatus();
+console.log(
+  '[startup] assistant provider:',
+  JSON.stringify({
+    enabled: assistantProviderStatus.enabled,
+    provider: assistantProviderStatus.provider,
+    baseUrl: assistantProviderStatus.baseUrl,
+    model: assistantProviderStatus.model,
+    tokenSavingMode: assistantProviderStatus.tokenSavingMode,
+  }),
+);
 
 const client = new Client({
   intents: [
@@ -246,6 +260,9 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
 
     // Buttons
     if (i.isButton()) {
+      if (await handleAssistantConfirmationButton(i)) {
+        return;
+      }
       if (i.customId?.startsWith('scratchstock:go:')) {
         await handleScratchStockButton(i);
         return;

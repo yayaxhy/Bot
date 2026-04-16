@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient, ScratchPrizeType, ScratchTicketStatus } from '@prisma/client';
+import { CouponStatus, CouponType, Prisma, PrismaClient, ScratchPrizeType, ScratchTicketStatus } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
 import { recordIndividualTransaction } from './individualTransactionService.js';
@@ -375,27 +375,62 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
       });
     }
 
-    const member = await tx.member.findUnique({
-      where: { discordUserId: params.userId },
-      select: { income: true, recharge: true, totalBalance: true },
+    const now = new Date();
+    await tx.coupon.updateMany({
+      where: {
+        discordId: params.userId,
+        type: CouponType.SCRATCH_TICKET_VOUCHER,
+        status: CouponStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: { status: CouponStatus.EXPIRED },
     });
-    if (!member) return { status: 'insufficient' as const };
+    const scratchVoucher = await tx.coupon.findFirst({
+      where: {
+        discordId: params.userId,
+        type: CouponType.SCRATCH_TICKET_VOUCHER,
+        status: CouponStatus.ACTIVE,
+        expiresAt: { gt: now },
+      },
+      orderBy: { issuedAt: 'asc' },
+      select: { id: true },
+    });
+    const usingVoucher = !!scratchVoucher;
 
-    let incomePool = DEC(member.income ?? 0);
-    let rechargePool = DEC(member.recharge ?? 0);
-    const totalBalance = DEC(member.totalBalance ?? 0);
-    const knownPool = incomePool.add(rechargePool);
-    const maxAvailable = knownPool.gt(totalBalance) ? knownPool : totalBalance;
-    if (maxAvailable.lt(SCRATCH_TICKET_PRICE)) {
-      return { status: 'insufficient' as const };
-    }
-    if (knownPool.lt(SCRATCH_TICKET_PRICE)) {
-      const missing = SCRATCH_TICKET_PRICE.sub(knownPool);
-      const extra = totalBalance.sub(knownPool);
-      if (extra.lt(missing)) {
+    let split:
+      | {
+          incomeAfter: Prisma.Decimal;
+          rechargeAfter: Prisma.Decimal;
+          totalAfter: Prisma.Decimal;
+          totalBefore: Prisma.Decimal;
+        }
+      | null = null;
+
+    if (!usingVoucher) {
+      const member = await tx.member.findUnique({
+        where: { discordUserId: params.userId },
+        select: { income: true, recharge: true, totalBalance: true },
+      });
+      if (!member) return { status: 'insufficient' as const };
+
+      let incomePool = DEC(member.income ?? 0);
+      let rechargePool = DEC(member.recharge ?? 0);
+      const totalBalance = DEC(member.totalBalance ?? 0);
+      const knownPool = incomePool.add(rechargePool);
+      const maxAvailable = knownPool.gt(totalBalance) ? knownPool : totalBalance;
+      if (maxAvailable.lt(SCRATCH_TICKET_PRICE)) {
         return { status: 'insufficient' as const };
       }
-      rechargePool = rechargePool.add(missing);
+      if (knownPool.lt(SCRATCH_TICKET_PRICE)) {
+        const missing = SCRATCH_TICKET_PRICE.sub(knownPool);
+        const extra = totalBalance.sub(knownPool);
+        if (extra.lt(missing)) {
+          return { status: 'insufficient' as const };
+        }
+        rechargePool = rechargePool.add(missing);
+      }
+
+      split = splitIncomeRecharge(incomePool, rechargePool, SCRATCH_TICKET_PRICE);
     }
 
     let ticketId: string | null = null;
@@ -442,26 +477,37 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
       ticketId = candidateId;
     }
 
-    const split = splitIncomeRecharge(incomePool, rechargePool, SCRATCH_TICKET_PRICE);
-    await tx.member.update({
-      where: { discordUserId: params.userId },
-      data: {
-        income: split.incomeAfter,
-        recharge: split.rechargeAfter,
-        totalBalance: split.totalAfter,
-        totalSpent: { increment: SCRATCH_TICKET_PRICE },
-      },
-    });
-    await updatePeiwanBalance(tx, params.userId, split.totalAfter);
+    if (usingVoucher && scratchVoucher) {
+      await tx.coupon.update({
+        where: { id: scratchVoucher.id },
+        data: {
+          status: CouponStatus.USED,
+          consumedAt: now,
+          consumeAmount: 0,
+          consumeTargetId: ticketOwnerId,
+        },
+      });
+    } else if (split) {
+      await tx.member.update({
+        where: { discordUserId: params.userId },
+        data: {
+          income: split.incomeAfter,
+          recharge: split.rechargeAfter,
+          totalBalance: split.totalAfter,
+          totalSpent: { increment: SCRATCH_TICKET_PRICE },
+        },
+      });
+      await updatePeiwanBalance(tx, params.userId, split.totalAfter);
 
-    await recordIndividualTransaction(tx, {
-      discordId: params.userId,
-      thirdPartydiscordId: params.counterpartyId ?? SCRATCH_SYSTEM_ID,
-      balanceBefore: split.totalBefore,
-      amountChange: SCRATCH_TICKET_PRICE,
-      balanceAfter: split.totalAfter,
-      typeOfTransaction: '刮刮乐购卡',
-    });
+      await recordIndividualTransaction(tx, {
+        discordId: params.userId,
+        thirdPartydiscordId: params.counterpartyId ?? SCRATCH_SYSTEM_ID,
+        balanceBefore: split.totalBefore,
+        amountChange: SCRATCH_TICKET_PRICE,
+        balanceAfter: split.totalAfter,
+        typeOfTransaction: '刮刮乐购卡',
+      });
+    }
 
     const ticket = await tx.scratchTicket.update({
       where: { id: ticketId! },
@@ -474,7 +520,7 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
       },
     });
 
-    return { status: 'ok' as const, ticket, purchaseAmount: SCRATCH_TICKET_PRICE };
+    return { status: 'ok' as const, ticket, purchaseAmount: usingVoucher ? DEC(0) : SCRATCH_TICKET_PRICE };
     });
 
     if (isRandomPick && result.status === 'ok') {
@@ -487,7 +533,7 @@ export async function purchaseScratchTicket(params: PurchaseParams): Promise<Scr
         scratchRandomThanksCount = 0;
       }
     }
-    if (result.status === 'ok') {
+    if (result.status === 'ok' && result.purchaseAmount.gt(0)) {
       scheduleSpentRoleSync(params.userId, { announceVipUpgrade: true });
     }
 

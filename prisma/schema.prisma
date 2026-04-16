@@ -285,6 +285,7 @@ model Member {
   pointShopPointLedgers  PointShopPointLedger[]
   pointShopGrants        PointShopGrant[]       @relation("PointShopGrantOwner")
   pointShopGrantConsumes PointShopGrant[]       @relation("PointShopGrantConsumeTarget")
+  vipBenefitGrants       VipBenefitGrant[]
   authoredPeiwanReviews  PeiwanReview[]         @relation("PeiwanReviewReviewer")
   receivedPeiwanReviews  PeiwanReview[]         @relation("PeiwanReviewPeiwan")
   voicePointSessions     VoicePointSession[]
@@ -551,6 +552,7 @@ enum CouponType {
   COMMISSION_MINUS1_VOUCHER
   DOUBLE_FLOW_5000_VOUCHER
   DOUBLE_SPEND_5000_VOUCHER
+  SCRATCH_TICKET_VOUCHER
   RENAME_CARD_3
   RENAME_CARD
   RENAME_CARD_5
@@ -1052,6 +1054,7 @@ model RedEnvelope {
   id              String            @id @default(cuid())
   creatorId       String
   totalAmount     Decimal           @db.Decimal(19, 4)
+  pointsAwarded   Decimal           @default(0) @db.Decimal(19, 4)
   remainingAmount Decimal           @db.Decimal(19, 4)
   totalCount      Int
   remainingCount  Int
@@ -1067,6 +1070,58 @@ model RedEnvelope {
   rechargePool    Decimal           @db.Decimal(19, 4)
 
   @@index([status, expiresAt])
+}
+
+enum VipBenefitDeliveryKind {
+  COUPON
+  LOTTERY
+  POINTS
+}
+
+enum VipBenefitInstanceStatus {
+  ACTIVE
+  REVOKED
+  FINALIZED
+}
+
+model VipBenefitGrant {
+  id            String   @id @default(cuid())
+  discordUserId String
+  vipLevel      Int
+  benefitCode   String
+  benefitLabel  String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  member    Member                     @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  instances VipBenefitGrantInstance[]
+
+  @@unique([discordUserId, benefitCode])
+  @@index([discordUserId, vipLevel])
+}
+
+model VipBenefitGrantInstance {
+  id                  String                   @id @default(cuid())
+  grantId             String
+  sequence            Int
+  deliveryKind        VipBenefitDeliveryKind
+  status              VipBenefitInstanceStatus @default(ACTIVE)
+  couponType          CouponType?
+  lotteryPrizeName    String?
+  pointsAmount        Decimal?                 @db.Decimal(19, 4)
+  sourceCouponId      String?
+  sourceLotteryDrawId String?
+  grantedAt           DateTime                 @default(now())
+  revokedAt           DateTime?
+  finalizedAt         DateTime?
+  updatedAt           DateTime                 @updatedAt
+
+  grant VipBenefitGrant @relation(fields: [grantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([grantId, sequence])
+  @@index([grantId, status])
+  @@index([sourceCouponId])
+  @@index([sourceLotteryDrawId])
 }
 
 model LotteryPrize {

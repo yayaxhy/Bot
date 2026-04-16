@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import fs from 'node:fs';
 import path from 'node:path';
 import prisma from '../db/prisma.js';
-import { adjustLoyaltyPointsTx } from './loyaltyPointService.js';
+import { awardVipAdjustedLoyaltyPointsTx } from './loyaltyPointService.js';
 
 const DEC_ZERO = new Prisma.Decimal(0);
 const DEFAULT_SECONDS_PER_POINT = 300;
@@ -248,7 +248,11 @@ async function closeSession(
     settled = true;
 
     if (awardedPoints.gt(0)) {
-      await adjustLoyaltyPointsTx(tx, session.discordUserId, awardedPoints);
+      awardedPoints = await awardVipAdjustedLoyaltyPointsTx(tx, session.discordUserId, awardedPoints);
+      await tx.voicePointSession.update({
+        where: { id: session.id },
+        data: { pointsAwarded: awardedPoints },
+      });
       await tx.voicePointLedger.create({
         data: {
           sessionId: session.id,

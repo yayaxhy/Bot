@@ -37,6 +37,7 @@ const GRANT_ITEMS: Record<string, GrantItem> = {
   COMMISSION_MINUS1: { label: '抽成降1%券', couponType: CouponType.COMMISSION_MINUS1_VOUCHER },
   DOUBLE_FLOW_5000: { label: '双倍流水5000券', couponType: CouponType.DOUBLE_FLOW_5000_VOUCHER },
   DOUBLE_SPEND_5000: { label: '双倍消费5000券', couponType: CouponType.DOUBLE_SPEND_5000_VOUCHER },
+  SCRATCH_TICKET: { label: '刮刮乐代金券', couponType: CouponType.SCRATCH_TICKET_VOUCHER },
   BLOCK_STACK_VOUCHER: { label: '积木游戏代金券', lotteryPrizeName: PRIZE_NAMES.BLOCK_STACK_VOUCHER },
 };
 

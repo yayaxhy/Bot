@@ -47,12 +47,16 @@ export function buildScratchPendingEmbed(params: {
   topPrizeRemaining?: number;
 }) {
   const codeExample = getScratchCodeExample(3);
+  const costDescription =
+    params.amount === '0' || params.amount === '0.00'
+      ? `使用代金券获得了 ${params.code} 号刮刮乐`
+      : `花费了${params.amount}，获得了 ${params.code} 号刮刮乐`;
   const embed = new EmbedBuilder()
     .setColor(SCRATCH_EMBED_COLOR)
     .setTitle('刮刮乐')
     .setThumbnail(SCRATCH_EMBED_THUMBNAIL_URL)
     .setImage(SCRATCH_PENDING_IMAGE_URL)
-    .setDescription(`花费了${params.amount}，获得了 ${params.code} 号刮刮乐`)
+    .setDescription(costDescription)
     .addFields(
       { name: '购卡用户', value: `<@${params.buyerId}>`, inline: true },
       {
