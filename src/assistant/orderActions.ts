@@ -22,7 +22,6 @@ import { scheduleOrderRequestClosure } from '../services/orderInteractionManager
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 import { getActiveActivities } from '../services/activityService.js';
-import { getDispatchImageUrlForOwner } from '../services/orderDispatchImageService.js';
 
 type AssistantOrderContext = Message | ButtonInteraction;
 
@@ -195,7 +194,6 @@ export async function executeNaturalDispatchCreate(
   clickStore.init(orderId, ownerId);
 
   const activities = await getActiveActivities();
-  const dispatchImageUrl = await getDispatchImageUrlForOwner(ownerId);
   const channel = await safeFetchChannel(context.client, ORDER_ANON_CHANNEL_ID, 'anon order channel');
   if (!channel || !channel.isTextBased() || !hasSend(channel)) {
     throw new Error('匿名派单频道不可用。');
@@ -230,7 +228,6 @@ export async function executeNaturalDispatchCreate(
     ownerId,
     undefined,
     activities,
-    dispatchImageUrl,
   );
   const posted = await channel.send(embedResponse);
   clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'body');

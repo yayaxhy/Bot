@@ -1317,6 +1317,7 @@ model Referral {
   inviteeId     String       @id
   inviterId     String
   type          ReferralType
+  enabled       Boolean      @default(true)
   payoutRate    Decimal      @default(0.01) @db.Decimal(10, 4)
   payoutCap     Decimal?     @default(1000) @db.Decimal(19, 4)
   policyApplied Boolean      @default(false)

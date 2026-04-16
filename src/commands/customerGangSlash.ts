@@ -70,7 +70,7 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
   const orderId = i.id; // 与正常派单一致，使用交互 ID
   const ownerId = boss.id;
   const activities = await getActiveActivities();
-  const dispatchImageUrl = await getDispatchImageUrlForOwner(ownerId);
+  const dispatchImageUrl = isAnonymous ? null : await getDispatchImageUrlForOwner(ownerId);
 
   try {
     await i.deferReply({ ephemeral: true });
@@ -95,7 +95,6 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
           ownerId,
           undefined,
           activities,
-          dispatchImageUrl,
         )
       : ongoing_order_request_embed(
           boss.tag,

@@ -29,7 +29,6 @@ export async function sendOrderRequest(interaction: Interaction) {
     message = (interaction.message as any)?.content ?? '';
   }
   const activities = await getActiveActivities();
-  const dispatchImageUrl = await getDispatchImageUrlForOwner(ownerId);
 
   const rolesMentioned =
     interaction instanceof ButtonInteraction
@@ -40,9 +39,10 @@ export async function sendOrderRequest(interaction: Interaction) {
     if (
       interaction.channel &&
       (interaction.channel instanceof TextChannel ||
-        interaction.channel instanceof DMChannel ||
+      interaction.channel instanceof DMChannel ||
         interaction.channel instanceof NewsChannel)
     ) {
+      const dispatchImageUrl = await getDispatchImageUrlForOwner(ownerId);
       const embedResponse = ongoing_order_request_embed(
         userA.tag, message, message, orderId, ownerId, undefined, activities, dispatchImageUrl  // 🔴 传 ownerId
       );
@@ -61,7 +61,7 @@ export async function sendOrderRequest(interaction: Interaction) {
     }
   } else {
     const embedResponse = anonymous_ongoing_order_request_embed(
-      message, message, orderId, ownerId, undefined, activities, dispatchImageUrl             // 🔴 传 ownerId
+      message, message, orderId, ownerId, undefined, activities
     );
     const ownerDisplayName =
       interaction.member && typeof interaction.member === 'object' && 'displayName' in interaction.member
