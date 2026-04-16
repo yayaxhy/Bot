@@ -22,24 +22,16 @@ export async function handleRegisterPeiwanSlash(i: ChatInputCommandInteraction) 
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const member = await tx.member.upsert({
+      await tx.member.upsert({
         where: { discordUserId: target.id },
         update: {},
         create: { discordUserId: target.id },
-        select: { discordUserId: true, VIPRoleOptOut: true },
       });
 
       await tx.member.update({
-        where: { discordUserId: member.discordUserId },
-        data: { status: MemberStatus.PEIWAN, VIPRoleOptOut: member.VIPRoleOptOut ?? false },
+        where: { discordUserId: target.id },
+        data: { status: MemberStatus.PEIWAN },
       });
-
-      await tx.$executeRaw`
-        UPDATE "Member"
-        SET "VIPRoleOptOut" = false
-        WHERE "discordUserId" = ${member.discordUserId}
-          AND ("VIPRoleOptOut"::text NOT IN ('true','false'));
-      `;
 
       const peiwan = await tx.pEIWAN.findUnique({
         where: { discordUserId: target.id },

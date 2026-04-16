@@ -108,6 +108,17 @@ function base(title: string, desc?: string): APIEmbed {
   return e.toJSON();
 }
 
+export function resolveOrderEmbedImageUrl(imageUrl?: string | null) {
+  const candidate = String(imageUrl ?? '').trim();
+  if (!candidate) return ORDER_PIC_URL;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? candidate : ORDER_PIC_URL;
+  } catch {
+    return ORDER_PIC_URL;
+  }
+}
+
 const clickCounts = new Map<string, number>(); // Stores the count of button clicks per order
 
 // Function to increase the count when a button is clicked
@@ -129,7 +140,8 @@ export function ongoing_order_request_embed(
   orderId: string,
   ownerId: string,
   callEmoji: string = PEIPEI_CALL_EMOJI,
-  activities: ActivityItem[] = []
+  activities: ActivityItem[] = [],
+  imageUrl?: string | null,
 ): MessageCreateOptions {
   const { plainText: mentionPlain } = parseRoleMentions(rolesLine);
   const mentionLinePlain = mentionPlain.trim();
@@ -147,7 +159,7 @@ export function ongoing_order_request_embed(
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
     .setDescription(lines.join('\n'))
-    .setImage(ORDER_PIC_URL);
+    .setImage(resolveOrderEmbedImageUrl(imageUrl));
 
   const button = new ButtonBuilder()
     .setCustomId(`requestOrder:${orderId}:${ownerId}`)
@@ -166,7 +178,8 @@ export function anonymous_ongoing_order_request_embed(
   orderId: string,
   ownerId: string,
   callEmoji: string = PEIPEI_CALL_EMOJI,
-  activities: ActivityItem[] = []
+  activities: ActivityItem[] = [],
+  imageUrl?: string | null,
 ): MessageCreateOptions {
   const { plainText: mentionPlain } = parseRoleMentions(rolesLine);
   const mentionLinePlain = mentionPlain.trim();
@@ -184,7 +197,7 @@ export function anonymous_ongoing_order_request_embed(
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
     .setDescription(lines.join('\n'))
-    .setImage(ORDER_PIC_URL);
+    .setImage(resolveOrderEmbedImageUrl(imageUrl));
 
   const button = new ButtonBuilder()
     .setCustomId(`requestOrder:${orderId}:${ownerId}`)

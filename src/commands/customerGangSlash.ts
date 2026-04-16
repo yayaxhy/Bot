@@ -7,6 +7,7 @@ import {
 import { scheduleOrderRequestClosure } from '../services/orderInteractionManager.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { getActiveActivities } from '../services/activityService.js';
+import { getDispatchImageUrlForOwner } from '../services/orderDispatchImageService.js';
 
 const SUPPORT_USER_IDS = new Set(['1421651539247894549', '525770714574225408', '794340158991237121']);
 const ORDER_CHANNEL_ID = '1421495114928492604';
@@ -69,6 +70,7 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
   const orderId = i.id; // 与正常派单一致，使用交互 ID
   const ownerId = boss.id;
   const activities = await getActiveActivities();
+  const dispatchImageUrl = await getDispatchImageUrlForOwner(ownerId);
 
   try {
     await i.deferReply({ ephemeral: true });
@@ -92,7 +94,8 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
           orderId,
           ownerId,
           undefined,
-          activities
+          activities,
+          dispatchImageUrl,
         )
       : ongoing_order_request_embed(
           boss.tag,
@@ -101,7 +104,8 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
           orderId,
           ownerId,
           undefined,
-          activities
+          activities,
+          dispatchImageUrl,
         );
 
     const posted = await channel.send({

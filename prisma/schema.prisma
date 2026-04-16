@@ -243,7 +243,6 @@ model Member {
   income        Decimal @default(0) @db.Decimal(19, 4)
   recharge      Decimal @default(0) @db.Decimal(19, 4)
   totalSpent    Decimal @default(0) @db.Decimal(19, 4)
-  VIPRoleOptOut Boolean @default(false)
 
   // Payout rate (user receives this share of gross), default 75%
   commissionRate     Decimal @default(0.75) @db.Decimal(7, 6)
@@ -286,6 +285,7 @@ model Member {
   pointShopGrants        PointShopGrant[]       @relation("PointShopGrantOwner")
   pointShopGrantConsumes PointShopGrant[]       @relation("PointShopGrantConsumeTarget")
   vipBenefitGrants       VipBenefitGrant[]
+  vipBenefitProfile      VipBenefitProfile?
   authoredPeiwanReviews  PeiwanReview[]         @relation("PeiwanReviewReviewer")
   receivedPeiwanReviews  PeiwanReview[]         @relation("PeiwanReviewPeiwan")
   voicePointSessions     VoicePointSession[]
@@ -1002,6 +1002,17 @@ model BossProfile {
   updatedAt               DateTime  @updatedAt
 
   member Member @relation(fields: [bossId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+}
+
+model VipBenefitProfile {
+  discordUserId        String   @id
+  roleOptOut           Boolean  @default(false)
+  announcementEnabled  Boolean  @default(true)
+  dispatchImageUrl     String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
 }
 
 model BossChannelBinding {

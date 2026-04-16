@@ -158,14 +158,19 @@ async function postVipUpgradeAnnouncement(discordId: string, tier: SpendRoleTier
 export async function replayCurrentVipUpgradeAnnouncement(discordId: string) {
   const memberRecord = await prisma.member.findUnique({
     where: { discordUserId: discordId },
-    select: { totalSpent: true, VIPRoleOptOut: true },
+    select: {
+      totalSpent: true,
+      vipBenefitProfile: {
+        select: { announcementEnabled: true },
+      },
+    },
   });
 
   if (!memberRecord) {
     return { ok: false as const, reason: 'member_not_found' as const };
   }
-  if (memberRecord.VIPRoleOptOut) {
-    return { ok: false as const, reason: 'vip_opt_out' as const };
+  if (memberRecord.vipBenefitProfile?.announcementEnabled === false) {
+    return { ok: false as const, reason: 'vip_announcement_opt_out' as const };
   }
 
   const totalSpentNumber = Number(memberRecord.totalSpent?.toString?.() ?? memberRecord.totalSpent ?? 0);
@@ -208,16 +213,26 @@ export async function syncSpentRolesForMember(
 
   const memberRecord = await prisma.member.findUnique({
     where: { discordUserId: discordId },
-    select: { totalSpent: true, VIPRoleOptOut: true },
+    select: {
+      totalSpent: true,
+      vipBenefitProfile: {
+        select: {
+          roleOptOut: true,
+          announcementEnabled: true,
+        },
+      },
+    },
   });
   if (!memberRecord) {
     return;
   }
 
+  const roleOptOut = memberRecord.vipBenefitProfile?.roleOptOut === true;
+  const announcementEnabled = memberRecord.vipBenefitProfile?.announcementEnabled !== false;
   const totalSpentNumber = includeSpendRoles
     ? Number(memberRecord.totalSpent?.toString?.() ?? memberRecord.totalSpent ?? 0)
     : 0;
-  const spendRoles = includeSpendRoles && !memberRecord.VIPRoleOptOut ? computeRoleSet(totalSpentNumber) : [];
+  const spendRoles = includeSpendRoles && !roleOptOut ? computeRoleSet(totalSpentNumber) : [];
   const targetVipTier = includeSpendRoles ? getHighestSpendTier(totalSpentNumber) : null;
 
   const [heartSent, heartReceived] = await Promise.all([
@@ -239,17 +254,18 @@ export async function syncSpentRolesForMember(
   const desiredHeartRoles = heartRoles;
   const desiredRoles = Array.from(new Set([...spendRoles, ...desiredHeartRoles]));
   let previousVipLevelForBenefits = targetVipTier?.vipLevel ?? 0;
-  let vipRoleSynced = !memberRecord.VIPRoleOptOut;
+  let vipRoleSynced = !roleOptOut;
 
   try {
     const guild = await client.guilds.fetch(SPENT_ROLE_GUILD_ID);
     const member = await guild.members.fetch(discordId);
     const currentRoleIds = new Set(member.roles.cache.keys());
     const currentVipTier =
-      includeSpendRoles && !memberRecord.VIPRoleOptOut ? getHighestSpendTierFromRoles(currentRoleIds) : null;
+      includeSpendRoles && !roleOptOut ? getHighestSpendTierFromRoles(currentRoleIds) : null;
     previousVipLevelForBenefits = currentVipTier?.vipLevel ?? previousVipLevelForBenefits;
     const shouldAnnounceVipUpgrade =
       announceVipUpgrade &&
+      announcementEnabled &&
       !!targetVipTier &&
       (!currentVipTier || targetVipTier.threshold > currentVipTier.threshold);
 

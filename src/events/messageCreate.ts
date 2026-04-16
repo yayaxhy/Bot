@@ -41,6 +41,7 @@ import { clickStore } from '../services/clickStore.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 import { getActiveActivities } from '../services/activityService.js';
+import { getDispatchImageUrlForOwner } from '../services/orderDispatchImageService.js';
 import {
   GENERAL_BROADCAST_CHANNEL_ID,
   getOrderChannelBindingSnapshot,
@@ -703,6 +704,7 @@ export async function execute(message: Message) {
   clickStore.init(orderId, ownerId);
   const defaultCallEmoji = '<:11:1422321930043789343>';
   const activities = await getActiveActivities();
+  const dispatchImageUrl = await getDispatchImageUrlForOwner(ownerId);
 
   try {
     if (
@@ -721,7 +723,7 @@ export async function execute(message: Message) {
           message.guild?.emojis.resolve('1422321930043789343')?.toString()
           ?? defaultCallEmoji;
         const embedResponse = ongoing_order_request_embed(
-          userA.tag, content, originalMsg, orderId, ownerId, callEmoji, activities
+          userA.tag, content, originalMsg, orderId, ownerId, callEmoji, activities, dispatchImageUrl
         );
         if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
           const hintMsg = await message.channel.send('老板派单啦，快来抢单');
@@ -791,7 +793,7 @@ export async function execute(message: Message) {
           const anonHint = await channelB.send('老板派单啦，快来抢单');
           clickStore.registerMessage(orderId, anonHint.id, anonHint.channelId, ownerId, 'hint');
           const embedResponse = anonymous_ongoing_order_request_embed(
-            content, content, orderId, ownerId, callEmoji, activities
+            content, content, orderId, ownerId, callEmoji, activities, dispatchImageUrl
           );
           const posted = await channelB.send(embedResponse);
           clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'body');
