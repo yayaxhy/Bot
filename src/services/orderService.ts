@@ -781,8 +781,8 @@ async function grantReferralCommission(
 
   // boss side: 1% of worker net
   const bossReferral = order.hostId
-    ? await tx.referral.findUnique({
-        where: { inviteeId: order.hostId },
+    ? await tx.referral.findFirst({
+        where: { inviteeId: order.hostId, enabled: true },
         select: { inviterId: true, inviteeId: true, type: true, payoutRate: true, payoutCap: true },
       })
     : null;
@@ -800,8 +800,8 @@ async function grantReferralCommission(
   }
 
   // worker side
-  const workerReferral = await tx.referral.findUnique({
-    where: { inviteeId: order.workerId },
+  const workerReferral = await tx.referral.findFirst({
+    where: { inviteeId: order.workerId, enabled: true },
     select: { inviterId: true, inviteeId: true, type: true, payoutRate: true, payoutCap: true },
   });
   if (workerReferral?.type === 'PEIWAN') {
