@@ -1171,6 +1171,7 @@ model AutoCommissionBuff {
   tierExpiries    Json?     @map("tier_expiries")
   activeUntil     DateTime? @map("active_until")
   lastQualifiedAt DateTime? @map("last_qualified_at")
+  lastReminderSentAt DateTime? @map("reminder_sent_for_active_until")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
 

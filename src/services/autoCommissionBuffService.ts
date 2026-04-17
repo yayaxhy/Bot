@@ -26,7 +26,6 @@ const LUCKY_STAR_EMOJI = '<:chatVoucherEmoji:1469588578655797289>';
 const CONGRATS_EMOJI = '<:congrats:1422362458596835480>';
 const LUCKY_STAR_LOGO_PATH = path.resolve(process.cwd(), 'src', 'img', 'jinleelogo.jpg');
 let autoCommissionWatcherRunning = false;
-const luckyStarReminderSentForActiveUntil = new Map<string, string>();
 
 const AUTO_COMMISSION_POSITIVE_TYPES = ['点单', '打赏', '客服代打赏', '红包收入'] as const;
 const AUTO_COMMISSION_REVERT_TYPES = ['订单撤销', '打赏撤销'] as const;
@@ -92,6 +91,11 @@ const formatSharePercent = (share: Prisma.Decimal) => {
 };
 
 const formatDateYmd = (value: Date) => value.toISOString().slice(0, 10);
+
+const getUtcDateKey = (value: Date) => value.toISOString().slice(0, 10);
+
+const sameUtcDay = (left: Date | null | undefined, right: Date | null | undefined) =>
+  !!left && !!right && getUtcDateKey(left) === getUtcDateKey(right);
 
 async function postLuckyStarFeed(
   options:
@@ -477,7 +481,13 @@ export async function evaluateAutoCommissionBuffWithReason(
 
     const existing = await tx.autoCommissionBuff.findUnique({
       where: { userId },
-      select: { activeUntil: true, lastQualifiedAt: true, currentAmount: true, tierExpiries: true },
+      select: {
+        activeUntil: true,
+        lastQualifiedAt: true,
+        currentAmount: true,
+        tierExpiries: true,
+        lastReminderSentAt: true,
+      },
     });
     const previousActiveUntil = existing?.activeUntil ?? null;
     const previousRoleActive = !!(existing?.activeUntil && existing.activeUntil > now);
@@ -526,6 +536,13 @@ export async function evaluateAutoCommissionBuffWithReason(
       now >= reminderWindowStart &&
       remainingToNext.gt(0)
     );
+    const reminderAlreadySent = sameUtcDay(existing?.lastReminderSentAt, now);
+    const shouldSendReminder = reminderNeeded && !reminderAlreadySent;
+    const lastReminderSentAt = shouldSendReminder
+      ? now
+      : reminderAlreadySent
+        ? existing?.lastReminderSentAt ?? now
+        : null;
 
     await tx.autoCommissionBuff.upsert({
       where: { userId },
@@ -540,6 +557,7 @@ export async function evaluateAutoCommissionBuffWithReason(
         tierExpiries: serializeTierExpiries(tierExpiries),
         activeUntil: activeUntil ?? undefined,
         lastQualifiedAt: lastQualifiedAt ?? undefined,
+        lastReminderSentAt: lastReminderSentAt ?? undefined,
       },
       update: {
         targetShare: AUTO_COMMISSION_TARGET_SHARE,
@@ -551,6 +569,7 @@ export async function evaluateAutoCommissionBuffWithReason(
         tierExpiries: serializeTierExpiries(tierExpiries),
         activeUntil,
         lastQualifiedAt,
+        lastReminderSentAt,
       },
     });
 
@@ -597,6 +616,7 @@ export async function evaluateAutoCommissionBuffWithReason(
       ),
       previousActiveUntil,
       reminderNeeded,
+      shouldSendReminder,
       remainingToNext,
       baseShare: resolvedBase,
     };
@@ -620,11 +640,7 @@ export async function evaluateAutoCommissionBuffWithReason(
       )}，新结束时间为：${formatDateYmd(result.activeUntil)}`,
     });
   }
-  const activeUntilKey = result.activeUntil?.toISOString() ?? '';
-  if (!result.activeUntil) {
-    luckyStarReminderSentForActiveUntil.delete(userId);
-  } else if (result.reminderNeeded && luckyStarReminderSentForActiveUntil.get(userId) !== activeUntilKey) {
-    luckyStarReminderSentForActiveUntil.set(userId, activeUntilKey);
+  if (result.activeUntil && result.shouldSendReminder) {
     await notifyLuckyStarExpiryReminder({
       userId,
       activeUntil: result.activeUntil,
