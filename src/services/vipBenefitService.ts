@@ -540,9 +540,10 @@ export async function reconcileVipBenefitsForMember(
   const vipRoleSynced = options.vipRoleSynced ?? true;
   const grantedLabels: string[] = [];
   const revokedLabels: string[] = [];
+  const firstNewVipLevel = Math.max(previousVipLevel + 1, 1);
 
   await prisma.$transaction(async (tx) => {
-    for (let vipLevel = 1; vipLevel <= currentVipLevel; vipLevel += 1) {
+    for (let vipLevel = firstNewVipLevel; vipLevel <= currentVipLevel; vipLevel += 1) {
       for (const benefit of listOneTimeAutoBenefitsForLevel(vipLevel)) {
         await ensureBenefitGrantTx(tx, discordUserId, benefit, vipLevel, grantedLabels);
       }
