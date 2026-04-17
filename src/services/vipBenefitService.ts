@@ -37,6 +37,15 @@ type ReconcileSummary = {
   contact: string[];
 };
 
+type VipLevelBenefitNotification = {
+  vipLevel: number;
+  currentVipLevel: number;
+  granted: string[];
+  alreadyDelivered: string[];
+  contact: string[];
+  vipRoleSynced: boolean;
+};
+
 type TxClient = Prisma.TransactionClient;
 
 function buildCountMap(labels: string[]) {
@@ -53,6 +62,17 @@ function formatCountMap(labels: string[]) {
 
 function uniqueStrings(values: string[]) {
   return Array.from(new Set(values.filter(Boolean)));
+}
+
+function expandBenefitLabels(benefits: VipOneTimeAutoBenefit[]) {
+  return benefits.flatMap((benefit) => Array.from({ length: benefit.quantity }, () => benefit.label));
+}
+
+function buildAlreadyDeliveredLine(benefit: VipOneTimeAutoBenefit) {
+  if (benefit.kind === 'points') {
+    return `${benefit.label}已发放，不重复补发`;
+  }
+  return `${benefit.label}已被使用/发放`;
 }
 
 async function createCouponBenefitTx(
@@ -387,6 +407,7 @@ async function ensureBenefitGrantTx(
   benefit: VipOneTimeAutoBenefit,
   vipLevel: number,
   grantedLabels: string[],
+  alreadyDeliveredLines: string[],
 ) {
   const grant = await tx.vipBenefitGrant.upsert({
     where: {
@@ -430,8 +451,16 @@ async function ensureBenefitGrantTx(
       continue;
     }
 
+    if (instance.status === VipBenefitInstanceStatus.FINALIZED) {
+      alreadyDeliveredLines.push(buildAlreadyDeliveredLine(benefit));
+      continue;
+    }
+
     if (instance.status === VipBenefitInstanceStatus.ACTIVE) {
-      await finalizeInactiveInstanceIfNeeded(tx, instance, now);
+      const finalized = await finalizeInactiveInstanceIfNeeded(tx, instance, now);
+      if (finalized) {
+        alreadyDeliveredLines.push(buildAlreadyDeliveredLine(benefit));
+      }
     }
   }
 }
@@ -531,6 +560,88 @@ async function sendVipBenefitSummaryDm(discordUserId: string, summary: Reconcile
   }
 }
 
+export async function sendVipBenefitOverviewDm(
+  discordUserId: string,
+  vipLevel: number,
+  options: { vipRoleSynced?: boolean } = {},
+) {
+  const tier = getVipTierByLevel(vipLevel);
+  if (!tier) {
+    return;
+  }
+
+  const current = buildCurrentBenefitLines(Math.max(vipLevel - 1, 0), vipLevel, options.vipRoleSynced ?? true);
+  const autoBenefits = formatCountMap(expandBenefitLabels(tier.oneTimeAutoBenefits));
+  const sections: string[] = ['您的 VIP 福利已同步：'];
+
+  if (current.length > 0) {
+    sections.push(['当前已生效：', ...current.map((line) => `- ${line}`)].join('\n'));
+  }
+  if (autoBenefits.length > 0) {
+    sections.push(['本级自动福利：', ...autoBenefits.map((line) => `- ${line}`)].join('\n'));
+  }
+  if (tier.manualBenefits.length > 0) {
+    sections.push(['请联系客服领取：', ...tier.manualBenefits.map((line) => `- ${line}`)].join('\n'));
+  }
+
+  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+  if (!client) {
+    return;
+  }
+
+  try {
+    const user = await client.users.fetch(discordUserId);
+    await user.send(sections.join('\n\n'));
+  } catch (err) {
+    console.error('[vip-benefit] overview dm failed', { discordUserId, vipLevel, err });
+  }
+}
+
+async function sendVipLevelBenefitDm(discordUserId: string, notification: VipLevelBenefitNotification) {
+  const tier = getVipTierByLevel(notification.vipLevel);
+  if (!tier) {
+    return;
+  }
+
+  const currentTier = getVipTierByLevel(notification.currentVipLevel);
+  const sections: string[] = [`您的 VIP ${notification.vipLevel} 福利状态已更新：`];
+
+  if (notification.vipLevel === notification.currentVipLevel && currentTier) {
+    const current = buildCurrentBenefitLines(
+      Math.max(notification.currentVipLevel - 1, 0),
+      notification.currentVipLevel,
+      notification.vipRoleSynced,
+    );
+    if (current.length > 0) {
+      sections.push(['当前已生效：', ...current.map((line) => `- ${line}`)].join('\n'));
+    }
+  } else {
+    sections.push(['本级已解锁：', `- VIP ${tier.vipLevel} · ${tier.name}`].join('\n'));
+  }
+
+  if (notification.granted.length > 0) {
+    sections.push(['本次升级已自动发放福利：', ...notification.granted.map((line) => `- ${line}`)].join('\n'));
+  }
+  if (notification.alreadyDelivered.length > 0) {
+    sections.push(['以下福利不再重复发放：', ...notification.alreadyDelivered.map((line) => `- ${line}`)].join('\n'));
+  }
+  if (notification.contact.length > 0) {
+    sections.push(['请联系客服领取：', ...notification.contact.map((line) => `- ${line}`)].join('\n'));
+  }
+
+  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+  if (!client) {
+    return;
+  }
+
+  try {
+    const user = await client.users.fetch(discordUserId);
+    await user.send(sections.join('\n\n'));
+  } catch (err) {
+    console.error('[vip-benefit] level dm failed', { discordUserId, vipLevel: notification.vipLevel, err });
+  }
+}
+
 export async function reconcileVipBenefitsForMember(
   discordUserId: string,
   options: ReconcileVipBenefitsOptions,
@@ -541,12 +652,26 @@ export async function reconcileVipBenefitsForMember(
   const grantedLabels: string[] = [];
   const revokedLabels: string[] = [];
   const firstNewVipLevel = Math.max(previousVipLevel + 1, 1);
+  const grantedLabelsByLevel = new Map<number, string[]>();
+  const alreadyDeliveredLabelsByLevel = new Map<number, string[]>();
 
   await prisma.$transaction(async (tx) => {
     for (let vipLevel = firstNewVipLevel; vipLevel <= currentVipLevel; vipLevel += 1) {
+      const grantedForLevel: string[] = [];
+      const alreadyDeliveredForLevel: string[] = [];
       for (const benefit of listOneTimeAutoBenefitsForLevel(vipLevel)) {
-        await ensureBenefitGrantTx(tx, discordUserId, benefit, vipLevel, grantedLabels);
+        await ensureBenefitGrantTx(
+          tx,
+          discordUserId,
+          benefit,
+          vipLevel,
+          grantedForLevel,
+          alreadyDeliveredForLevel,
+        );
       }
+      grantedLabels.push(...grantedForLevel);
+      grantedLabelsByLevel.set(vipLevel, grantedForLevel);
+      alreadyDeliveredLabelsByLevel.set(vipLevel, alreadyDeliveredForLevel);
     }
 
     for (let vipLevel = currentVipLevel + 1; vipLevel <= VIP_TIERS.length; vipLevel += 1) {
@@ -583,6 +708,20 @@ export async function reconcileVipBenefitsForMember(
     previousVipLevel !== currentVipLevel || granted.length > 0 || revoked.length > 0 || manualBenefits.length > 0;
 
   if (!shouldNotify) {
+    return;
+  }
+
+  if (previousVipLevel < currentVipLevel) {
+    for (let vipLevel = previousVipLevel + 1; vipLevel <= currentVipLevel; vipLevel += 1) {
+      await sendVipLevelBenefitDm(discordUserId, {
+        vipLevel,
+        currentVipLevel,
+        granted: formatCountMap(grantedLabelsByLevel.get(vipLevel) ?? []),
+        alreadyDelivered: formatCountMap(alreadyDeliveredLabelsByLevel.get(vipLevel) ?? []),
+        contact: getVipTierByLevel(vipLevel)?.manualBenefits ?? [],
+        vipRoleSynced,
+      });
+    }
     return;
   }
 

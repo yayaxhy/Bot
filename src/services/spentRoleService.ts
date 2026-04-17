@@ -1,7 +1,7 @@
 import prisma from '../db/prisma.js';
 import { EmbedBuilder, userMention, type Client } from 'discord.js';
 import { getHighestVipTierByTotalSpent, VIP_TIERS, type VipTierConfig } from '../config/vipCatalog.js';
-import { reconcileVipBenefitsForMember } from './vipBenefitService.js';
+import { reconcileVipBenefitsForMember, sendVipBenefitOverviewDm } from './vipBenefitService.js';
 
 type Tier = { threshold: number; roles: string[] };
 type SpendRoleTier = VipTierConfig;
@@ -257,6 +257,7 @@ export async function syncSpentRolesForMember(
   const desiredRoles = Array.from(new Set([...spendRoles, ...desiredHeartRoles]));
   const previousVipLevelForBenefits = includeSpendRoles ? persistedSettledVipLevel : 0;
   let vipRoleSynced = !roleOptOut;
+  let didAnnounceVipUpgrade = false;
 
   try {
     const guild = await client.guilds.fetch(SPENT_ROLE_GUILD_ID);
@@ -292,6 +293,7 @@ export async function syncSpentRolesForMember(
     }
     if (shouldAnnounceVipUpgrade && targetVipTier) {
       await postVipUpgradeAnnouncement(discordId, targetVipTier);
+      didAnnounceVipUpgrade = true;
     }
   } catch (err) {
     vipRoleSynced = false;
@@ -304,6 +306,14 @@ export async function syncSpentRolesForMember(
       currentVipLevel: targetVipTier?.vipLevel ?? 0,
       vipRoleSynced,
     });
+
+    if (
+      didAnnounceVipUpgrade &&
+      targetVipTier &&
+      previousVipLevelForBenefits >= targetVipTier.vipLevel
+    ) {
+      await sendVipBenefitOverviewDm(discordId, targetVipTier.vipLevel, { vipRoleSynced });
+    }
   }
 }
 
