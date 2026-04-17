@@ -1008,6 +1008,7 @@ model VipBenefitProfile {
   discordUserId        String   @id
   roleOptOut           Boolean  @default(false)
   announcementEnabled  Boolean  @default(true)
+  lastSettledVipLevel  Int      @default(0)
   dispatchImageUrl     String?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt

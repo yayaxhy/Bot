@@ -219,6 +219,7 @@ export async function syncSpentRolesForMember(
         select: {
           roleOptOut: true,
           announcementEnabled: true,
+          lastSettledVipLevel: true,
         },
       },
     },
@@ -229,6 +230,7 @@ export async function syncSpentRolesForMember(
 
   const roleOptOut = memberRecord.vipBenefitProfile?.roleOptOut === true;
   const announcementEnabled = memberRecord.vipBenefitProfile?.announcementEnabled !== false;
+  const persistedSettledVipLevel = Math.max(0, memberRecord.vipBenefitProfile?.lastSettledVipLevel ?? 0);
   const totalSpentNumber = includeSpendRoles
     ? Number(memberRecord.totalSpent?.toString?.() ?? memberRecord.totalSpent ?? 0)
     : 0;
@@ -253,7 +255,7 @@ export async function syncSpentRolesForMember(
 
   const desiredHeartRoles = heartRoles;
   const desiredRoles = Array.from(new Set([...spendRoles, ...desiredHeartRoles]));
-  let previousVipLevelForBenefits = targetVipTier?.vipLevel ?? 0;
+  const previousVipLevelForBenefits = includeSpendRoles ? persistedSettledVipLevel : 0;
   let vipRoleSynced = !roleOptOut;
 
   try {
@@ -262,7 +264,6 @@ export async function syncSpentRolesForMember(
     const currentRoleIds = new Set(member.roles.cache.keys());
     const currentVipTier =
       includeSpendRoles && !roleOptOut ? getHighestSpendTierFromRoles(currentRoleIds) : null;
-    previousVipLevelForBenefits = currentVipTier?.vipLevel ?? previousVipLevelForBenefits;
     const shouldAnnounceVipUpgrade =
       announceVipUpgrade &&
       announcementEnabled &&

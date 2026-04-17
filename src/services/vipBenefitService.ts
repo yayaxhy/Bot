@@ -557,6 +557,15 @@ export async function reconcileVipBenefitsForMember(
         await revokeBenefitGrantTx(tx, benefit, discordUserId, revokedLabels);
       }
     }
+
+    await tx.vipBenefitProfile.upsert({
+      where: { discordUserId },
+      update: { lastSettledVipLevel: currentVipLevel },
+      create: {
+        discordUserId,
+        lastSettledVipLevel: currentVipLevel,
+      },
+    });
   });
 
   const manualBenefits =
