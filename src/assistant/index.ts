@@ -31,6 +31,21 @@ function isMentionTriggerMessage(message: Message) {
   return message.mentions.users.has(botId);
 }
 
+async function sendAssistantReply(message: Message, content: string, options?: { preferDmForPublic?: boolean }) {
+  if (options?.preferDmForPublic && message.guild) {
+    try {
+      const dmChannel = await message.author.createDM();
+      await dmChannel.send(content);
+      return;
+    } catch {
+      await message.reply('我没法私信你，请先开启私信后再试。');
+      return;
+    }
+  }
+
+  await message.reply(content);
+}
+
 function formatAssistantError(err: unknown) {
   const text = err instanceof Error ? err.message : String(err ?? '');
   if (text.includes('ORDER_NOT_ASSIGNED_TO_WORKER')) {
@@ -233,7 +248,9 @@ async function handlePlannerDecision(message: Message, parsed: ParsedAssistantIn
       reply,
     });
     if (reply) {
-      await message.reply(reply);
+      await sendAssistantReply(message, reply, {
+        preferDmForPublic: decision.action.kind === 'balance.query',
+      });
     }
   } catch (err) {
     logAssistantEvent('planner_execute_failed', {
@@ -242,7 +259,9 @@ async function handlePlannerDecision(message: Message, parsed: ParsedAssistantIn
       action: decision.action,
       error: err,
     });
-    await message.reply(formatAssistantError(err));
+    await sendAssistantReply(message, formatAssistantError(err), {
+      preferDmForPublic: decision.action.kind === 'balance.query',
+    });
   }
   return true;
 }

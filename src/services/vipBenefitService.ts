@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { EmbedBuilder, type Client } from 'discord.js';
 import {
   CouponStatus,
   LotteryStatus,
@@ -73,6 +74,24 @@ function buildAlreadyDeliveredLine(benefit: VipOneTimeAutoBenefit) {
     return `${benefit.label}已发放，不重复补发`;
   }
   return `${benefit.label}已被使用/发放`;
+}
+
+async function sendVipBenefitEmbedDm(discordUserId: string, title: string, sections: string[]) {
+  const client = (globalThis as any).__CLIENT__ as Client | undefined;
+  if (!client) {
+    return;
+  }
+
+  try {
+    const user = await client.users.fetch(discordUserId);
+    const embed = new EmbedBuilder()
+      .setColor(0xf7c948)
+      .setTitle(title)
+      .setDescription(sections.join('\n\n'));
+    await user.send({ embeds: [embed] });
+  } catch (err) {
+    console.error('[vip-benefit] dm failed', { discordUserId, title, err });
+  }
 }
 
 async function createCouponBenefitTx(
@@ -532,12 +551,7 @@ function buildCurrentBenefitLines(previousVipLevel: number, currentVipLevel: num
 }
 
 async function sendVipBenefitSummaryDm(discordUserId: string, summary: ReconcileSummary) {
-  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
-  if (!client) {
-    return;
-  }
-
-  const sections: string[] = ['您的 VIP 福利状态已更新：'];
+  const sections: string[] = [];
 
   if (summary.current.length > 0) {
     sections.push(['当前已生效：', ...summary.current.map((line) => `- ${line}`)].join('\n'));
@@ -549,15 +563,10 @@ async function sendVipBenefitSummaryDm(discordUserId: string, summary: Reconcile
     sections.push(['已自动撤回：', ...summary.revoked.map((line) => `- ${line}`)].join('\n'));
   }
   if (summary.contact.length > 0) {
-    sections.push(['请联系客服领取：', ...summary.contact.map((line) => `- ${line}`)].join('\n'));
+    sections.push(['请截图以下信息联系客服领取：', ...summary.contact.map((line) => `- ${line}`)].join('\n'));
   }
 
-  try {
-    const user = await client.users.fetch(discordUserId);
-    await user.send(sections.join('\n\n'));
-  } catch (err) {
-    console.error('[vip-benefit] dm failed', { discordUserId, err });
-  }
+  await sendVipBenefitEmbedDm(discordUserId, '您的 VIP 福利状态已更新：', sections);
 }
 
 export async function sendVipBenefitOverviewDm(
@@ -572,7 +581,7 @@ export async function sendVipBenefitOverviewDm(
 
   const current = buildCurrentBenefitLines(Math.max(vipLevel - 1, 0), vipLevel, options.vipRoleSynced ?? true);
   const autoBenefits = formatCountMap(expandBenefitLabels(tier.oneTimeAutoBenefits));
-  const sections: string[] = ['您的 VIP 福利已同步：'];
+  const sections: string[] = [];
 
   if (current.length > 0) {
     sections.push(['当前已生效：', ...current.map((line) => `- ${line}`)].join('\n'));
@@ -581,20 +590,10 @@ export async function sendVipBenefitOverviewDm(
     sections.push(['本级自动福利：', ...autoBenefits.map((line) => `- ${line}`)].join('\n'));
   }
   if (tier.manualBenefits.length > 0) {
-    sections.push(['请联系客服领取：', ...tier.manualBenefits.map((line) => `- ${line}`)].join('\n'));
+    sections.push(['请截图以下信息联系客服领取：', ...tier.manualBenefits.map((line) => `- ${line}`)].join('\n'));
   }
 
-  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
-  if (!client) {
-    return;
-  }
-
-  try {
-    const user = await client.users.fetch(discordUserId);
-    await user.send(sections.join('\n\n'));
-  } catch (err) {
-    console.error('[vip-benefit] overview dm failed', { discordUserId, vipLevel, err });
-  }
+  await sendVipBenefitEmbedDm(discordUserId, '您的 VIP 福利已同步：', sections);
 }
 
 async function sendVipLevelBenefitDm(discordUserId: string, notification: VipLevelBenefitNotification) {
@@ -604,7 +603,7 @@ async function sendVipLevelBenefitDm(discordUserId: string, notification: VipLev
   }
 
   const currentTier = getVipTierByLevel(notification.currentVipLevel);
-  const sections: string[] = [`您的 VIP ${notification.vipLevel} 福利状态已更新：`];
+  const sections: string[] = [];
 
   if (notification.vipLevel === notification.currentVipLevel && currentTier) {
     const current = buildCurrentBenefitLines(
@@ -626,20 +625,14 @@ async function sendVipLevelBenefitDm(discordUserId: string, notification: VipLev
     sections.push(['以下福利不再重复发放：', ...notification.alreadyDelivered.map((line) => `- ${line}`)].join('\n'));
   }
   if (notification.contact.length > 0) {
-    sections.push(['请联系客服领取：', ...notification.contact.map((line) => `- ${line}`)].join('\n'));
+    sections.push(['请截图以下信息联系客服领取：', ...notification.contact.map((line) => `- ${line}`)].join('\n'));
   }
 
-  const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
-  if (!client) {
-    return;
-  }
-
-  try {
-    const user = await client.users.fetch(discordUserId);
-    await user.send(sections.join('\n\n'));
-  } catch (err) {
-    console.error('[vip-benefit] level dm failed', { discordUserId, vipLevel: notification.vipLevel, err });
-  }
+  await sendVipBenefitEmbedDm(
+    discordUserId,
+    `您的 VIP ${notification.vipLevel} 福利状态已更新：`,
+    sections,
+  );
 }
 
 export async function reconcileVipBenefitsForMember(

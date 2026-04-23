@@ -670,6 +670,8 @@ export function order_end_boss_embed(
     ? `${ORDER_ID_PREFIX}${orderIdentifier}`
     : `${ORDER_ID_PREFIX}${orderIdentifier}`;
   const workerMention = workerDiscordId ? `<@${workerDiscordId}>` : '该陪玩';
+  const pointsBonus = Math.max(0, pointsEarned - total);
+  const bonusRate = total > 0 && pointsBonus > 0 ? (pointsBonus / total) * 100 : 0;
   return base('订单已结束', [
     `【您与陪玩${workerMention}的订单已结束】`,
     '',
@@ -680,8 +682,11 @@ export function order_end_boss_embed(
     `计费总时长：${chargedMin} 分钟`,
     `总计消费：¥${total.toFixed(2)}`,
     `余额：¥${totalBalance.toFixed(2)}`,
-    `本次获得锦鲤积分：+${pointsEarned.toFixed(2)}`,
-    `累计锦鲤积分：${pointsTotal.toFixed(2)}`,
+    `获得锦鲤积分：${total.toFixed(2)}`,
+    ...(pointsBonus > 0
+      ? [`VIP加成额外积分：${total.toFixed(2)} x ${bonusRate.toFixed(2).replace(/\.?0+$/, '')}% = ${pointsBonus.toFixed(2)}`]
+      : []),
+    `已累计锦鲤积分：${pointsTotal.toFixed(2)}`,
     `心动值累计：+${heartInc}`,
     `总心动值：${heartTotal}`,
   ].join('\n'));

@@ -1,4 +1,4 @@
-import { Client, Message, MessageCreateOptions } from 'discord.js';
+import { Client, EmbedBuilder, Message, MessageCreateOptions } from 'discord.js';
 import { Prisma, PrismaClient, MemberStatus, LotteryStatus, CouponType, OrderStatus } from '@prisma/client';
 import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library.js';
 import { postGiftFeed } from '../features/giftFeedHelper.js';
@@ -47,6 +47,14 @@ function resolveInsufficientReason(message: unknown): string | null {
 }
 
 const DEC = (n: number | string | Prisma.Decimal) => new Prisma.Decimal(n);
+const formatPointText = (value: Prisma.Decimal | number | string) => Number(value.toString()).toFixed(2);
+const buildVipBonusLine = (basePoints: Prisma.Decimal, awardedPoints: Prisma.Decimal) => {
+  if (basePoints.lte(0)) return null;
+  const bonusPoints = awardedPoints.sub(basePoints);
+  if (bonusPoints.lte(0)) return null;
+  const bonusRate = bonusPoints.div(basePoints).mul(100);
+  return `VIP加成额外积分：${formatPointText(basePoints)} x ${bonusRate.toFixed(2).replace(/\.?0+$/, '')}% = ${formatPointText(bonusPoints)}`;
+};
 const hasSend = (channel: unknown): channel is { send: Function } =>
   !!channel && typeof (channel as any).send === 'function';
 const isMissingAccessError = (err: any) =>
@@ -1074,12 +1082,25 @@ export async function performGift(
       where: { discordUserId: giverId },
       select: { points: true },
     });
-    const earnedText = Number(result.pointsEarned.toString()).toFixed(2);
+    const basePoints = new Prisma.Decimal(result.payable);
+    const bonusLine = buildVipBonusLine(basePoints, result.pointsEarned);
     const totalText = Number((pointsRow?.points ?? 0).toString()).toFixed(2);
     const giverUser = await client.users.fetch(giverId).catch(() => null);
     if (giverUser) {
+      const embed = new EmbedBuilder()
+        .setColor(0xf7c948)
+        .setTitle('打赏成功！谢谢老板😘')
+        .setDescription(
+          bonusLine
+            ? [
+                `获得锦鲤积分${formatPointText(basePoints)}`,
+                bonusLine,
+                `已累计锦鲤积分 ${totalText}`,
+              ].join('\n')
+            : `获得锦鲤积分${formatPointText(result.pointsEarned)}，已累计锦鲤积分 ${totalText}。`,
+        );
       await safeSend(
-        () => giverUser.send(`打赏完成：本次获得锦鲤积分 ${earnedText}，累计锦鲤积分 ${totalText}。`),
+        () => giverUser.send({ embeds: [embed] }),
         'notify giver points'
       );
     }

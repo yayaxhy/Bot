@@ -1,6 +1,11 @@
 import prisma from '../db/prisma.js';
-import { EmbedBuilder, userMention, type Client } from 'discord.js';
-import { getHighestVipTierByTotalSpent, VIP_TIERS, type VipTierConfig } from '../config/vipCatalog.js';
+import { EmbedBuilder, userMention, type Client, type Guild } from 'discord.js';
+import {
+  getHighestVipTierByTotalSpent,
+  listOneTimeAutoBenefitsForLevel,
+  VIP_TIERS,
+  type VipTierConfig,
+} from '../config/vipCatalog.js';
 import { reconcileVipBenefitsForMember, sendVipBenefitOverviewDm } from './vipBenefitService.js';
 
 type Tier = { threshold: number; roles: string[] };
@@ -13,6 +18,10 @@ export type SyncSpentRoleOptions = {
 const SPENT_ROLE_GUILD_ID = process.env.SPENT_ROLE_GUILD_ID ?? '';
 const VIP_UPGRADE_ANNOUNCE_CHANNEL_ID =
   process.env.VIP_UPGRADE_ANNOUNCE_CHANNEL_ID ?? '1488737027582201998';
+const VIP_BENEFIT_FAILURE_CHANNEL_ID =
+  process.env.VIP_BENEFIT_FAILURE_CHANNEL_ID ?? '1446819752692416542';
+const VIP_BENEFIT_FAILURE_NOTIFY_USER_ID =
+  process.env.VIP_BENEFIT_FAILURE_NOTIFY_USER_ID ?? '1421651539247894549';
 const spentRoleSyncQueue = new Map<string, Promise<void>>();
 const EMOJI_YELLOW_HANGING_STARS = '<a:229185yellowhangingstars:1443533883764375562>';
 const EMOJI_BABY_PINK_SPARKLIES = '<a:995647babypinksparklies:1443519291583369266>';
@@ -109,6 +118,123 @@ function getHighestSpendTierFromRoles(roleIds: Iterable<string>): SpendRoleTier 
 
 function formatFancyNumber(value: number): string {
   return String(value).replace(/\d/g, (digit) => FANCY_DIGITS[Number(digit)] ?? digit);
+}
+
+function buildCountMap(labels: string[]) {
+  const counts = new Map<string, number>();
+  for (const label of labels) {
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function formatBenefitLabels(labels: string[]) {
+  return [...buildCountMap(labels).entries()].map(([label, count]) => (count > 1 ? `${label} x${count}` : label));
+}
+
+function collectMissingAutoBenefitLabels(previousVipLevel: number, currentVipLevel: number) {
+  const labels: string[] = [];
+  for (let vipLevel = previousVipLevel + 1; vipLevel <= currentVipLevel; vipLevel += 1) {
+    for (const benefit of listOneTimeAutoBenefitsForLevel(vipLevel)) {
+      for (let index = 0; index < benefit.quantity; index += 1) {
+        labels.push(benefit.label);
+      }
+    }
+  }
+  return formatBenefitLabels(labels);
+}
+
+async function notifyVipBenefitGrantFailure(
+  discordId: string,
+  vipLevel: number,
+  missingBenefits: string[],
+  err: unknown,
+) {
+  const client = (globalThis as any).__CLIENT__ as Client | undefined;
+  if (!client) return;
+
+  const errorText = err instanceof Error ? err.message : String(err);
+  const missingLines =
+    missingBenefits.length > 0 ? missingBenefits : ['本级无自动福利，请检查等级结算状态'];
+  const content = [
+    `${userMention(discordId)} VIP ${vipLevel} 福利发放失败`,
+    '缺少福利：',
+    ...missingLines.map((line) => `- ${line}`),
+    '老板下次消费会进行重试，请不要重复发放',
+  ].join('\n');
+
+  try {
+    if (VIP_BENEFIT_FAILURE_CHANNEL_ID) {
+      const channel = await client.channels.fetch(VIP_BENEFIT_FAILURE_CHANNEL_ID).catch(() => null);
+      if (channel?.isTextBased()) {
+        const send = (channel as any).send?.bind(channel);
+        if (typeof send === 'function') {
+          await send({
+            content,
+            allowedMentions: { users: [discordId] },
+          });
+        }
+      }
+    }
+  } catch (notifyErr) {
+    console.error('[spent-role] vip benefit failure channel notify failed', {
+      discordId,
+      vipLevel,
+      notifyErr,
+    });
+  }
+
+  try {
+    if (VIP_BENEFIT_FAILURE_NOTIFY_USER_ID) {
+      const user = await client.users.fetch(VIP_BENEFIT_FAILURE_NOTIFY_USER_ID).catch(() => null);
+      if (user) {
+        await user.send(content);
+      }
+    }
+  } catch (notifyErr) {
+    console.error('[spent-role] vip benefit failure dm failed', {
+      discordId,
+      vipLevel,
+      notifyErr,
+    });
+  }
+}
+
+async function loadDesiredHeartRoles(discordId: string) {
+  const [heartSent, heartReceived] = await Promise.all([
+    prisma.heartCounter.aggregate({
+      _max: { total: true },
+      where: { fromMemberId: discordId },
+    }),
+    prisma.heartCounter.aggregate({
+      _max: { total: true },
+      where: { toMemberId: discordId },
+    }),
+  ]);
+
+  const maxSent = Number(heartSent._max?.total ?? 0);
+  const maxReceived = Number(heartReceived._max?.total ?? 0);
+  const heartValue = Math.max(maxSent, maxReceived);
+  return computeHeartRoleSet(heartValue);
+}
+
+async function syncHeartRolesForGuildMember(guild: Guild, discordId: string) {
+  const desiredHeartRoles = await loadDesiredHeartRoles(discordId);
+  const member = await guild.members.fetch(discordId);
+  const currentRoleIds = new Set(member.roles.cache.keys());
+  const heartRolesToRemove = HEART_ROLE_IDS.filter(
+    (roleId) => currentRoleIds.has(roleId) && !desiredHeartRoles.includes(roleId),
+  );
+  const missingHeartRoles = desiredHeartRoles.filter((roleId) => !currentRoleIds.has(roleId));
+
+  if (heartRolesToRemove.length > 0) {
+    await member.roles.remove(heartRolesToRemove);
+    console.log('[spent-role] removed heart roles', { discordId, heartRolesToRemove });
+  }
+  if (missingHeartRoles.length > 0) {
+    await member.roles.add(missingHeartRoles);
+    console.log('[spent-role] assigned heart roles', { discordId, missingHeartRoles });
+  }
 }
 
 async function postVipUpgradeAnnouncement(discordId: string, tier: SpendRoleTier) {
@@ -237,26 +363,11 @@ export async function syncSpentRolesForMember(
   const spendRoles = includeSpendRoles && !roleOptOut ? computeRoleSet(totalSpentNumber) : [];
   const targetVipTier = includeSpendRoles ? getHighestSpendTier(totalSpentNumber) : null;
 
-  const [heartSent, heartReceived] = await Promise.all([
-    prisma.heartCounter.aggregate({
-      _max: { total: true }, // highest heart sent to any single member
-      where: { fromMemberId: discordId },
-    }),
-    prisma.heartCounter.aggregate({
-      _max: { total: true }, // highest heart received from any single member
-      where: { toMemberId: discordId },
-    }),
-  ]);
-
-  const maxSent = Number(heartSent._max?.total ?? 0);
-  const maxReceived = Number(heartReceived._max?.total ?? 0);
-  const heartValue = Math.max(maxSent, maxReceived);
-  const heartRoles = computeHeartRoleSet(heartValue);
-
-  const desiredHeartRoles = heartRoles;
+  const desiredHeartRoles = await loadDesiredHeartRoles(discordId);
   const desiredRoles = Array.from(new Set([...spendRoles, ...desiredHeartRoles]));
   const previousVipLevelForBenefits = includeSpendRoles ? persistedSettledVipLevel : 0;
   let vipRoleSynced = !roleOptOut;
+  let shouldAnnounceVipUpgrade = false;
   let didAnnounceVipUpgrade = false;
 
   try {
@@ -265,7 +376,7 @@ export async function syncSpentRolesForMember(
     const currentRoleIds = new Set(member.roles.cache.keys());
     const currentVipTier =
       includeSpendRoles && !roleOptOut ? getHighestSpendTierFromRoles(currentRoleIds) : null;
-    const shouldAnnounceVipUpgrade =
+    shouldAnnounceVipUpgrade =
       announceVipUpgrade &&
       announcementEnabled &&
       !!targetVipTier &&
@@ -291,21 +402,35 @@ export async function syncSpentRolesForMember(
       await member.roles.add(missingRoles);
       console.log('[spent-role] assigned roles', { discordId, missingRoles });
     }
-    if (shouldAnnounceVipUpgrade && targetVipTier) {
-      await postVipUpgradeAnnouncement(discordId, targetVipTier);
-      didAnnounceVipUpgrade = true;
-    }
   } catch (err) {
     vipRoleSynced = false;
+    shouldAnnounceVipUpgrade = false;
     console.error('[spent-role] failed to assign roles', { discordId, err });
   }
 
   if (includeSpendRoles) {
-    await reconcileVipBenefitsForMember(discordId, {
-      previousVipLevel: previousVipLevelForBenefits,
-      currentVipLevel: targetVipTier?.vipLevel ?? 0,
-      vipRoleSynced,
-    });
+    try {
+      await reconcileVipBenefitsForMember(discordId, {
+        previousVipLevel: previousVipLevelForBenefits,
+        currentVipLevel: targetVipTier?.vipLevel ?? 0,
+        vipRoleSynced,
+      });
+    } catch (err) {
+      if (targetVipTier && targetVipTier.vipLevel > previousVipLevelForBenefits) {
+        await notifyVipBenefitGrantFailure(
+          discordId,
+          targetVipTier.vipLevel,
+          collectMissingAutoBenefitLabels(previousVipLevelForBenefits, targetVipTier.vipLevel),
+          err,
+        );
+      }
+      throw err;
+    }
+
+    if (shouldAnnounceVipUpgrade && targetVipTier) {
+      await postVipUpgradeAnnouncement(discordId, targetVipTier);
+      didAnnounceVipUpgrade = true;
+    }
 
     if (
       didAnnounceVipUpgrade &&
@@ -343,12 +468,17 @@ export async function resyncAllHeartRoles() {
     console.warn('[spent-role] no discord client, skip resync');
     return;
   }
+  if (!SPENT_ROLE_GUILD_ID) {
+    console.warn('[spent-role] no guild id, skip heart resync');
+    return;
+  }
+  const guild = await client.guilds.fetch(SPENT_ROLE_GUILD_ID);
   const members = await prisma.member.findMany({
     select: { discordUserId: true },
   });
   for (const m of members) {
     try {
-      await syncSpentRolesForMember(m.discordUserId);
+      await syncHeartRolesForGuildMember(guild, m.discordUserId);
     } catch (err) {
       console.error('[spent-role] resync member failed', { discordId: m.discordUserId, err });
     }

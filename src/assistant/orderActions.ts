@@ -47,6 +47,15 @@ async function sendAssistantPayload(
   await context.followUp(payload as string | InteractionReplyOptions);
 }
 
+async function sendAssistantDirectMessage(
+  context: AssistantOrderContext,
+  payload: string | MessageCreateOptions,
+) {
+  const user = actorUser(context);
+  const dmChannel = await user.createDM();
+  await dmChannel.send(payload);
+}
+
 const ORDER_ANON_CHANNEL_ID = process.env.ORDER_ANON_CHANNEL_ID;
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
 const DEFAULT_EMBED_COLOR = 0xf5a623;
@@ -234,7 +243,12 @@ export async function executeNaturalDispatchCreate(
   scheduleOrderRequestClosure(posted);
 
   const { embed, components } = order_request_sent_successfully_embed(orderId, ownerId, activities);
-  await sendAssistantPayload(context, { content: '已按你的要求发起派单。', embeds: [embed], components });
+  await sendAssistantDirectMessage(context, {
+    content: '已按你的要求发起派单。',
+    embeds: [embed],
+    components,
+    allowedMentions: { parse: [] },
+  });
 
   const balance = await getMemberBalance(ownerId);
   const balanceLabel = typeof balance === 'number' && Number.isFinite(balance) ? balance.toFixed(2) : '未知';
@@ -337,7 +351,7 @@ export async function executeNaturalOrderCreate(
   }
 
   const row = new ActionRowBuilder<any>().addComponents(priceSelect);
-  await sendAssistantPayload(context, {
+  await sendAssistantDirectMessage(context, {
     content: '已识别到你要点单，请选择价格后继续：',
     embeds: [embed],
     components: [row],

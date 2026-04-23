@@ -11,6 +11,7 @@ const DEFAULT_MIN_SESSION_SECONDS = 60;
 const DEFAULT_MIN_PARTICIPANTS_IN_CHANNEL = 2;
 const DEFAULT_DAILY_CAP_POINTS = new Prisma.Decimal(120);
 const DEFAULT_DAILY_CAP_OFFSET_MINUTES = 480; // Asia/Shanghai
+const DEFAULT_MIN_SETTLE_POINTS = new Prisma.Decimal(5);
 const RULE_VERSION = 'voice-v1';
 const BOT_AVATAR_PATH = path.resolve(process.cwd(), 'src', 'img', 'botAvatar.jpg');
 
@@ -34,6 +35,10 @@ const VOICE_POINTS_MIN_PARTICIPANTS_IN_CHANNEL = parsePositiveInt(
 const VOICE_POINTS_DAILY_CAP_POINTS = parsePositiveDecimal(
   process.env.VOICE_POINTS_DAILY_CAP_POINTS,
   DEFAULT_DAILY_CAP_POINTS,
+);
+const VOICE_POINTS_MIN_SETTLE_POINTS = parsePositiveDecimal(
+  process.env.VOICE_POINTS_MIN_SETTLE_POINTS,
+  DEFAULT_MIN_SETTLE_POINTS,
 );
 const VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES = parseIntOrFallback(
   process.env.VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES,
@@ -232,6 +237,9 @@ async function closeSession(
       } else {
         awardedPoints = points.gt(remaining) ? remaining : points;
       }
+    }
+    if (awardedPoints.gt(0) && awardedPoints.lt(VOICE_POINTS_MIN_SETTLE_POINTS)) {
+      awardedPoints = DEC_ZERO;
     }
 
     const updated = await tx.voicePointSession.updateMany({
@@ -462,7 +470,7 @@ export function registerVoicePointService(client: Client): void {
   }
 
   console.log(
-    `[voice-points] enabled (secondsPerPoint=${VOICE_POINTS_SECONDS_PER_POINT}, minSessionSeconds=${VOICE_POINTS_MIN_SESSION_SECONDS}, minParticipantsInChannel=${VOICE_POINTS_MIN_PARTICIPANTS_IN_CHANNEL}, dailyCap=${VOICE_POINTS_DAILY_CAP_POINTS.toString()}, capOffsetMinutes=${VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES}, excludeAfk=${VOICE_POINTS_EXCLUDE_AFK}, excludeMutedDeafened=${VOICE_POINTS_EXCLUDE_MUTED_DEAFENED})`,
+    `[voice-points] enabled (secondsPerPoint=${VOICE_POINTS_SECONDS_PER_POINT}, minSessionSeconds=${VOICE_POINTS_MIN_SESSION_SECONDS}, minParticipantsInChannel=${VOICE_POINTS_MIN_PARTICIPANTS_IN_CHANNEL}, dailyCap=${VOICE_POINTS_DAILY_CAP_POINTS.toString()}, minSettlePoints=${VOICE_POINTS_MIN_SETTLE_POINTS.toString()}, capOffsetMinutes=${VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES}, excludeAfk=${VOICE_POINTS_EXCLUDE_AFK}, excludeMutedDeafened=${VOICE_POINTS_EXCLUDE_MUTED_DEAFENED})`,
   );
 
   client.on(Events.VoiceStateUpdate, (oldState, newState) => {
