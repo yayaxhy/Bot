@@ -409,6 +409,8 @@ export async function syncSpentRolesForMember(
   }
 
   if (includeSpendRoles) {
+    let benefitReconcileError: unknown = null;
+
     try {
       await reconcileVipBenefitsForMember(discordId, {
         previousVipLevel: previousVipLevelForBenefits,
@@ -424,7 +426,7 @@ export async function syncSpentRolesForMember(
           err,
         );
       }
-      throw err;
+      benefitReconcileError = err;
     }
 
     if (shouldAnnounceVipUpgrade && targetVipTier) {
@@ -433,11 +435,16 @@ export async function syncSpentRolesForMember(
     }
 
     if (
+      !benefitReconcileError &&
       didAnnounceVipUpgrade &&
       targetVipTier &&
       previousVipLevelForBenefits >= targetVipTier.vipLevel
     ) {
       await sendVipBenefitOverviewDm(discordId, targetVipTier.vipLevel, { vipRoleSynced });
+    }
+
+    if (benefitReconcileError) {
+      throw benefitReconcileError;
     }
   }
 }
