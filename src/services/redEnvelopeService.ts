@@ -42,36 +42,56 @@ export const CLAIM_EMOJI_REACTION = '🧧';
 export const CLAIM_EMOJI = '🧧';
 const KEYWORD_NOTE_PREFIX = '__KW__';
 const MAX_NOTE_LENGTH = 120;
+const ZERO_WIDTH_CHARS = /[\u200B-\u200D\uFEFF]/g;
 
 const timers = new Map<string, NodeJS.Timeout>();
-const claimedByEnvelope = new Map<string, Map<string, Prisma.Decimal>>(); // de-dupe per session (stores net credited)
-const claimLogByEnvelope = new Map<
-  string,
-  Array<{
-    userId: string;
-    displayName?: string;
-    amount: Prisma.Decimal;
-  }>
->();
 const fairSharePlans = new Map<string, Prisma.Decimal[]>(); // deterministic fair split per envelope
 type KeywordEnvelopeStatus = 'pending' | 'approved' | 'rejected';
-const keywordEnvelopeCache = new Map<
-  string,
-  {
-    keyword: string;
-    channelId?: string | null;
-    status: KeywordEnvelopeStatus;
-    pendingMessageId?: string | null;
-    pendingChannelId?: string | null;
-    messageId?: string | null;
-  }
->();
+type KeywordEnvelopeCacheEntry = {
+  keyword: string;
+  createdAt?: number;
+  channelId?: string | null;
+  status: KeywordEnvelopeStatus;
+  pendingMessageId?: string | null;
+  pendingChannelId?: string | null;
+  messageId?: string | null;
+};
+type KeywordEnvelopeMatch = { id: string } & KeywordEnvelopeCacheEntry;
+type RedEnvelopeClaimLogEntry = {
+  userId: string;
+  displayName?: string | null;
+  amount: Prisma.Decimal;
+};
+const keywordEnvelopeCache = new Map<string, KeywordEnvelopeCacheEntry>();
 const KEYWORD_AUDIT_CHANNEL_ID = process.env.KEYWORD_AUDIT_CHANNEL_ID ?? '1448271094892068937';
 const PENDING_APPROVED_TEXT = '红包已通过审核，已发出';
 const PENDING_REJECTED_TEXT = '该红包口令不通过';
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
+
+const normalizeKeywordText = (value?: string | null) => {
+  if (!value) return '';
+  return value
+    .normalize('NFKC')
+    .replace(ZERO_WIDTH_CHARS, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+};
+
+export const getKeywordValidationError = (rawKeyword?: string | null) => {
+  const keyword = normalizeKeywordText(rawKeyword);
+  if (!keyword) {
+    return '口令不能为空。';
+  }
+  if (keyword.length > 50) {
+    return '口令长度不能超过 50 个字符。';
+  }
+  if (/@everyone|@here/.test(keyword) || /<@&\d+>/.test(keyword)) {
+    return '口令不能包含 @everyone/@here 或tag提及。';
+  }
+  return null;
+};
 
 type EnvelopeForDisplay = {
   id: string;
@@ -84,6 +104,7 @@ type EnvelopeForDisplay = {
   expiresAt: Date;
   note?: string | null;
   refundedAmount?: Prisma.Decimal | null;
+  claims?: RedEnvelopeClaimLogEntry[];
 };
 
 type EnvelopeNoteMeta =
@@ -91,7 +112,7 @@ type EnvelopeNoteMeta =
   | { kind: 'keyword'; note?: string; keyword: string };
 
 const encodeKeywordNote = (keyword: string, note?: string | null) => {
-  const payload = { k: keyword, n: note ?? null };
+  const payload = { k: normalizeKeywordText(keyword), n: note ?? null };
   return `${KEYWORD_NOTE_PREFIX}${JSON.stringify(payload)}`;
 };
 
@@ -101,10 +122,10 @@ const parseEnvelopeNote = (note?: string | null): EnvelopeNoteMeta => {
     try {
       const raw = note.slice(KEYWORD_NOTE_PREFIX.length);
       const parsed = JSON.parse(raw);
-      const keyword = typeof parsed?.k === 'string' ? parsed.k : undefined;
+      const keyword = typeof parsed?.k === 'string' ? normalizeKeywordText(parsed.k) : undefined;
       const n = typeof parsed?.n === 'string' ? parsed.n : undefined;
-      if (keyword && keyword.trim()) {
-        return { kind: 'keyword', keyword: keyword.trim(), note: n?.trim() || undefined };
+      if (keyword) {
+        return { kind: 'keyword', keyword, note: n?.trim() || undefined };
       }
     } catch {}
   }
@@ -117,9 +138,74 @@ const clampNote = (note?: string | null) => {
   return note.trim().slice(0, MAX_NOTE_LENGTH);
 };
 
+const keywordEnvelopeRecordSelect = {
+  id: true,
+  note: true,
+  keyword: true,
+  channelId: true,
+  pendingMessageId: true,
+  messageId: true,
+  status: true,
+  expiresAt: true,
+  createdAt: true,
+} satisfies Prisma.RedEnvelopeSelect;
+
+type KeywordEnvelopeRecord = Prisma.RedEnvelopeGetPayload<{
+  select: typeof keywordEnvelopeRecordSelect;
+}>;
+
+const resolveEnvelopeKeyword = (payload: {
+  keyword?: string | null;
+  note?: string | null;
+}) => {
+  const directKeyword = normalizeKeywordText(payload.keyword);
+  if (directKeyword) return directKeyword;
+  const meta = parseEnvelopeNote(payload.note);
+  return meta.kind === 'keyword' ? meta.keyword : null;
+};
+
+const deriveKeywordEnvelopeStatus = (payload: {
+  status: RedEnvelopeStatus;
+  messageId?: string | null;
+}) => {
+  if (payload.status !== RedEnvelopeStatus.ACTIVE) return 'rejected' as const;
+  if (payload.messageId) return 'approved' as const;
+  return 'pending' as const;
+};
+
+const toKeywordEnvelopeCacheEntry = (
+  payload: {
+    id: string;
+    keyword?: string | null;
+    createdAt?: Date | null;
+    note?: string | null;
+    channelId?: string | null;
+    pendingMessageId?: string | null;
+    pendingChannelId?: string | null;
+    messageId?: string | null;
+  },
+  status?: KeywordEnvelopeStatus
+): KeywordEnvelopeMatch | null => {
+  const keyword = resolveEnvelopeKeyword(payload);
+  if (!keyword) return null;
+  const prev = keywordEnvelopeCache.get(payload.id);
+  return {
+    id: payload.id,
+    keyword,
+    createdAt: payload.createdAt?.getTime() ?? prev?.createdAt ?? Date.now(),
+    channelId: payload.channelId ?? prev?.channelId,
+    status: status ?? prev?.status ?? 'approved',
+    pendingMessageId: payload.pendingMessageId ?? prev?.pendingMessageId,
+    pendingChannelId: payload.pendingChannelId ?? prev?.pendingChannelId ?? payload.channelId,
+    messageId: payload.messageId ?? prev?.messageId,
+  };
+};
+
 export const rememberKeywordEnvelope = (
   payload: {
     id: string;
+    keyword?: string | null;
+    createdAt?: Date | null;
     note?: string | null;
     channelId?: string | null;
     pendingMessageId?: string | null;
@@ -128,18 +214,9 @@ export const rememberKeywordEnvelope = (
   },
   status: KeywordEnvelopeStatus = 'approved'
 ) => {
-  const meta = parseEnvelopeNote(payload.note);
-  if (meta.kind === 'keyword' && meta.keyword) {
-    const prev = keywordEnvelopeCache.get(payload.id);
-    keywordEnvelopeCache.set(payload.id, {
-      keyword: meta.keyword,
-      channelId: payload.channelId ?? prev?.channelId,
-      status: status ?? prev?.status ?? 'approved',
-      pendingMessageId: payload.pendingMessageId ?? prev?.pendingMessageId,
-      pendingChannelId: payload.pendingChannelId ?? prev?.pendingChannelId ?? payload.channelId,
-      messageId: payload.messageId ?? prev?.messageId,
-    });
-  }
+  const entry = toKeywordEnvelopeCacheEntry(payload, status);
+  if (!entry) return;
+  keywordEnvelopeCache.set(payload.id, entry);
 };
 
 const forgetKeywordEnvelope = (envelopeId: string) => {
@@ -147,7 +224,7 @@ const forgetKeywordEnvelope = (envelopeId: string) => {
 };
 
 const keywordsMatch = (input: string, target: string) => {
-  return input.trim() === target.trim();
+  return normalizeKeywordText(input).toLowerCase() === normalizeKeywordText(target).toLowerCase();
 };
 
 const setKeywordStatus = (envelopeId: string, status: KeywordEnvelopeStatus) => {
@@ -155,12 +232,40 @@ const setKeywordStatus = (envelopeId: string, status: KeywordEnvelopeStatus) => 
   if (prev) keywordEnvelopeCache.set(envelopeId, { ...prev, status });
 };
 
+const cacheKeywordEnvelopeRecord = (record: KeywordEnvelopeRecord) => {
+  const entry = toKeywordEnvelopeCacheEntry(record, deriveKeywordEnvelopeStatus(record));
+  if (!entry) return null;
+  keywordEnvelopeCache.set(record.id, entry);
+  return entry;
+};
+
+const getKeywordEnvelopeRecord = async (
+  envelopeId: string,
+  client: DbClient = prisma
+) => {
+  return client.redEnvelope.findUnique({
+    where: { id: envelopeId },
+    select: keywordEnvelopeRecordSelect,
+  });
+};
+
+const loadKeywordEnvelopeEntry = async (
+  envelopeId: string,
+  client: DbClient = prisma
+) => {
+  const cached = keywordEnvelopeCache.get(envelopeId);
+  if (cached) return { id: envelopeId, ...cached };
+  const record = await getKeywordEnvelopeRecord(envelopeId, client);
+  if (!record) return null;
+  return cacheKeywordEnvelopeRecord(record);
+};
+
 async function editPendingMessage(
   client: Client,
   envelopeId: string,
   content: string
 ) {
-  const entry = keywordEnvelopeCache.get(envelopeId);
+  const entry = await loadKeywordEnvelopeEntry(envelopeId);
   if (!entry?.pendingMessageId) return;
   const channelId = entry.pendingChannelId ?? entry.channelId;
   if (!channelId) return;
@@ -178,19 +283,73 @@ async function editPendingMessage(
 export const isKeywordEnvelopeNote = (note?: string | null) =>
   parseEnvelopeNote(note).kind === 'keyword';
 
-export function findKeywordEnvelopeByMessage(content: string, channelId?: string | null) {
-  const trimmed = content.trim();
+export async function findKeywordEnvelopeByMessage(
+  content: string,
+  channelId?: string | null,
+  client: DbClient = prisma
+) {
+  const trimmed = normalizeKeywordText(content);
   if (!trimmed) return null;
+
+  const statusScore = (status: KeywordEnvelopeStatus) => {
+    if (status === 'approved') return 2;
+    if (status === 'pending') return 1;
+    return 0;
+  };
+  let bestCacheMatch: KeywordEnvelopeMatch | null = null;
   for (const [id, meta] of keywordEnvelopeCache.entries()) {
     if (!keywordsMatch(trimmed, meta.keyword)) continue;
     if (meta.channelId && channelId && meta.channelId !== channelId) continue;
-    return {
-      id,
-      keyword: meta.keyword,
-      status: meta.status,
-      pendingMessageId: meta.pendingMessageId,
-      pendingChannelId: meta.pendingChannelId,
-    };
+    const candidate = { id, ...meta };
+    if (!bestCacheMatch) {
+      bestCacheMatch = candidate;
+      continue;
+    }
+    const candidateScore = statusScore(candidate.status);
+    const bestScore = statusScore(bestCacheMatch.status);
+    if (candidateScore > bestScore) {
+      bestCacheMatch = candidate;
+      continue;
+    }
+    if (candidateScore === bestScore && (candidate.createdAt ?? 0) > (bestCacheMatch.createdAt ?? 0)) {
+      bestCacheMatch = candidate;
+    }
+  }
+  if (bestCacheMatch) {
+    return bestCacheMatch;
+  }
+
+  const channelFilter = channelId ? { channelId } : {};
+  const now = new Date();
+  const exact = await client.redEnvelope.findFirst({
+    where: {
+      ...channelFilter,
+      status: RedEnvelopeStatus.ACTIVE,
+      expiresAt: { gt: now },
+      keyword: trimmed,
+    },
+    orderBy: { createdAt: 'desc' },
+    select: keywordEnvelopeRecordSelect,
+  });
+  if (exact) {
+    return cacheKeywordEnvelopeRecord(exact);
+  }
+
+  const fallbacks = await client.redEnvelope.findMany({
+    where: {
+      ...channelFilter,
+      status: RedEnvelopeStatus.ACTIVE,
+      expiresAt: { gt: now },
+      note: { startsWith: KEYWORD_NOTE_PREFIX },
+    },
+    orderBy: { createdAt: 'desc' },
+    select: keywordEnvelopeRecordSelect,
+  });
+  for (const candidate of fallbacks) {
+    const entry = cacheKeywordEnvelopeRecord(candidate);
+    if (entry && keywordsMatch(trimmed, entry.keyword)) {
+      return entry;
+    }
   }
   return null;
 }
@@ -403,21 +562,25 @@ function splitFromPools(
 const formatAmount = (d: Prisma.Decimal | number | string) =>
   Number(new Prisma.Decimal(d).toString()).toFixed(2);
 
-function getClaimLog(envelopeId: string) {
-  return claimLogByEnvelope.get(envelopeId) ?? [];
-}
-
-function pushClaimLog(
+async function loadRedEnvelopeClaimLog(
   envelopeId: string,
-  entry: {
-    userId: string;
-    displayName?: string;
-    amount: Prisma.Decimal;
-  }
-) {
-  const list = claimLogByEnvelope.get(envelopeId) ?? [];
-  list.push(entry);
-  claimLogByEnvelope.set(envelopeId, list);
+  client: DbClient = prisma
+): Promise<RedEnvelopeClaimLogEntry[]> {
+  const claims = await client.redEnvelopeClaim.findMany({
+    where: { envelopeId },
+    orderBy: { claimedAt: 'asc' },
+    select: {
+      claimerDiscordId: true,
+      claimerDisplayName: true,
+      grossAmount: true,
+    },
+  });
+
+  return claims.map((claim) => ({
+    userId: claim.claimerDiscordId,
+    displayName: claim.claimerDisplayName,
+    amount: claim.grossAmount,
+  }));
 }
 
 export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
@@ -441,7 +604,7 @@ export function buildRedEnvelopeMessagePayload(envelope: EnvelopeForDisplay) {
     .setDescription(descriptionLines.join('\n'))
     .setImage(RED_ENVELOPE_IMAGE_URL);
 
-  const claims = getClaimLog(envelope.id);
+  const claims = envelope.claims ?? [];
   if (claims.length) {
     const lines = claims
       .slice(-50)
@@ -528,7 +691,7 @@ export async function createRedEnvelope(
   client: PrismaClient = prisma
 ) {
   const kind = params.kind ?? 'normal';
-  const keyword = params.keyword?.trim();
+  const keyword = normalizeKeywordText(params.keyword);
   const totalAmount = asDecimal(params.totalAmount);
   if (totalAmount.lte(0)) {
     throw new Error('金额必须大于 0。');
@@ -544,14 +707,9 @@ export async function createRedEnvelope(
     throw new Error(`总金额不足，每份至少 ¥${MIN_SLICE.toString()}`);
   }
   if (kind === 'keyword') {
-    if (!keyword) {
-      throw new Error('口令不能为空。');
-    }
-    if (keyword.length > 50) {
-      throw new Error('口令长度不能超过 50 个字符。');
-    }
-    if (/@everyone|@here/.test(keyword) || /<@&\d+>/.test(keyword)) {
-      throw new Error('口令不能包含 @everyone/@here 或角色提及。');
+    const keywordError = getKeywordValidationError(keyword);
+    if (keywordError) {
+      throw new Error(keywordError);
     }
   }
 
@@ -640,6 +798,7 @@ export async function createRedEnvelope(
         totalCount: params.count,
         remainingCount: params.count,
         note: storedNote,
+        keyword: kind === 'keyword' ? keyword : null,
         status: RedEnvelopeStatus.ACTIVE,
         expiresAt,
         channelId: params.channelId,
@@ -649,7 +808,10 @@ export async function createRedEnvelope(
     });
 
     const status: KeywordEnvelopeStatus = kind === 'keyword' ? 'pending' : 'approved';
-    rememberKeywordEnvelope({ id: envelope.id, note: storedNote, channelId: params.channelId }, status);
+    rememberKeywordEnvelope(
+      { id: envelope.id, keyword, createdAt: envelope.createdAt, note: storedNote, channelId: params.channelId },
+      status
+    );
 
     return envelope;
   });
@@ -714,12 +876,36 @@ export async function createSystemRedEnvelope(
 export async function bindEnvelopeMessage(
   envelopeId: string,
   payload: { messageId: string; channelId: string },
+  client: PrismaClient = prisma,
+  opts?: { clearPendingMessage?: boolean }
+) {
+  const data: Prisma.RedEnvelopeUpdateManyMutationInput = {
+    messageId: payload.messageId,
+    channelId: payload.channelId,
+  };
+  if (opts?.clearPendingMessage) {
+    data.pendingMessageId = null;
+  }
+
+  const result = await client.redEnvelope.updateMany({
+    where: {
+      id: envelopeId,
+      OR: [{ messageId: null }, { messageId: payload.messageId }],
+    },
+    data,
+  });
+  return result.count > 0;
+}
+
+export async function bindPendingEnvelopeMessage(
+  envelopeId: string,
+  payload: { pendingMessageId: string; channelId: string },
   client: PrismaClient = prisma
 ) {
   const result = await client.redEnvelope.updateMany({
-    where: { id: envelopeId, messageId: null },
+    where: { id: envelopeId },
     data: {
-      messageId: payload.messageId,
+      pendingMessageId: payload.pendingMessageId,
       channelId: payload.channelId,
     },
   });
@@ -745,20 +931,6 @@ export async function claimRedEnvelope(
   client: PrismaClient = prisma,
   opts?: { keyword?: string; channelId?: string | null }
 ): Promise<ClaimResult> {
-  const getClaimed = (envId: string, userId: string) => {
-    const m = claimedByEnvelope.get(envId);
-    if (!m) return null;
-    return m.get(userId) ?? null;
-  };
-  const setClaimed = (envId: string, userId: string, amount: Prisma.Decimal) => {
-    let m = claimedByEnvelope.get(envId);
-    if (!m) {
-      m = new Map();
-      claimedByEnvelope.set(envId, m);
-    }
-    m.set(userId, amount);
-  };
-
   return client.$transaction(async (tx) => {
     // lock the envelope row to avoid concurrent over-claims
     await tx.$queryRaw`SELECT 1 FROM "RedEnvelope" WHERE id = ${envelopeId} FOR UPDATE`;
@@ -775,8 +947,16 @@ export async function claimRedEnvelope(
 
     const meta = parseEnvelopeNote(envelope.note);
     if (meta.kind === 'keyword') {
-      rememberKeywordEnvelope({ id: envelope.id, note: envelope.note, channelId: envelope.channelId });
-      const provided = opts?.keyword?.trim();
+      rememberKeywordEnvelope({
+        id: envelope.id,
+        keyword: envelope.keyword,
+        createdAt: envelope.createdAt,
+        note: envelope.note,
+        channelId: envelope.channelId,
+        pendingMessageId: envelope.pendingMessageId,
+        messageId: envelope.messageId,
+      }, deriveKeywordEnvelopeStatus(envelope));
+      const provided = normalizeKeywordText(opts?.keyword);
       if (!provided) return { status: 'keyword_required', envelopeId: envelope.id };
       if (!keywordsMatch(provided, meta.keyword)) {
         return { status: 'wrong_keyword', envelopeId: envelope.id };
@@ -791,11 +971,24 @@ export async function claimRedEnvelope(
       return { status: 'expired', envelopeId: envelope.id, refundAmount: expired.refundAmount };
     }
 
-    const existing = getClaimed(envelope.id, claimerId);
+    await ensureMemberExists(tx, claimerId);
+    const claimerIdentity = await ensureJinleeIdentityForDiscordTx(tx, claimerId);
+    const claimerDiscordId = claimerIdentity.discordUserId ?? claimerId;
+    const existing = await tx.redEnvelopeClaim.findUnique({
+      where: {
+        envelopeId_claimerJinleeId: {
+          envelopeId: envelope.id,
+          claimerJinleeId: claimerIdentity.jinleeId,
+        },
+      },
+      select: {
+        netAmount: true,
+      },
+    });
     if (existing) {
       return {
         status: 'already_claimed',
-        amount: existing,
+        amount: existing.netAmount,
         finished: envelope.remainingCount <= 0,
         envelopeId: envelope.id,
       };
@@ -843,25 +1036,23 @@ export async function claimRedEnvelope(
     });
 
     await suppressRechargeNotifications(tx);
-    await ensureMemberExists(tx, claimerId);
-    const claimerIdentity = await ensureJinleeIdentityForDiscordTx(tx, claimerId);
     await lockJinleeUserForUpdateTx(tx, claimerIdentity.jinleeId);
     const member = await tx.member.findUnique({
-      where: { discordUserId: claimerId },
+      where: { discordUserId: claimerDiscordId },
       select: { totalBalance: true, income: true, recharge: true, commissionRate: true },
     });
     const balanceBefore = new Prisma.Decimal(member?.totalBalance ?? 0);
     const baseRate = member?.commissionRate
       ? new Prisma.Decimal(member.commissionRate)
       : new Prisma.Decimal(1);
-    const manualBoost = await getActiveCommissionBoost(tx, claimerId);
-    const autoBoost = await getAutoCommissionBoost(tx, claimerId, baseRate);
+    const manualBoost = await getActiveCommissionBoost(tx, claimerDiscordId);
+    const autoBoost = await getAutoCommissionBoost(tx, claimerDiscordId, baseRate);
     let effectiveRate = baseRate.add(manualBoost).add(autoBoost);
     if (effectiveRate.gt(1)) effectiveRate = new Prisma.Decimal(1);
     const netAmount = new Prisma.Decimal(share.mul(effectiveRate).toFixed(2));
     const walletAfter = await applyJinleeWalletDeltaTx(tx, {
       jinleeId: claimerIdentity.jinleeId,
-      discordUserId: claimerIdentity.discordUserId,
+      discordUserId: claimerDiscordId,
       incomeDelta: netAmount,
       totalBalanceDelta: netAmount,
       offsetNegativeRechargeWithIncome: true,
@@ -869,12 +1060,12 @@ export async function claimRedEnvelope(
     const balanceAfter = walletAfter.totalBalance;
 
     const peiwan = await tx.pEIWAN.findUnique({
-      where: { discordUserId: claimerId },
+      where: { discordUserId: claimerDiscordId },
       select: { PEIWANID: true, totalEarn: true },
     });
     if (peiwan) {
       await tx.pEIWAN.update({
-        where: { discordUserId: claimerId },
+        where: { discordUserId: claimerDiscordId },
         data: {
           balance: balanceAfter,
           totalEarn: new Prisma.Decimal(peiwan.totalEarn ?? 0).add(netAmount),
@@ -887,7 +1078,7 @@ export async function claimRedEnvelope(
     const transaction = await tx.transaction.create({
       data: {
         fromId: envelope.creatorId,
-        toId: claimerId,
+        toId: claimerDiscordId,
         amount: share,
         feeAmount: safeFee,
         netAmount,
@@ -898,13 +1089,25 @@ export async function claimRedEnvelope(
         transactionId: transaction.Transid,
         orderID: transaction.orderID,
         fromId: envelope.creatorId,
-        toId: claimerId,
+        toId: claimerDiscordId,
         feeAmount: safeFee,
       },
     });
 
+    await tx.redEnvelopeClaim.create({
+      data: {
+        envelopeId: envelope.id,
+        claimerJinleeId: claimerIdentity.jinleeId,
+        claimerDiscordId,
+        claimerDisplayName: displayName?.trim() || null,
+        grossAmount: share,
+        netAmount,
+        transactionId: transaction.Transid,
+      },
+    });
+
     await recordIndividualTransaction(tx, {
-      discordId: claimerId,
+      discordId: claimerDiscordId,
       thirdPartydiscordId: envelope.creatorId,
       balanceBefore,
       amountChange: netAmount,
@@ -912,12 +1115,8 @@ export async function claimRedEnvelope(
       typeOfTransaction: '红包收入',
     });
 
-    pushClaimLog(envelope.id, { userId: claimerId, displayName, amount: share });
-    setClaimed(envelope.id, claimerId, netAmount);
-
     if (updatedEnvelope.status !== RedEnvelopeStatus.ACTIVE) {
       clearExpirationTimer(envelope.id);
-      claimedByEnvelope.delete(envelope.id);
       fairSharePlans.delete(envelope.id);
       forgetKeywordEnvelope(envelope.id);
     }
@@ -1036,8 +1235,6 @@ export async function expireEnvelope(
     }
 
     clearExpirationTimer(envelope.id);
-    claimedByEnvelope.delete(envelope.id);
-    claimLogByEnvelope.delete(envelope.id);
     fairSharePlans.delete(envelope.id);
     forgetKeywordEnvelope(envelope.id);
 
@@ -1096,7 +1293,8 @@ export async function refreshRedEnvelopeMessage(client: Client, envelopeId: stri
 
     const message = await channel.messages.fetch(envelope.messageId);
     const creatorDisplayName = await resolveCreatorName(client, envelope.creatorId, envelope.channelId);
-    const payload = buildRedEnvelopeMessagePayload({ ...envelope, creatorDisplayName });
+    const claims = await loadRedEnvelopeClaimLog(envelope.id);
+    const payload = buildRedEnvelopeMessagePayload({ ...envelope, creatorDisplayName, claims });
     await message.edit(payload);
   } catch (err) {
     console.error('[red-envelope] refresh message failed:', err);
@@ -1119,7 +1317,7 @@ export async function tryClaimKeywordEnvelopeFromMessage(
 
   const content = message.content?.trim();
   if (!content) return false;
-  const match = findKeywordEnvelopeByMessage(content, message.channelId);
+  const match = await findKeywordEnvelopeByMessage(content, message.channelId, client);
   if (!match) return false;
   if (match.status === 'pending') {
     await notify('口令红包正在审核，请稍后再试。');
@@ -1210,13 +1408,10 @@ export function scheduleRedEnvelopeExpiration(
 export async function recoverRedEnvelopeSchedules(client: Client) {
   const actives = await prisma.redEnvelope.findMany({
     where: { status: RedEnvelopeStatus.ACTIVE },
-    select: { id: true, expiresAt: true, note: true, channelId: true, messageId: true },
+    select: keywordEnvelopeRecordSelect,
   });
   for (const env of actives) {
-    rememberKeywordEnvelope(
-      { id: env.id, note: env.note, channelId: env.channelId, messageId: env.messageId },
-      'approved'
-    );
+    cacheKeywordEnvelopeRecord(env);
     scheduleRedEnvelopeExpiration(client, env);
   }
 }
@@ -1250,12 +1445,30 @@ async function publishApprovedKeywordEnvelope(client: Client, envelopeId: string
       status: true,
       expiresAt: true,
       note: true,
+      keyword: true,
       refundedAmount: true,
       channelId: true,
+      pendingMessageId: true,
+      messageId: true,
     },
   });
   if (!envelope) return;
-  const cache = keywordEnvelopeCache.get(envelopeId);
+  if (envelope.messageId) {
+    rememberKeywordEnvelope(
+      {
+        id: envelope.id,
+        keyword: envelope.keyword,
+        note: envelope.note,
+        channelId: envelope.channelId,
+        pendingMessageId: envelope.pendingMessageId,
+        messageId: envelope.messageId,
+      },
+      'approved'
+    );
+    return;
+  }
+
+  const cache = await loadKeywordEnvelopeEntry(envelopeId);
   const channelId = envelope.channelId ?? cache?.pendingChannelId ?? cache?.channelId;
   if (!channelId) return;
   try {
@@ -1263,9 +1476,11 @@ async function publishApprovedKeywordEnvelope(client: Client, envelopeId: string
     if (!channel || !channel.isTextBased() || !('send' in channel)) return;
 
     const creatorDisplayName = await resolveCreatorName(client, envelope.creatorId, channelId);
+    const claims = await loadRedEnvelopeClaimLog(envelope.id);
     const payload = buildRedEnvelopeMessagePayload({
       ...envelope,
       creatorDisplayName,
+      claims,
     });
 
     const sent = await channel.send({
@@ -1276,11 +1491,13 @@ async function publishApprovedKeywordEnvelope(client: Client, envelopeId: string
     await bindEnvelopeMessage(
       envelope.id,
       { messageId: sent.id, channelId: sent.channelId },
-      prisma
+      prisma,
+      { clearPendingMessage: true }
     );
     rememberKeywordEnvelope(
       {
         id: envelope.id,
+        keyword: envelope.keyword,
         note: envelope.note,
         channelId: sent.channelId,
         pendingMessageId: null,
@@ -1351,7 +1568,7 @@ export async function handleKeywordAuditInteraction(i: ButtonInteraction) {
   const [, action, envelopeId] = i.customId.split(':');
   if (!action || !envelopeId) return false;
 
-  const entry = keywordEnvelopeCache.get(envelopeId);
+  const entry = await loadKeywordEnvelopeEntry(envelopeId);
   if (!entry) {
     await i.reply({ content: '未找到红包记录，可能已过期。', ephemeral: true });
     return true;

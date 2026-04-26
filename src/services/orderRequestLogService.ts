@@ -55,3 +55,28 @@ export async function recordOrderClick(params: {
     console.error('[order-request] click record failed', err);
   }
 }
+
+export async function resolveOrderRequestOwnerId(
+  orderId: string,
+  fallbackOwnerId?: string | null
+): Promise<string | null> {
+  if (!orderId) return fallbackOwnerId?.trim() || null;
+
+  try {
+    const request = await prisma.orderRequestLog.findUnique({
+      where: { orderId },
+      select: { ownerId: true },
+    });
+    if (request?.ownerId) return request.ownerId;
+
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      select: { hostId: true },
+    });
+    if (order?.hostId) return order.hostId;
+  } catch (err) {
+    console.error('[order-request] resolve owner failed', err);
+  }
+
+  return fallbackOwnerId?.trim() || null;
+}

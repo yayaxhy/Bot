@@ -9,8 +9,10 @@ import {
   TextChannel,
 } from 'discord.js';
 import prisma from '../../db/prisma.js';
+import { findBlacklistConflict } from '../../services/blacklistService.js';
 import { clickStore } from '../../services/clickStore.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
+import { resolveOrderRequestOwnerId } from '../../services/orderRequestLogService.js';
 import { formatBossReviews } from '../../services/peiwanReviewDisplayService.js';
 import { MemberStatus, Prisma, PeiwanReviewDisplayMode, QuotationCode } from '@prisma/client';
 import {
@@ -241,7 +243,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
     // requestOrder:<orderId>:<ownerId>
     const parts = i.customId.split(':');
     const orderId = parts[1];
-    const ownerId = parts[2] || 'unknown';
+    const fallbackOwnerId = parts[2] || 'unknown';
 
     // 过期的派单（可能因机器人重启未被定时器关闭）
     if (isOrderRequestExpired(i.message as Message)) {
@@ -271,7 +273,13 @@ export async function handlePlayButton(i: ButtonInteraction) {
     }
 
     // 基本校验
-    if (!orderId || !ownerId || ownerId === 'unknown') return;
+    if (!orderId) return;
+    const ownerId =
+      (await resolveOrderRequestOwnerId(
+        orderId,
+        fallbackOwnerId && fallbackOwnerId !== 'unknown' ? fallbackOwnerId : null
+      )) ?? 'unknown';
+    if (!ownerId || ownerId === 'unknown') return;
     if (ownerId === i.client.user?.id) return; // 防御：避免写成机器人自己
     if (i.user.id === ownerId) return;         // 老板不能抢自己单（静默）
     if (i.component?.disabled) return;
@@ -422,29 +430,33 @@ export async function handlePlayButton(i: ButtonInteraction) {
       anonymousGiftBox
     );
 
-    // 发送 MP 到老板（含降级）
-    try {
-      await sendMpToBossWithFallback(
-        i,
-        ownerId,
-        { embeds: [embed], components },
-        orderId,
-        `<@${workerId}>`
-      );
-    } catch (err) {
-      console.error('[handlePlayButton] send MP failed:', err);
-      // 尝试私信陪玩失败信息；如 DM 也失败，再发一条 ephemeral
+    const blacklistConflict = await findBlacklistConflict(ownerId, workerId);
+
+    if (!blacklistConflict) {
+      // 发送 MP 到老板（含降级）
       try {
-        await i.user.send('报名失败：未能把你的抢单信息发送给老板，请联系客服。');
-      } catch {
-        if (!i.replied) {
-          await i.followUp({
-            content: '报名失败：未能把你的抢单信息发送给老板，请联系客服。',
-            ephemeral: true,
-          });
+        await sendMpToBossWithFallback(
+          i,
+          ownerId,
+          { embeds: [embed], components },
+          orderId,
+          `<@${workerId}>`
+        );
+      } catch (err) {
+        console.error('[handlePlayButton] send MP failed:', err);
+        // 尝试私信陪玩失败信息；如 DM 也失败，再发一条 ephemeral
+        try {
+          await i.user.send('报名失败：未能把你的抢单信息发送给老板，请联系客服。');
+        } catch {
+          if (!i.replied) {
+            await i.followUp({
+              content: '报名失败：未能把你的抢单信息发送给老板，请联系客服。',
+              ephemeral: true,
+            });
+          }
         }
+        return;
       }
-      return;
     }
 
     // 成功：机器人私信陪玩确认；若陪玩关闭私信，则发一条 ephemeral 提示
@@ -472,9 +484,15 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
 
     const parts = i.customId.split(':');
     const orderId = parts[1];
-    const ownerId = parts[2] || 'unknown';
+    const fallbackOwnerId = parts[2] || 'unknown';
 
-    if (!orderId || !ownerId || ownerId === 'unknown') return;
+    if (!orderId) return;
+    const ownerId =
+      (await resolveOrderRequestOwnerId(
+        orderId,
+        fallbackOwnerId && fallbackOwnerId !== 'unknown' ? fallbackOwnerId : null
+      )) ?? 'unknown';
+    if (!ownerId || ownerId === 'unknown') return;
     if (ownerId !== i.user.id) {
       if (!i.replied && !i.deferred) {
         await i.reply({ content: '只有老板可以结束派单。', ephemeral: true });
@@ -486,7 +504,8 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
       await i.deferUpdate();
     }
 
-    const count = clickStore.count(orderId);
+    clickStore.init(orderId, ownerId);
+    const count = await prisma.orderRequestClick.count({ where: { orderId } });
     const ownerRow = makeOwnerEndedRow(orderId, ownerId);
     const publicRow = makeEndedRow(count, orderId, ownerId);
     const targets = clickStore.getMessages(orderId, 'body');

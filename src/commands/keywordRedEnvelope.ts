@@ -1,11 +1,13 @@
 import { Client, Message } from 'discord.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
+  bindPendingEnvelopeMessage,
   createRedEnvelope,
   scheduleRedEnvelopeExpiration,
   sendKeywordAuditMessage,
   rememberKeywordEnvelope,
   expireEnvelope,
+  getKeywordValidationError,
 } from '../services/redEnvelopeService.js';
 
 const DEC = (v: number | string | Prisma.Decimal) =>
@@ -19,6 +21,17 @@ const sanitizeName = (name?: string | null) => {
   const cleaned = name.replace(/<@!?\d+>/g, '').trim();
   return cleaned || undefined;
 };
+
+async function notifyKeywordInvalidMessage(msg: Message, reason: string) {
+  const content = `口令红包发送失败：${reason}`;
+  try {
+    await msg.author.send(content);
+    return;
+  } catch {}
+  try {
+    await msg.reply(content);
+  } catch {}
+}
 
 type ParsedKeywordEnvelope = {
   keyword: string;
@@ -65,25 +78,14 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
   const parsed = parseKeywordRedEnvelopeCommand(msg.content);
   if (!parsed) return false;
 
-  try { await msg.delete(); } catch {}
-  if (!('send' in msg.channel)) return true;
-  const pendingMessage = await msg.channel.send('红包正在审核中~ 请稍等');
-
   if (!msg.guild) {
     await msg.reply('请在服务器频道里发红包哦。');
     return true;
   }
 
-  if (!parsed.keyword.trim()) {
-    await msg.reply('口令不能为空。');
-    return true;
-  }
-  if (parsed.keyword.length > 50) {
-    await msg.reply('口令长度不能超过 50 个字符。');
-    return true;
-  }
-  if (/@everyone|@here/.test(parsed.keyword) || /<@&\d+>/.test(parsed.keyword)) {
-    await msg.reply('口令不能包含 @everyone/@here 或角色提及。');
+  const keywordError = getKeywordValidationError(parsed.keyword);
+  if (keywordError) {
+    await notifyKeywordInvalidMessage(msg, keywordError);
     return true;
   }
   if (parsed.amount.lt(MIN_TOTAL)) {
@@ -95,6 +97,10 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
     await msg.reply('红包份数不能超过 100 份。');
     return true;
   }
+
+  try { await msg.delete(); } catch {}
+  if (!('send' in msg.channel)) return true;
+  const pendingMessage = await msg.channel.send('红包正在审核中~ 请稍等');
 
   const envelope = await createRedEnvelope(
     {
@@ -114,10 +120,16 @@ export async function handleKeywordRedEnvelopeMessage(msg: Message, prismaClient
       id: envelope.id,
       expiresAt: envelope.expiresAt,
     });
+    await bindPendingEnvelopeMessage(
+      envelope.id,
+      { pendingMessageId: pendingMessage.id, channelId: msg.channel.id },
+      prismaClient
+    );
 
     rememberKeywordEnvelope(
       {
         id: envelope.id,
+        keyword: parsed.keyword,
         note: envelope.note,
         channelId: msg.channel.id,
         pendingMessageId: pendingMessage.id,

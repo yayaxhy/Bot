@@ -162,6 +162,7 @@ model JinleeUser {
   discordAvatarUrl   String?
   wechatDisplayName  String?
   wechatAvatarUrl    String?
+  sessionVersion     Int      @default(1)
   totalBalance       Decimal  @default(0) @db.Decimal(19, 4)
   income             Decimal  @default(0) @db.Decimal(19, 4)
   recharge           Decimal  @default(0) @db.Decimal(19, 4)
@@ -284,6 +285,8 @@ model Member {
   pointShopPointLedgers  PointShopPointLedger[]
   pointShopGrants        PointShopGrant[]       @relation("PointShopGrantOwner")
   pointShopGrantConsumes PointShopGrant[]       @relation("PointShopGrantConsumeTarget")
+  blacklistsCreated      Blacklist[]            @relation("BlacklistBlocker")
+  blacklistedBy          Blacklist[]            @relation("BlacklistBlocked")
   vipBenefitGrants       VipBenefitGrant[]
   vipBenefitProfile      VipBenefitProfile?
   authoredPeiwanReviews  PeiwanReview[]         @relation("PeiwanReviewReviewer")
@@ -325,6 +328,21 @@ model Member {
   profitsAsTarget        PureProfit[]  @relation("PureProfitTarget")
   couponsAsConsumeTarget Coupon[]      @relation("CouponConsumeTarget")
   lotteryConsumeTargets  LotteryDraw[] @relation("LotteryConsumeTarget")
+}
+
+model Blacklist {
+  id        String   @id @default(cuid())
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  blocker Member @relation("BlacklistBlocker", fields: [blockerId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  blocked Member @relation("BlacklistBlocked", fields: [blockedId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockedId])
+  @@index([blockerId, createdAt])
+  @@map("blacklist")
 }
 
 model LoyaltyPoint {
@@ -1077,11 +1095,33 @@ model RedEnvelope {
   updatedAt       DateTime          @updatedAt
   messageId       String?
   channelId       String?
+  keyword         String?
+  pendingMessageId String?
   refundedAmount  Decimal?          @db.Decimal(19, 4)
   incomePool      Decimal           @db.Decimal(19, 4)
   rechargePool    Decimal           @db.Decimal(19, 4)
+  claims          RedEnvelopeClaim[]
 
   @@index([status, expiresAt])
+  @@index([keyword, status, channelId, expiresAt])
+}
+
+model RedEnvelopeClaim {
+  id                 String   @id @default(cuid())
+  envelopeId         String
+  claimerJinleeId    String
+  claimerDiscordId   String
+  claimerDisplayName String?
+  grossAmount        Decimal  @db.Decimal(19, 4)
+  netAmount          Decimal  @db.Decimal(19, 4)
+  transactionId      String?
+  claimedAt          DateTime @default(now())
+
+  envelope RedEnvelope @relation(fields: [envelopeId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([envelopeId, claimerJinleeId])
+  @@index([envelopeId, claimedAt])
+  @@index([claimerJinleeId, claimedAt])
 }
 
 enum VipBenefitDeliveryKind {

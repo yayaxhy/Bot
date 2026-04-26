@@ -72,6 +72,7 @@ const BASE_REWARD_POOL: Record<string, DropRewardConfig> = {
 const DEFAULT_POOL = Object.values(BASE_REWARD_POOL);
 const HARD_EXCLUDED_USER_IDS = new Set(['1421651539247894549']);
 const CHAT_VOUCHER_EMOJI = '<a:chatVoucherEmoji:1441148279059386418>';
+const STABLE_USER_KEY_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const isHttpUrl = (value: string | null | undefined) => /^https?:\/\/\S+$/i.test(value ?? '');
 
@@ -184,7 +185,51 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
 
   const userNextEligibleAt = new Map<string, number>();
   const userDailyCount = new Map<string, { day: string; count: number }>();
+  const stableUserKeyCache = new Map<string, { key: string; expiresAt: number }>();
   let globalNextEligibleAt = 0;
+
+  const formatStableUserKey = (userId: string, jinleeId?: string | null) =>
+    jinleeId ? `jinlee:${jinleeId}` : `discord:${userId}`;
+
+  const resolveStableUserKey = async (userId: string, nowMs: number) => {
+    const cached = stableUserKeyCache.get(userId);
+    if (cached && cached.expiresAt > nowMs) {
+      return cached.key;
+    }
+    if (cached) {
+      stableUserKeyCache.delete(userId);
+    }
+
+    const identity = await prisma.jinleeUser.findUnique({
+      where: { discordUserId: userId },
+      select: { jinleeId: true },
+    });
+    const key = formatStableUserKey(userId, identity?.jinleeId);
+    stableUserKeyCache.set(userId, { key, expiresAt: nowMs + STABLE_USER_KEY_CACHE_TTL_MS });
+    return key;
+  };
+
+  const moveUserState = (fromKey: string, toKey: string) => {
+    if (fromKey === toKey) return;
+
+    const fromNextEligibleAt = userNextEligibleAt.get(fromKey);
+    const toNextEligibleAt = userNextEligibleAt.get(toKey);
+    if (fromNextEligibleAt != null) {
+      userNextEligibleAt.set(toKey, Math.max(fromNextEligibleAt, toNextEligibleAt ?? 0));
+      userNextEligibleAt.delete(fromKey);
+    }
+
+    const fromCounter = userDailyCount.get(fromKey);
+    const toCounter = userDailyCount.get(toKey);
+    if (fromCounter) {
+      if (!toCounter || toCounter.day !== fromCounter.day) {
+        userDailyCount.set(toKey, fromCounter);
+      } else {
+        userDailyCount.set(toKey, { day: fromCounter.day, count: Math.max(fromCounter.count, toCounter.count) });
+      }
+      userDailyCount.delete(fromKey);
+    }
+  };
 
   console.log('[chat-drop] enabled', {
     dropChance,
@@ -212,10 +257,11 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
 
       const userId = message.author.id;
       if (excludeUsers.has(userId)) return;
-      if (nowMs < (userNextEligibleAt.get(userId) ?? 0)) return;
+      let stableUserKey = await resolveStableUserKey(userId, nowMs);
+      if (nowMs < (userNextEligibleAt.get(stableUserKey) ?? 0)) return;
 
       const dayKey = new Date().toISOString().slice(0, 10); // UTC day
-      const userCounter = userDailyCount.get(userId);
+      const userCounter = userDailyCount.get(stableUserKey);
       if (userCounter?.day === dayKey && userCounter.count >= dailyCap) return;
 
       if (Math.random() >= dropChance) return;
@@ -223,9 +269,11 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
       const picked = pickByWeight(pool);
       if (!picked) return;
       let rewardImageUrl: string | null = getRewardImageFromEnv(picked.key);
+      let canonicalStableUserKey = stableUserKey;
 
       if (picked.kind === 'COUPON') {
         const identity = await ensureJinleeIdentityForDiscordTx(prisma, userId);
+        canonicalStableUserKey = formatStableUserKey(userId, identity.jinleeId);
         const expiresAt = new Date(Date.now() + expireDays * 24 * 60 * 60 * 1000);
 
         while (true) {
@@ -257,6 +305,7 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
         });
       } else {
         const identity = await ensureJinleeIdentityForDiscordTx(prisma, userId);
+        canonicalStableUserKey = formatStableUserKey(userId, identity.jinleeId);
         const prize = await prisma.lotteryPrize.findFirst({
           where: { name: picked.lotteryPrizeName },
           select: { id: true, pool: true, imageUrl: true },
@@ -282,6 +331,15 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
         });
       }
 
+      if (canonicalStableUserKey !== stableUserKey) {
+        stableUserKeyCache.set(userId, {
+          key: canonicalStableUserKey,
+          expiresAt: nowMs + STABLE_USER_KEY_CACHE_TTL_MS,
+        });
+        moveUserState(stableUserKey, canonicalStableUserKey);
+        stableUserKey = canonicalStableUserKey;
+      }
+
       if (!rewardImageUrl && picked.prizeName) {
         const prizeImage = await prisma.lotteryPrize.findFirst({
           where: { name: picked.prizeName },
@@ -291,11 +349,11 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
       }
 
       globalNextEligibleAt = nowMs + globalCooldownMs;
-      userNextEligibleAt.set(userId, nowMs + userCooldownMs);
+      userNextEligibleAt.set(stableUserKey, nowMs + userCooldownMs);
       if (!userCounter || userCounter.day !== dayKey) {
-        userDailyCount.set(userId, { day: dayKey, count: 1 });
+        userDailyCount.set(stableUserKey, { day: dayKey, count: 1 });
       } else {
-        userDailyCount.set(userId, { day: dayKey, count: userCounter.count + 1 });
+        userDailyCount.set(stableUserKey, { day: dayKey, count: userCounter.count + 1 });
       }
 
       if (message.channel?.isTextBased()) {

@@ -1,11 +1,13 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder } from 'discord.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
+  bindPendingEnvelopeMessage,
   createRedEnvelope,
   expireEnvelope,
   scheduleRedEnvelopeExpiration,
   sendKeywordAuditMessage,
   rememberKeywordEnvelope,
+  getKeywordValidationError,
 } from '../services/redEnvelopeService.js';
 import prisma from '../db/prisma.js';
 
@@ -14,6 +16,15 @@ const DEC = (v: number | string | Prisma.Decimal) =>
 
 const MIN_TOTAL = DEC('10');
 const DEFAULT_NOTE = '发送口令即可抢红包，拼手气领赏！';
+
+async function notifyKeywordInvalidSlash(i: ChatInputCommandInteraction, reason: string) {
+  const content = `口令红包发送失败：${reason}`;
+  try {
+    await i.user.send(content);
+    return;
+  } catch {}
+  await i.reply({ content, ephemeral: true });
+}
 
 export const keywordRedEnvelopeSlashCommand = new SlashCommandBuilder()
   .setName('口令红包')
@@ -63,16 +74,9 @@ export async function handleKeywordRedEnvelopeSlash(
   const note = i.options.getString('留言')?.trim();
   const amount = DEC(amountNumber.toFixed(2));
 
-  if (!keyword) {
-    await i.reply({ content: '口令不能为空。', ephemeral: true });
-    return;
-  }
-  if (keyword.length > 50) {
-    await i.reply({ content: '口令长度不能超过 50 个字符。', ephemeral: true });
-    return;
-  }
-  if (/@everyone|@here/.test(keyword) || /<@&\d+>/.test(keyword)) {
-    await i.reply({ content: '口令不能包含 @everyone/@here 或角色提及。', ephemeral: true });
+  const keywordError = getKeywordValidationError(keyword);
+  if (keywordError) {
+    await notifyKeywordInvalidSlash(i, keywordError);
     return;
   }
   if (count > 100) {
@@ -112,10 +116,16 @@ export async function handleKeywordRedEnvelopeSlash(
       id: envelope.id,
       expiresAt: envelope.expiresAt,
     });
+    await bindPendingEnvelopeMessage(
+      envelope.id,
+      { pendingMessageId: pendingMessage.id, channelId: channel.id },
+      client
+    );
 
     rememberKeywordEnvelope(
       {
         id: envelope.id,
+        keyword,
         note: envelope.note,
         channelId: channel.id,
         pendingMessageId: pendingMessage.id,

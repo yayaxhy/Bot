@@ -12,6 +12,7 @@ import { registerInvitationMessage } from '../../services/orderInteractionManage
 import { recordOrderRequest } from '../../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 import { clickStore } from '../../services/clickStore.js';
+import { findBlacklistConflict } from '../../services/blacklistService.js';
 import { ensureJinleeIdentityForDiscordTx } from '../../services/jinleeAccountService.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
@@ -203,6 +204,15 @@ export async function handleOrderPriceSelect(i: Interaction) {
 
   const hostId = i.user.id; // 老板
   const workerId = peiwan.discordUserId;
+  const blacklistConflict = await findBlacklistConflict(hostId, workerId);
+  if (blacklistConflict) {
+    const shouldBeEphemeral = i.inGuild();
+    await i.reply({
+      content: '陪玩正在忙。。。',
+      ...(shouldBeEphemeral ? { ephemeral: true } : {}),
+    });
+    return;
+  }
   const hostIdentity = await ensureJinleeIdentityForDiscordTx(prisma, hostId);
 
   if (peiwan.status !== PeiwanStatus.free) {

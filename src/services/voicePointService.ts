@@ -62,6 +62,17 @@ type OpenSession = {
 const activeSessionCache = new Map<string, OpenSession>();
 const pendingSettleDmPoints = new Map<string, Prisma.Decimal>();
 
+function movePendingSettleDmPoints(fromDiscordUserId: string, toDiscordUserId: string) {
+  if (!fromDiscordUserId || !toDiscordUserId || fromDiscordUserId === toDiscordUserId) return;
+
+  const pending = pendingSettleDmPoints.get(fromDiscordUserId);
+  if (!pending || pending.lte(0)) return;
+
+  pendingSettleDmPoints.delete(fromDiscordUserId);
+  const existing = pendingSettleDmPoints.get(toDiscordUserId) ?? DEC_ZERO;
+  pendingSettleDmPoints.set(toDiscordUserId, existing.add(pending));
+}
+
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? '', 10);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -211,21 +222,50 @@ async function closeSession(
   closeReason: string,
   endedAt: Date,
 ): Promise<void> {
-  const { eligibleSeconds, points } = computeAward(session.joinedAt, endedAt);
+  const latestSession = await prisma.voicePointSession.findUnique({
+    where: { id: session.id },
+    select: {
+      id: true,
+      discordUserId: true,
+      guildId: true,
+      channelId: true,
+      joinedAt: true,
+      leftAt: true,
+    },
+  });
+
+  if (!latestSession || latestSession.leftAt) {
+    activeSessionCache.delete(session.discordUserId);
+    if (latestSession?.discordUserId) {
+      activeSessionCache.delete(latestSession.discordUserId);
+      movePendingSettleDmPoints(session.discordUserId, latestSession.discordUserId);
+    }
+    return;
+  }
+
+  const currentSession: OpenSession = {
+    id: latestSession.id,
+    discordUserId: latestSession.discordUserId,
+    guildId: latestSession.guildId,
+    channelId: latestSession.channelId,
+    joinedAt: latestSession.joinedAt,
+  };
+
+  const { eligibleSeconds, points } = computeAward(currentSession.joinedAt, endedAt);
   let settled = false;
   let awardedPoints = DEC_ZERO;
 
   await prisma.$transaction(async (tx) => {
     if (points.gt(0)) {
       // Serialize per user to keep daily cap accurate under concurrent settles.
-      await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${session.discordUserId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${currentSession.discordUserId} FOR UPDATE`;
       const { startUtc, endUtc } = getDayWindowUtcByOffset(
         endedAt,
         VOICE_POINTS_DAILY_CAP_OFFSET_MINUTES,
       );
       const todayAwarded = await tx.voicePointLedger.aggregate({
         where: {
-          discordUserId: session.discordUserId,
+          discordUserId: currentSession.discordUserId,
           createdAt: { gte: startUtc, lt: endUtc },
         },
         _sum: { points: true },
@@ -243,7 +283,7 @@ async function closeSession(
     }
 
     const updated = await tx.voicePointSession.updateMany({
-      where: { id: session.id, leftAt: null },
+      where: { id: currentSession.id, leftAt: null },
       data: {
         leftAt: endedAt,
         eligibleSeconds,
@@ -256,17 +296,17 @@ async function closeSession(
     settled = true;
 
     if (awardedPoints.gt(0)) {
-      awardedPoints = await awardVipAdjustedLoyaltyPointsTx(tx, session.discordUserId, awardedPoints);
+      awardedPoints = await awardVipAdjustedLoyaltyPointsTx(tx, currentSession.discordUserId, awardedPoints);
       await tx.voicePointSession.update({
-        where: { id: session.id },
+        where: { id: currentSession.id },
         data: { pointsAwarded: awardedPoints },
       });
       await tx.voicePointLedger.create({
         data: {
-          sessionId: session.id,
-          discordUserId: session.discordUserId,
-          guildId: session.guildId,
-          channelId: session.channelId,
+          sessionId: currentSession.id,
+          discordUserId: currentSession.discordUserId,
+          guildId: currentSession.guildId,
+          channelId: currentSession.channelId,
           durationSeconds: eligibleSeconds,
           points: awardedPoints,
           ruleVersion: RULE_VERSION,
@@ -276,10 +316,12 @@ async function closeSession(
   });
 
   activeSessionCache.delete(session.discordUserId);
+  activeSessionCache.delete(currentSession.discordUserId);
+  movePendingSettleDmPoints(session.discordUserId, currentSession.discordUserId);
   if (settled && awardedPoints.gt(0)) {
-    queuePendingSettleDm(session.discordUserId, awardedPoints);
+    queuePendingSettleDm(currentSession.discordUserId, awardedPoints);
     if (closeReason === 'leave_voice') {
-      await flushPendingSettleDm(client, session.discordUserId);
+      await flushPendingSettleDm(client, currentSession.discordUserId);
     }
   }
 }

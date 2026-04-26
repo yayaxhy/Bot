@@ -60,8 +60,9 @@ class ClickStore {
     const existing = this.map.get(messageId);
     if (!existing) {
       this.map.set(messageId, { ownerId, userIds: new Set(), messages: [] });
-    } else if (!existing.ownerId) {
+    } else if (!existing.ownerId || (ownerId && existing.ownerId !== ownerId)) {
       existing.ownerId = ownerId;
+      this.schedulePersist();
     }
   }
 
