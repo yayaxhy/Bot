@@ -21,6 +21,8 @@ const WATCHED_COLUMNS = [
   'steamPrice',
   'commissionRate',
   'MP_url',
+  'voicePreviewUrl',
+  'voicePreviewFilename',
   'exclusive',
   'level',
 ];

@@ -354,6 +354,11 @@ client.once(Events.ClientReady, async () => {
             await client.application.commands.create(getAvatarCommand);
             await client.application.commands.create(channelMessageCommand);
             await client.application.commands.create(lookSelfCommand);
+            const existingCommands = await client.application.commands.fetch();
+            const legacyVoicePreviewCommand = existingCommands.find((command) => command.name === '设置试音');
+            if (legacyVoicePreviewCommand) {
+              await client.application.commands.delete(legacyVoicePreviewCommand.id);
+            }
         }
   } catch (err) {
     console.error('[slash] register error:', err);

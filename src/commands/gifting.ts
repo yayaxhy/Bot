@@ -538,6 +538,7 @@ export async function performGift(
   const result = await prisma.$transaction(async (tx) => {
     // 避免触发充值类通知
     await suppressRechargeNotifications(tx);
+    const giverIdentity = await ensureJinleeIdentityForDiscordTx(tx, giverId);
     const receiverIdentity = await ensureJinleeIdentityForDiscordTx(tx, receiverId);
     await lockJinleeUserForUpdateTx(tx, receiverIdentity.jinleeId);
 
@@ -592,7 +593,7 @@ export async function performGift(
       const voucher = await tx.lotteryDraw.findFirst({
         where: {
           id: lotteryVoucherId,
-          userId: giverId,
+          jinleeId: giverIdentity.jinleeId,
           status: LotteryStatus.UNUSED,
           OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
           prize: { name: { in: allowedPrizeNames } },
@@ -624,7 +625,7 @@ export async function performGift(
       const coupon = await tx.coupon.findFirst({
         where: {
           id: couponVoucherId,
-          discordId: giverId,
+          jinleeId: giverIdentity.jinleeId,
           type: { in: allowedCouponTypes },
           status: 'ACTIVE',
           expiresAt: { gt: now },
@@ -660,7 +661,7 @@ export async function performGift(
               SELECT "id", "couponType"
               FROM "PointShopGrant"
               WHERE "id" = ${couponVoucherId}
-                AND "discordUserId" = ${giverId}
+                AND "jinleeId" = ${giverIdentity.jinleeId}
                 AND "deliveryType" = 'COUPON'
                 AND "deliveryStatus" = 'DELIVERED'
                 AND "status" = 'ACTIVE'
@@ -706,7 +707,7 @@ export async function performGift(
       if (allowedCouponTypes.length) {
         await tx.coupon.updateMany({
           where: {
-            discordId: giverId,
+            jinleeId: giverIdentity.jinleeId,
             type: { in: allowedCouponTypes },
             status: 'ACTIVE',
             expiresAt: { lte: now },
@@ -718,7 +719,7 @@ export async function performGift(
       const coupons = allowedCouponTypes.length
         ? await tx.coupon.findMany({
             where: {
-              discordId: giverId,
+              jinleeId: giverIdentity.jinleeId,
               type: { in: allowedCouponTypes },
               status: 'ACTIVE',
               expiresAt: { gt: now },
@@ -753,7 +754,7 @@ export async function performGift(
       if (remaining > 0) {
         await tx.lotteryDraw.updateMany({
           where: {
-            userId: giverId,
+            jinleeId: giverIdentity.jinleeId,
             status: LotteryStatus.UNUSED,
             expiresAt: { lte: now },
             prize: { name: { in: allowedPrizeNames } },
@@ -762,7 +763,7 @@ export async function performGift(
         });
         const vouchers = await tx.lotteryDraw.findMany({
           where: {
-            userId: giverId,
+            jinleeId: giverIdentity.jinleeId,
             status: LotteryStatus.UNUSED,
             expiresAt: { gt: now },
             prize: { name: { in: allowedPrizeNames } },

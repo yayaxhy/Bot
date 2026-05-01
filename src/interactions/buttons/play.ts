@@ -14,6 +14,7 @@ import { clickStore } from '../../services/clickStore.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 import { resolveOrderRequestOwnerId } from '../../services/orderRequestLogService.js';
 import { formatBossReviews } from '../../services/peiwanReviewDisplayService.js';
+import { buildStoredVoicePreviewAttachment } from '../../services/peiwanVoicePreviewService.js';
 import { MemberStatus, Prisma, PeiwanReviewDisplayMode, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
@@ -170,7 +171,7 @@ function markClicked(orderId: string, workerId: string) {
 async function sendMpToBossWithFallback(
   i: ButtonInteraction,
   hostId: string,
-  payload: { embeds: any[]; components: any[] },
+  payload: { embeds: any[]; components: any[]; content?: string; files?: any[] },
   orderId: string,
   workerMention: string
 ): Promise<'dm' | 'fallback-channel' | 'private-thread' | 'failed'> {
@@ -189,9 +190,12 @@ async function sendMpToBossWithFallback(
     try {
       const ch = await i.client.channels.fetch(FALLBACK_CHANNEL_ID);
       if (ch && ch.type === ChannelType.GuildText) {
+        const fallbackContent = payload.content
+          ? `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。\n${payload.content}`
+          : `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
         await (ch as TextChannel).send({
-          content: `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`,
           ...payload,
+          content: fallbackContent,
         });
         return 'fallback-channel';
       }
@@ -213,9 +217,12 @@ async function sendMpToBossWithFallback(
       await thread.members.add(hostId).catch(() => null);
       await thread.members.add(i.user.id).catch(() => null);
 
+      const fallbackContent = payload.content
+        ? `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。\n${payload.content}`
+        : `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
       await thread.send({
-        content: `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`,
         ...payload,
+        content: fallbackContent,
       });
       return 'private-thread';
     }
@@ -398,6 +405,16 @@ export async function handlePlayButton(i: ButtonInteraction) {
     const anonymousGiftBox = buildGiftingSelect('ANON', giftsForSelect as any);
 
     const mpUrl: string | null = peiwan.MP_url ?? null;
+    const voicePreviewUrl: string | null = peiwan.voicePreviewUrl ?? null;
+    const voicePreviewAttachment = voicePreviewUrl
+      ? await buildStoredVoicePreviewAttachment({
+          url: voicePreviewUrl,
+          filename: peiwan.voicePreviewFilename ?? null,
+        }).catch((err) => {
+          console.error('[handlePlayButton] build voice preview attachment failed:', err);
+          return null;
+        })
+      : null;
     const peiwanType = resolvePeiwanEmbedTitle(peiwan.type, peiwan.gameProfiles);
     const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);
     const orderContent = extractOrderContent(i.message as Message);
@@ -423,6 +440,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
       peiwanRoleLabels,
       orderContent,
       mpUrl,
+      Boolean(voicePreviewUrl),
       bossReviews,
       realnameBox,
       anonymousBox,
@@ -438,7 +456,15 @@ export async function handlePlayButton(i: ButtonInteraction) {
         await sendMpToBossWithFallback(
           i,
           ownerId,
-          { embeds: [embed], components },
+          {
+            ...(voicePreviewAttachment
+              ? { files: [voicePreviewAttachment] }
+              : voicePreviewUrl
+                ? { content: `试听音频：${voicePreviewUrl}` }
+                : {}),
+            embeds: [embed],
+            components,
+          },
           orderId,
           `<@${workerId}>`
         );

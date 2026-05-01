@@ -44,6 +44,11 @@ export const PRIZE_NAMES = {
   COMMISSION_MINUS1_VOUCHER: '抽成降1%券',
   DOUBLE_FLOW_5000_VOUCHER: '双倍流水5000券',
   DOUBLE_SPEND_5000_VOUCHER: '双倍消费5000券',
+  CHAMPAGNE_VOUCHER: '香槟代金券',
+  BUTTERFLY_VOUCHER: '蝴蝶代金券',
+  PIANO_VOUCHER: '钢琴代金券',
+  AIRPLANE_VOUCHER: '飞机代金券',
+  DEEP_SEA_CHEST_VOUCHER: '深海宝箱代金券',
   DISCOUNT_70: '7折券',
   DISCOUNT_90_LOTTERY: '特殊9折券',
   RABBIT_BABY: '兔兔宝宝',
@@ -53,23 +58,24 @@ export const PRIZE_NAMES = {
 } as const;
 
 export const TEN_DRAW_GUARANTEE_PRIZE_NAMES = [
-  PRIZE_NAMES.RABBIT_BABY,
-  PRIZE_NAMES.FOX_BABY,
-  PRIZE_NAMES.PIGGY_BABY,
-  PRIZE_NAMES.CHICK_BABY,
+  PRIZE_NAMES.CHAMPAGNE_VOUCHER,
+  PRIZE_NAMES.BUTTERFLY_VOUCHER,
+  PRIZE_NAMES.PIANO_VOUCHER,
+  PRIZE_NAMES.AIRPLANE_VOUCHER,
+  PRIZE_NAMES.DEEP_SEA_CHEST_VOUCHER,
 ] as const;
+const TEN_DRAW_FIXED_PRIZE_NAME = PRIZE_NAMES.BUTTERFLY_VOUCHER;
 
 const TEN_DRAW_ROTATION_RECIPES: ReadonlyArray<{
   normal: number;
-  baby: number;
+  butterfly: number;
   random: number;
 }> = [
-  { normal: 4, baby: 1, random: 5 },
-  { normal: 4, baby: 1, random: 5 },
-  { normal: 4, baby: 1, random: 5 },
-  { normal: 3, baby: 1, random: 6 },
-  { normal: 3, baby: 1, random: 6 },
-  { normal: 2, baby: 1, random: 7 },
+  { normal: 4, butterfly: 1, random: 5 },
+  { normal: 4, butterfly: 1, random: 5 },
+  { normal: 4, butterfly: 1, random: 5 },
+  { normal: 3, butterfly: 1, random: 6 },
+  { normal: 3, butterfly: 1, random: 6 },
 ];
 const TEN_DRAW_COUNTER_ROW_ID = 1;
 
@@ -339,6 +345,17 @@ async function consumeStock(
   return res.count > 0;
 }
 
+async function maybeAlertSpecialLowStock(tx: TxClient, prize: PrizeLike) {
+  if (prize.unlimited || prize.pool !== LotteryPool.SPECIAL) return;
+  const latest = await tx.lotteryPrize.findUnique({
+    where: { id: prize.id },
+    select: { stock: true },
+  });
+  if ((latest?.stock ?? 0) === 1) {
+    await sendLotteryAlert(`[lottery][stock] 特级奖品「${prize.name}」仅剩 1 个库存`);
+  }
+}
+
 export type LotteryResult = {
   drawId: string;
   prize: PrizeLike;
@@ -558,10 +575,7 @@ export async function performLotteryDraw(params: {
     }
 
     const picked = await pickAndConsumePrize(tx, pool ? { pool } : undefined);
-
-    if (!picked.unlimited && picked.pool === LotteryPool.SPECIAL && (picked.stock ?? 0) === 1) {
-      await sendLotteryAlert(`[lottery][stock] 特级奖品「${picked.name}」仅剩 1 个库存`);
-    }
+    await maybeAlertSpecialLowStock(tx, picked);
 
     const randomVal = Math.random();
     const kind = resolvePrizeKind(picked);
@@ -650,9 +664,9 @@ export async function performLotteryTenDraw(params: {
     await chargeLotteryCostTx(tx, { payerIdentity, amount: TEN_DRAW_COST, now });
 
     const recipe = await allocateTenDrawRotationRecipe(tx);
-    const drawPlans: Array<{ kind: 'normal' | 'baby' | 'random' }> = [
+    const drawPlans: Array<{ kind: 'normal' | 'butterfly' | 'random' }> = [
       ...Array.from({ length: recipe.normal }, () => ({ kind: 'normal' as const })),
-      ...Array.from({ length: recipe.baby }, () => ({ kind: 'baby' as const })),
+      ...Array.from({ length: recipe.butterfly }, () => ({ kind: 'butterfly' as const })),
       ...Array.from({ length: recipe.random }, () => ({ kind: 'random' as const })),
     ];
 
@@ -670,9 +684,10 @@ export async function performLotteryTenDraw(params: {
       const picked =
         plan.kind === 'normal'
           ? await pickAndConsumePrize(tx, { pool: LotteryPool.NORMAL })
-          : plan.kind === 'baby'
-            ? await pickAndConsumePrize(tx, { prizeNames: [...TEN_DRAW_GUARANTEE_PRIZE_NAMES] })
+          : plan.kind === 'butterfly'
+            ? await pickAndConsumePrize(tx, { prizeNames: [TEN_DRAW_FIXED_PRIZE_NAME] })
             : await pickAndConsumePrize(tx);
+      await maybeAlertSpecialLowStock(tx, picked);
       const kind = resolvePrizeKind(picked);
       const drawNonce = `${nonce}:${String(idx + 1).padStart(2, '0')}`;
       const randomVal = Math.random();

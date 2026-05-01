@@ -253,6 +253,7 @@ export function sent_MP_embed(
   peiwanRoleLabels: string[],
   orderContent: string,
   mpUrl: string | null,
+  hasVoicePreview: boolean,
   bossReviews: string[],
   realnameBox: StringSelectMenuBuilder | null,
   anonymousBox: StringSelectMenuBuilder | null,
@@ -293,6 +294,10 @@ export function sent_MP_embed(
 
   if (sanitizedOrderContent) {
     e.addFields({ name: ' <a:41:1422335911236206723> 订单内容', value: sanitizedOrderContent, inline: false });
+  }
+
+  if (hasVoicePreview) {
+    e.addFields({ name: '试音', value: '见下方音频附件或链接', inline: false });
   }
 
   if (bossReviews.length === 0) {

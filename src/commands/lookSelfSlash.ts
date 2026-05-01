@@ -2,6 +2,7 @@ import { ChatInputCommandInteraction, SlashCommandBuilder, userMention } from 'd
 import { MemberStatus, PeiwanReviewDisplayMode } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { formatBossReviews } from '../services/peiwanReviewDisplayService.js';
+import { buildStoredVoicePreviewAttachment } from '../services/peiwanVoicePreviewService.js';
 import {
   buildGiftingSelect,
   DEFAULT_GIFTS,
@@ -65,6 +66,16 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
   const peiwanType = resolvePeiwanEmbedTitle(peiwan.type, peiwan.gameProfiles);
   const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);
   const realnameGiftBox = buildGiftingSelect('REALNAME', DEFAULT_GIFTS as Array<{ GiftName: string; price: number }>);
+  const voicePreviewUrl = peiwan.voicePreviewUrl ?? null;
+  const voicePreviewAttachment = voicePreviewUrl
+    ? await buildStoredVoicePreviewAttachment({
+        url: voicePreviewUrl,
+        filename: peiwan.voicePreviewFilename ?? null,
+      }).catch((err) => {
+        console.error('[lookSelf] build voice preview attachment failed:', err);
+        return null;
+      })
+    : null;
   const { embed, components } = sent_MP_embed(
     peiwanType,
     peiwan.PEIWANID,
@@ -72,6 +83,7 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
     peiwanRoleLabels,
     '',
     peiwan.MP_url ?? null,
+    Boolean(voicePreviewUrl),
     bossReviews,
     null,
     null,
@@ -80,6 +92,11 @@ export async function handleLookSelfSlash(i: ChatInputCommandInteraction) {
   );
 
   await i.reply({
+    ...(voicePreviewAttachment
+      ? { files: [voicePreviewAttachment] }
+      : voicePreviewUrl
+        ? { content: `试听音频：${voicePreviewUrl}` }
+        : {}),
     embeds: [embed],
     components,
     ephemeral: false,

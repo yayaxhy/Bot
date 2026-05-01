@@ -194,7 +194,7 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
       TEN_DRAW_GUARANTEE_PRIZE_NAMES.includes(draw.prize.name as (typeof TEN_DRAW_GUARANTEE_PRIZE_NAMES)[number])
     );
     if (guaranteedHits.length > 0) {
-      revealLines.push(`抽到复活节限定礼物：${guaranteedHits.map((draw) => draw.prize.name).join('、')}`);
+      revealLines.push(`抽到本期礼物：${guaranteedHits.map((draw) => draw.prize.name).join('、')}`);
     }
     if (result.draws.some((draw) => draw.prize.name === PRIZE_NAMES.BLOCK_STACK_VOUCHER)) {
       revealLines.push('积木游戏代金券使用方法：输入 !抽积木 消耗该代金券');
