@@ -478,7 +478,6 @@ export async function handlePlayButton(i: ButtonInteraction) {
           });
         }
         bossMessages.push({
-          content: '请选择点单或打赏方式：',
           components: mpComponents,
         });
 
