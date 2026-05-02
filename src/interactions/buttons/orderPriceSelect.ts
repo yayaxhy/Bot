@@ -207,6 +207,9 @@ export async function handleOrderPriceSelect(i: Interaction) {
 
   const hostId = i.user.id; // 老板
   const workerId = peiwan.discordUserId;
+  if (workerId === hostId) {
+    return i.reply({ content: '不能点单自己哦。', ephemeral: true });
+  }
   const blacklistConflict = await findBlacklistConflict(hostId, workerId);
   if (blacklistConflict) {
     const shouldBeEphemeral = i.inGuild();

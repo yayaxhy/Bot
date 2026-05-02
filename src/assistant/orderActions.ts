@@ -326,7 +326,7 @@ export async function executeNaturalOrderCreate(
     prices[code] = priceFromPeiwan(peiwan, code);
   }
 
-  const priceSelect = buildQuotationSelect('ANON', prices, context.id);
+  const priceSelect = buildQuotationSelect('ANON', prices, context.id, peiwan.PEIWANID);
   if (!priceSelect) {
     throw new Error('该陪玩暂未配置可用价格，请联系工作人员。');
   }

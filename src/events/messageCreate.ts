@@ -492,7 +492,8 @@ async function tryHandleQuickOrderCommand(message: Message): Promise<boolean> {
     const priceSelect = buildQuotationSelect(
       mode === OrderMode.REALNAME ? 'REALNAME' : 'ANON',
       prices,
-      orderId
+      orderId,
+      peiwan.PEIWANID
     );
     if (!priceSelect) {
       await message.reply('该陪玩暂未配置可用价格，请联系工作人员。');
