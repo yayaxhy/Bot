@@ -42,6 +42,15 @@ enum OrderStatus {
   EXPIRED
 }
 
+enum AuditionInviteStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  FULFILLED
+  CANCELED
+}
+
 enum RechargeOrderStatus {
   PENDING
   PAID
@@ -240,10 +249,10 @@ model Member {
   status        MemberStatus @default(LAOBAN)
 
   // Money
-  totalBalance  Decimal @default(0) @db.Decimal(19, 4)
-  income        Decimal @default(0) @db.Decimal(19, 4)
-  recharge      Decimal @default(0) @db.Decimal(19, 4)
-  totalSpent    Decimal @default(0) @db.Decimal(19, 4)
+  totalBalance Decimal @default(0) @db.Decimal(19, 4)
+  income       Decimal @default(0) @db.Decimal(19, 4)
+  recharge     Decimal @default(0) @db.Decimal(19, 4)
+  totalSpent   Decimal @default(0) @db.Decimal(19, 4)
 
   // Payout rate (user receives this share of gross), default 75%
   commissionRate     Decimal @default(0.75) @db.Decimal(7, 6)
@@ -317,9 +326,12 @@ model Member {
   jinleeUser JinleeUser? @relation("JinleeUserMember")
 
   // Order request logs/clicks
-  orderRequestsCreated OrderRequestLog[]   @relation("OrderRequestOwner")
-  orderRequestClicks   OrderRequestClick[] @relation("OrderRequestWorker")
-  bossProfile          BossProfile?
+  orderRequestsCreated  OrderRequestLog[]   @relation("OrderRequestOwner")
+  orderRequestClicks    OrderRequestClick[] @relation("OrderRequestWorker")
+  bossProfile           BossProfile?
+  auditionRoom          AuditionRoom?       @relation("BossAuditionRoom")
+  bossAuditionInvites   AuditionInvite[]    @relation("BossAuditionInvites")
+  workerAuditionInvites AuditionInvite[]    @relation("WorkerAuditionInvites")
 
   // Expense & profit logs
   expensesAsOperator     Expense[]     @relation("ExpenseOperator")
@@ -489,8 +501,9 @@ model Transaction {
   netAmount    Decimal  @db.Decimal(19, 4)
   createdAt    DateTime @default(now())
 
-  commissionById    Commission? @relation("commissionById")
-  commissionByOrder Commission? @relation("commissionByOrder")
+  commissionById    Commission?     @relation("commissionById")
+  commissionByOrder Commission?     @relation("commissionByOrder")
+  auditionInvite    AuditionInvite?
 
   from           Member?     @relation("FromMember", fields: [fromId], references: [discordUserId])
   to             Member      @relation("ToMember", fields: [toId], references: [discordUserId])
@@ -499,6 +512,60 @@ model Transaction {
 
   @@index([fromJinleeId, createdAt])
   @@index([toJinleeId, createdAt])
+}
+
+model AuditionRoom {
+  bossId      String    @id
+  guildId     String
+  categoryId  String
+  channelId   String    @unique
+  channelName String
+  emptySince  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  boss Member @relation("BossAuditionRoom", fields: [bossId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([guildId, categoryId])
+}
+
+model AuditionInvite {
+  id                    String               @id @default(cuid())
+  orderRequestId        String
+  bossId                String
+  workerId              String
+  peiwanId              Int?
+  roomChannelId         String
+  roomGuildId           String
+  bossContactChannelId  String?
+  workerPromptChannelId String?
+  workerPromptMessageId String?
+  status                AuditionInviteStatus @default(PENDING)
+  expiresAt             DateTime
+  acceptedAt            DateTime?
+  declinedAt            DateTime?
+  joinedAt              DateTime?
+  chargedAt             DateTime?
+  fulfilledAt           DateTime?
+  canceledAt            DateTime?
+  failureReason         String?
+  bossRoomNoticeSentAt  DateTime?
+  transactionId         String?              @unique
+  grossAmount           Decimal?             @db.Decimal(19, 4)
+  feeAmount             Decimal?             @db.Decimal(19, 4)
+  netAmount             Decimal?             @db.Decimal(19, 4)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  boss               Member       @relation("BossAuditionInvites", fields: [bossId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  worker             Member       @relation("WorkerAuditionInvites", fields: [workerId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  paymentTransaction Transaction? @relation(fields: [transactionId], references: [Transid], onDelete: SetNull)
+
+  @@index([orderRequestId, createdAt])
+  @@index([bossId, status, createdAt])
+  @@index([workerId, status, createdAt])
+  @@index([roomChannelId, status, createdAt])
+  @@index([expiresAt, status])
 }
 
 model Withdraw {
@@ -874,17 +941,17 @@ model PEIWAN {
   // Original payout share baseline for future reset logic
   baseCommissionRate Decimal @default(0.75) @db.Decimal(7, 6)
 
-  totalEarn         Decimal      @default(0) @db.Decimal(19, 4)
-  balance           Decimal      @default(0) @db.Decimal(19, 4)
-  MP_url            String?
-  voicePreviewUrl   String?
+  totalEarn            Decimal      @default(0) @db.Decimal(19, 4)
+  balance              Decimal      @default(0) @db.Decimal(19, 4)
+  MP_url               String?
+  voicePreviewUrl      String?
   voicePreviewFilename String?
-  status            PeiwanStatus @default(free)
-  serverDisplayName String?
-  sex               PeiwanSex    @default(小姐姐)
-  exclusive         Boolean      @default(false)
-  type              PeiwanType   @default(娱乐陪玩)
-  level             PeiwanLevel  @default(优选陪玩)
+  status               PeiwanStatus @default(free)
+  serverDisplayName    String?
+  sex                  PeiwanSex    @default(小姐姐)
+  exclusive            Boolean      @default(false)
+  type                 PeiwanType   @default(娱乐陪玩)
+  level                PeiwanLevel  @default(优选陪玩)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1025,13 +1092,13 @@ model BossProfile {
 }
 
 model VipBenefitProfile {
-  discordUserId        String   @id
-  roleOptOut           Boolean  @default(false)
-  announcementEnabled  Boolean  @default(true)
-  lastSettledVipLevel  Int      @default(0)
-  dispatchImageUrl     String?
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  discordUserId       String   @id
+  roleOptOut          Boolean  @default(false)
+  announcementEnabled Boolean  @default(true)
+  lastSettledVipLevel Int      @default(0)
+  dispatchImageUrl    String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   member Member @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
 }
@@ -1083,26 +1150,26 @@ model HeartCounter {
 }
 
 model RedEnvelope {
-  id              String            @id @default(cuid())
-  creatorId       String
-  totalAmount     Decimal           @db.Decimal(19, 4)
-  pointsAwarded   Decimal           @default(0) @db.Decimal(19, 4)
-  remainingAmount Decimal           @db.Decimal(19, 4)
-  totalCount      Int
-  remainingCount  Int
-  note            String?
-  status          RedEnvelopeStatus @default(ACTIVE)
-  expiresAt       DateTime
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  messageId       String?
-  channelId       String?
-  keyword         String?
+  id               String             @id @default(cuid())
+  creatorId        String
+  totalAmount      Decimal            @db.Decimal(19, 4)
+  pointsAwarded    Decimal            @default(0) @db.Decimal(19, 4)
+  remainingAmount  Decimal            @db.Decimal(19, 4)
+  totalCount       Int
+  remainingCount   Int
+  note             String?
+  status           RedEnvelopeStatus  @default(ACTIVE)
+  expiresAt        DateTime
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  messageId        String?
+  channelId        String?
+  keyword          String?
   pendingMessageId String?
-  refundedAmount  Decimal?          @db.Decimal(19, 4)
-  incomePool      Decimal           @db.Decimal(19, 4)
-  rechargePool    Decimal           @db.Decimal(19, 4)
-  claims          RedEnvelopeClaim[]
+  refundedAmount   Decimal?           @db.Decimal(19, 4)
+  incomePool       Decimal            @db.Decimal(19, 4)
+  rechargePool     Decimal            @db.Decimal(19, 4)
+  claims           RedEnvelopeClaim[]
 
   @@index([status, expiresAt])
   @@index([keyword, status, channelId, expiresAt])
@@ -1147,7 +1214,7 @@ model VipBenefitGrant {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  member    Member                     @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
+  member    Member                    @relation(fields: [discordUserId], references: [discordUserId], onDelete: Cascade, onUpdate: Cascade)
   instances VipBenefitGrantInstance[]
 
   @@unique([discordUserId, benefitCode])
@@ -1203,19 +1270,19 @@ model CommissionBuff {
 }
 
 model AutoCommissionBuff {
-  userId          String    @id @map("user_id")
-  targetShare     Decimal   @default(0.91) @map("target_share") @db.Decimal(10, 4)
-  thresholdAmount Decimal   @default(12000) @map("threshold_amount") @db.Decimal(19, 4)
-  windowDays      Int       @default(30) @map("window_days")
-  windowStart     DateTime  @map("window_start")
-  windowEnd       DateTime  @map("window_end")
-  currentAmount   Decimal   @default(0) @map("current_amount") @db.Decimal(19, 4)
-  tierExpiries    Json?     @map("tier_expiries")
-  activeUntil     DateTime? @map("active_until")
-  lastQualifiedAt DateTime? @map("last_qualified_at")
+  userId             String    @id @map("user_id")
+  targetShare        Decimal   @default(0.91) @map("target_share") @db.Decimal(10, 4)
+  thresholdAmount    Decimal   @default(12000) @map("threshold_amount") @db.Decimal(19, 4)
+  windowDays         Int       @default(30) @map("window_days")
+  windowStart        DateTime  @map("window_start")
+  windowEnd          DateTime  @map("window_end")
+  currentAmount      Decimal   @default(0) @map("current_amount") @db.Decimal(19, 4)
+  tierExpiries       Json?     @map("tier_expiries")
+  activeUntil        DateTime? @map("active_until")
+  lastQualifiedAt    DateTime? @map("last_qualified_at")
   lastReminderSentAt DateTime? @map("reminder_sent_for_active_until")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
 
   @@map("auto_commission_buff")
 }

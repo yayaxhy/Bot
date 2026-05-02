@@ -47,6 +47,13 @@ import { startRechargeWatcher } from './services/rechargeWatcher.js';
 import { registerInviteReward } from './services/inviteRewardService.js';
 import { registerVoicePointService } from './services/voicePointService.js';
 import { registerChatVoucherDropService } from './services/chatVoucherDropService.js';
+import {
+  handleAuditionAcceptButton,
+  handleAuditionDeclineButton,
+  handleAuditionRequestButton,
+  recoverAuditionState,
+  registerAuditionService,
+} from './services/auditionService.js';
 import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageCreate.js';
 import { startCommissionBuffWatcher } from './services/buffService.js';
 import { refreshAllAutoCommissionBuffs, startAutoCommissionBuffWatcher } from './services/autoCommissionBuffService.js';
@@ -275,6 +282,18 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
         await handleBlockStackButton(i);
         return;
       }
+      if (i.customId?.startsWith('audition:request:')) {
+        await handleAuditionRequestButton(i);
+        return;
+      }
+      if (i.customId?.startsWith('audition:accept:')) {
+        await handleAuditionAcceptButton(i);
+        return;
+      }
+      if (i.customId?.startsWith('audition:decline:')) {
+        await handleAuditionDeclineButton(i);
+        return;
+      }
       // 抢单按钮
       if (i.customId?.startsWith('requestOrder:') || i.customId?.startsWith('play:')) {
         await handlePlayButton(i);
@@ -314,6 +333,7 @@ registerPeiwanRoleSync(client);
 registerInviteReward(client);
 registerVoicePointService(client);
 registerChatVoucherDropService(client, prisma);
+registerAuditionService(client);
 
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
@@ -324,6 +344,11 @@ client.once(Events.ClientReady, async () => {
     await recoverPendingInvitations();
   } catch (err) {
     console.error('[startup] recover pending invites failed:', err);
+  }
+  try {
+    await recoverAuditionState(client);
+  } catch (err) {
+    console.error('[startup] recover audition state failed:', err);
   }
   recoverRunningOrders().catch((err) =>
     console.error('[startup] recover running orders failed:', err),

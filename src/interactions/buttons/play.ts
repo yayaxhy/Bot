@@ -15,6 +15,7 @@ import { updateMemberServerDisplayName } from '../../services/memberDisplayNameS
 import { resolveOrderRequestOwnerId } from '../../services/orderRequestLogService.js';
 import { formatBossReviews } from '../../services/peiwanReviewDisplayService.js';
 import { buildStoredVoicePreviewAttachment } from '../../services/peiwanVoicePreviewService.js';
+// import { buildAuditionRequestButtonRow } from '../../services/auditionService.js';
 import { MemberStatus, Prisma, PeiwanReviewDisplayMode, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
@@ -171,14 +172,29 @@ function markClicked(orderId: string, workerId: string) {
 async function sendMpToBossWithFallback(
   i: ButtonInteraction,
   hostId: string,
-  payload: { embeds: any[]; components: any[]; content?: string; files?: any[] },
+  messages: Array<{ embeds?: any[]; components?: any[]; content?: string; files?: any[] }>,
   orderId: string,
   workerMention: string
 ): Promise<'dm' | 'fallback-channel' | 'private-thread' | 'failed'> {
+  const sendSequence = async (
+    send: (payload: { embeds?: any[]; components?: any[]; content?: string; files?: any[] }) => Promise<unknown>,
+    prefixContent?: string,
+  ) => {
+    for (let idx = 0; idx < messages.length; idx += 1) {
+      const base = messages[idx] ?? {};
+      if (idx === 0 && prefixContent) {
+        const content = base.content ? `${prefixContent}\n${base.content}` : prefixContent;
+        await send({ ...base, content });
+      } else {
+        await send(base);
+      }
+    }
+  };
+
   // 1) 尝试 DM 老板
   try {
     const bossUser = await i.client.users.fetch(hostId);
-    await bossUser.send(payload);
+    await sendSequence((payload) => bossUser.send(payload));
     return 'dm';
   } catch (e: any) {
     // 50007: Cannot send messages to this user
@@ -190,13 +206,8 @@ async function sendMpToBossWithFallback(
     try {
       const ch = await i.client.channels.fetch(FALLBACK_CHANNEL_ID);
       if (ch && ch.type === ChannelType.GuildText) {
-        const fallbackContent = payload.content
-          ? `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。\n${payload.content}`
-          : `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
-        await (ch as TextChannel).send({
-          ...payload,
-          content: fallbackContent,
-        });
+        const fallbackContent = `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
+        await sendSequence((payload) => (ch as TextChannel).send(payload), fallbackContent);
         return 'fallback-channel';
       }
     } catch (err) {
@@ -217,13 +228,8 @@ async function sendMpToBossWithFallback(
       await thread.members.add(hostId).catch(() => null);
       await thread.members.add(i.user.id).catch(() => null);
 
-      const fallbackContent = payload.content
-        ? `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。\n${payload.content}`
-        : `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
-      await thread.send({
-        ...payload,
-        content: fallbackContent,
-      });
+      const fallbackContent = `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
+      await sendSequence((payload) => thread.send(payload), fallbackContent);
       return 'private-thread';
     }
   } catch (err) {
@@ -447,24 +453,39 @@ export async function handlePlayButton(i: ButtonInteraction) {
       realnameGiftBox,
       anonymousGiftBox
     );
+    const mpComponents = [
+      // 真人试音入口临时隐藏，先不向老板展示该按钮。
+      // buildAuditionRequestButtonRow(orderId, workerId, peiwan.PEIWANID),
+      ...components,
+    ];
 
     const blacklistConflict = await findBlacklistConflict(ownerId, workerId);
 
     if (!blacklistConflict) {
       // 发送 MP 到老板（含降级）
       try {
+        const bossMessages: Array<{ embeds?: any[]; components?: any[]; content?: string; files?: any[] }> = [
+          { embeds: [embed] },
+        ];
+        if (voicePreviewAttachment) {
+          bossMessages.push({
+            content: '试听音频：',
+            files: [voicePreviewAttachment],
+          });
+        } else if (voicePreviewUrl) {
+          bossMessages.push({
+            content: `试听音频：${voicePreviewUrl}`,
+          });
+        }
+        bossMessages.push({
+          content: '请选择点单或打赏方式：',
+          components: mpComponents,
+        });
+
         await sendMpToBossWithFallback(
           i,
           ownerId,
-          {
-            ...(voicePreviewAttachment
-              ? { files: [voicePreviewAttachment] }
-              : voicePreviewUrl
-                ? { content: `试听音频：${voicePreviewUrl}` }
-                : {}),
-            embeds: [embed],
-            components,
-          },
+          bossMessages,
           orderId,
           `<@${workerId}>`
         );
