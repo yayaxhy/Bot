@@ -151,11 +151,12 @@ async function sendAnonLogMessage(i: StringSelectMenuInteraction, content: strin
  */
 export async function handleOrderPriceSelect(i: Interaction) {
   if (!i.isStringSelectMenu()) return;
-  const [customIdBase, customOrderId] = i.customId.split(':');
+  const [customIdBase, customOrderId, customPeiwanIdRaw] = i.customId.split(':');
   if (customIdBase !== 'realname_box' && customIdBase !== 'anonymous_box') return;
 
   const mode: OrderMode = (customIdBase === 'realname_box') ? OrderMode.REALNAME : OrderMode.ANONYMOUS;
   const orderIdFromCustom = customOrderId && customOrderId.trim() ? customOrderId.trim() : null;
+  const customPeiwanId = Number.parseInt(customPeiwanIdRaw ?? '', 10);
 
   // 1) 解析所选报价档位（Q1..Q8）
   const codeStr = i.values?.[0];
@@ -166,7 +167,9 @@ export async function handleOrderPriceSelect(i: Interaction) {
   const quotationLabel = QUOTATION_LABEL[quotationCode] ?? quotationCode;
 
   // 2) 从 embed 取出陪玩 ID
-  const peiwanId = getPeiwanIdFromEmbed(i);
+  const peiwanId = Number.isInteger(customPeiwanId) && customPeiwanId > 0
+    ? customPeiwanId
+    : getPeiwanIdFromEmbed(i);
   if (peiwanId == null) {
     return i.reply({ content: '未能识别陪玩的编号（陪玩ID）。', ephemeral: true });
   }

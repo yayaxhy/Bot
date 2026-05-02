@@ -296,10 +296,6 @@ export function sent_MP_embed(
     e.addFields({ name: ' <a:41:1422335911236206723> 订单内容', value: sanitizedOrderContent, inline: false });
   }
 
-  if (hasVoicePreview) {
-    e.addFields({ name: '试音', value: '见下方音频附件或链接', inline: false });
-  }
-
   if (bossReviews.length === 0) {
     e.addFields({ name: '老板评语', value: '暂无老板评语', inline: false });
   } else {
@@ -387,15 +383,17 @@ export function mapPeiwanRoleLabels(
 export function buildQuotationSelect(
   kind: 'REALNAME' | 'ANON',
   prices: Record<string, number | null | undefined>,
-  orderId?: string
+  orderId?: string,
+  peiwanId?: number
 ): StringSelectMenuBuilder | null {
+  const baseCustomId = kind === 'REALNAME' ? 'realname_box' : 'anonymous_box';
   const menu = new StringSelectMenuBuilder()
     .setCustomId(
-      orderId
-        ? `${kind === 'REALNAME' ? 'realname_box' : 'anonymous_box'}:${orderId}`
-        : kind === 'REALNAME'
-          ? 'realname_box'
-          : 'anonymous_box'
+      orderId && Number.isInteger(peiwanId)
+        ? `${baseCustomId}:${orderId}:${peiwanId}`
+        : orderId
+          ? `${baseCustomId}:${orderId}`
+          : baseCustomId
     )
     .setPlaceholder(kind === 'REALNAME' ? '实名点单' : '匿名点单')
     .setMinValues(1).setMaxValues(1);
@@ -439,10 +437,12 @@ export function buildQuotationSelect(
  */
 export function buildGiftingSelect(
   kind: 'REALNAME' | 'ANON',
-  gifts: Gift[] | Array<{ GiftName: string; price: number }>
+  gifts: Gift[] | Array<{ GiftName: string; price: number }>,
+  peiwanId?: number
 ): StringSelectMenuBuilder | null {
+  const baseCustomId = kind === 'REALNAME' ? 'realname_gifting_box' : 'anonymous_gifting_box';
   const menu = new StringSelectMenuBuilder()
-    .setCustomId(kind === 'REALNAME' ? 'realname_gifting_box' : 'anonymous_gifting_box')
+    .setCustomId(Number.isInteger(peiwanId) ? `${baseCustomId}:${peiwanId}` : baseCustomId)
     .setPlaceholder(kind === 'REALNAME' ? '实名打赏' : '匿名打赏')
     .setMinValues(1).setMaxValues(1);
 

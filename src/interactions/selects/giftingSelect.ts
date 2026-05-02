@@ -14,7 +14,8 @@ const isPeiwanIdFieldName = (name?: string | null) => {
 
 export async function handleGiftingSelect(i: StringSelectMenuInteraction) {
   if (!i.isStringSelectMenu()) return;
-  if (i.customId !== 'realname_gifting_box' && i.customId !== 'anonymous_gifting_box') return;
+  const [customIdBase, customPeiwanIdRaw] = i.customId.split(':');
+  if (customIdBase !== 'realname_gifting_box' && customIdBase !== 'anonymous_gifting_box') return;
 
   const giftName = i.values?.[0];
   if (!giftName) {
@@ -26,10 +27,11 @@ export async function handleGiftingSelect(i: StringSelectMenuInteraction) {
     return;
   }
 
+  const customPeiwanId = Number.parseInt(customPeiwanIdRaw ?? '', 10);
   const embed = i.message.embeds?.[0];
   const field = embed?.fields?.find((f) => isPeiwanIdFieldName(f.name));
   const match = field?.value ? String(field.value).match(/\d+/) : null;
-  const peiwanId = match ? Number(match[0]) : NaN;
+  const peiwanId = Number.isInteger(customPeiwanId) && customPeiwanId > 0 ? customPeiwanId : match ? Number(match[0]) : NaN;
 
   const respond = async (payload: string | MessageCreateOptions) => {
     const options = typeof payload === 'string' ? { content: payload } : payload;
@@ -94,7 +96,7 @@ export async function handleGiftingSelect(i: StringSelectMenuInteraction) {
       receiverId,
       giftName,
       quantity: 1,
-      anonymous: i.customId === 'anonymous_gifting_box',
+      anonymous: customIdBase === 'anonymous_gifting_box',
       giverUsername: i.user.username,
       receiverUsername: receiverUser?.username,
     });

@@ -200,7 +200,7 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
         await handleOrderPriceSelect(i);
         return;
       }
-      if (customId === 'realname_gifting_box' || customId === 'anonymous_gifting_box') {
+      if (customId.startsWith('realname_gifting_box') || customId.startsWith('anonymous_gifting_box')) {
         await handleGiftingSelect(i);
         return;
       }

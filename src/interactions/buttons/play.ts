@@ -172,29 +172,20 @@ function markClicked(orderId: string, workerId: string) {
 async function sendMpToBossWithFallback(
   i: ButtonInteraction,
   hostId: string,
-  messages: Array<{ embeds?: any[]; components?: any[]; content?: string; files?: any[] }>,
+  message: { embeds?: any[]; components?: any[]; content?: string; files?: any[] },
   orderId: string,
   workerMention: string
 ): Promise<'dm' | 'fallback-channel' | 'private-thread' | 'failed'> {
-  const sendSequence = async (
-    send: (payload: { embeds?: any[]; components?: any[]; content?: string; files?: any[] }) => Promise<unknown>,
-    prefixContent?: string,
-  ) => {
-    for (let idx = 0; idx < messages.length; idx += 1) {
-      const base = messages[idx] ?? {};
-      if (idx === 0 && prefixContent) {
-        const content = base.content ? `${prefixContent}\n${base.content}` : prefixContent;
-        await send({ ...base, content });
-      } else {
-        await send(base);
-      }
-    }
+  const withPrefixContent = (prefixContent?: string) => {
+    if (!prefixContent) return message;
+    const content = message.content ? `${prefixContent}\n${message.content}` : prefixContent;
+    return { ...message, content };
   };
 
   // 1) 尝试 DM 老板
   try {
     const bossUser = await i.client.users.fetch(hostId);
-    await sendSequence((payload) => bossUser.send(payload));
+    await bossUser.send(message);
     return 'dm';
   } catch (e: any) {
     // 50007: Cannot send messages to this user
@@ -207,7 +198,7 @@ async function sendMpToBossWithFallback(
       const ch = await i.client.channels.fetch(FALLBACK_CHANNEL_ID);
       if (ch && ch.type === ChannelType.GuildText) {
         const fallbackContent = `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
-        await sendSequence((payload) => (ch as TextChannel).send(payload), fallbackContent);
+        await (ch as TextChannel).send(withPrefixContent(fallbackContent));
         return 'fallback-channel';
       }
     } catch (err) {
@@ -229,7 +220,7 @@ async function sendMpToBossWithFallback(
       await thread.members.add(i.user.id).catch(() => null);
 
       const fallbackContent = `<@${hostId}> 你的私信关闭了，以下为 ${workerMention} 的名片。`;
-      await sendSequence((payload) => thread.send(payload), fallbackContent);
+      await thread.send(withPrefixContent(fallbackContent));
       return 'private-thread';
     }
   } catch (err) {
@@ -405,10 +396,10 @@ export async function handlePlayButton(i: ButtonInteraction) {
     const prices = pricesFromPeiwan(peiwan);
     const giftsForSelect = DEFAULT_GIFTS as Array<{ GiftName: string; price: number }>;
 
-    const realnameBox = buildQuotationSelect('REALNAME', prices, orderId);
-    const anonymousBox = buildQuotationSelect('ANON', prices, orderId);
-    const realnameGiftBox = buildGiftingSelect('REALNAME', giftsForSelect as any);
-    const anonymousGiftBox = buildGiftingSelect('ANON', giftsForSelect as any);
+    const realnameBox = buildQuotationSelect('REALNAME', prices, orderId, peiwan.PEIWANID);
+    const anonymousBox = buildQuotationSelect('ANON', prices, orderId, peiwan.PEIWANID);
+    const realnameGiftBox = buildGiftingSelect('REALNAME', giftsForSelect as any, peiwan.PEIWANID);
+    const anonymousGiftBox = buildGiftingSelect('ANON', giftsForSelect as any, peiwan.PEIWANID);
 
     const mpUrl: string | null = peiwan.MP_url ?? null;
     const voicePreviewUrl: string | null = peiwan.voicePreviewUrl ?? null;
@@ -464,27 +455,21 @@ export async function handlePlayButton(i: ButtonInteraction) {
     if (!blacklistConflict) {
       // 发送 MP 到老板（含降级）
       try {
-        const bossMessages: Array<{ embeds?: any[]; components?: any[]; content?: string; files?: any[] }> = [
-          { embeds: [embed] },
-        ];
-        if (voicePreviewAttachment) {
-          bossMessages.push({
-            content: '试听音频：',
-            files: [voicePreviewAttachment],
-          });
-        } else if (voicePreviewUrl) {
-          bossMessages.push({
-            content: `试听音频：${voicePreviewUrl}`,
-          });
-        }
-        bossMessages.push({
+        const bossMessage: { embeds?: any[]; components?: any[]; content?: string; files?: any[] } = {
+          embeds: [embed],
           components: mpComponents,
-        });
+        };
+        if (voicePreviewAttachment) {
+          bossMessage.content = `陪玩${peiwan.PEIWANID}的试听音频：`;
+          bossMessage.files = [voicePreviewAttachment];
+        } else if (voicePreviewUrl) {
+          bossMessage.content = `陪玩${peiwan.PEIWANID}的试听音频：${voicePreviewUrl}`;
+        }
 
         await sendMpToBossWithFallback(
           i,
           ownerId,
-          bossMessages,
+          bossMessage,
           orderId,
           `<@${workerId}>`
         );
