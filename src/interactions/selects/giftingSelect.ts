@@ -97,6 +97,7 @@ export async function handleGiftingSelect(i: StringSelectMenuInteraction) {
       giftName,
       quantity: 1,
       anonymous: customIdBase === 'anonymous_gifting_box',
+      notifyGiverPointsDm: false,
       giverUsername: i.user.username,
       receiverUsername: receiverUser?.username,
     });
@@ -104,7 +105,8 @@ export async function handleGiftingSelect(i: StringSelectMenuInteraction) {
     const successPayload = giftBox_success(
       `<@${receiverId}>`,
       result.quantity.toString(),
-      result.giftName
+      result.giftName,
+      result.giverLoyaltyLines
     );
 
     await respond(successPayload);

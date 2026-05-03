@@ -40,9 +40,12 @@ const GIFT_VOUCHER_OPTIONS: GiftVoucherOption[] = [
   { giftName: '猪猪宝宝', prizeName: PRIZE_NAMES.PIGGY_BABY, payRate: 0 },
   { giftName: '小鸡宝宝', prizeName: PRIZE_NAMES.CHICK_BABY, payRate: 0 },
   { giftName: '一日冠', prizeName: '一日冠95折券', payRate: 0.95 },
+  { giftName: '一日冠', prizeName: PRIZE_NAMES.CROWN_DAY_92_VOUCHER, payRate: 0.92 },
   { giftName: '一日冠', prizeName: PRIZE_NAMES.CROWN_DAY_90_VOUCHER, couponType: CouponType.CROWN_DAY_90_VOUCHER, payRate: 0.9 },
   { giftName: '一日冠', prizeName: PRIZE_NAMES.CROWN_75_VOUCHER, couponType: CouponType.CROWN_75_VOUCHER, payRate: 0.75 },
+  { giftName: '三日冠', prizeName: PRIZE_NAMES.CROWN_3DAY_92_VOUCHER, payRate: 0.92 },
   { giftName: '三日冠', prizeName: PRIZE_NAMES.CROWN_3DAY_90_VOUCHER, couponType: CouponType.CROWN_3DAY_90_VOUCHER, payRate: 0.9 },
+  { giftName: '一周冠', prizeName: PRIZE_NAMES.CROWN_WEEK_92_VOUCHER, payRate: 0.92 },
   { giftName: '一周冠', prizeName: PRIZE_NAMES.CROWN_WEEK_90_VOUCHER, couponType: CouponType.CROWN_WEEK_90_VOUCHER, payRate: 0.9 },
   { giftName: '月冠名', prizeName: PRIZE_NAMES.CROWN_MONTH_90_VOUCHER, couponType: CouponType.CROWN_MONTH_90_VOUCHER, payRate: 0.9 },
 ];

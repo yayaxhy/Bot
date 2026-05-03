@@ -579,17 +579,18 @@ export function discount_prompt_embed(
 export function giftBox_success(
   workerMention: string,
   quantity: string | number,
-  giftName: string
+  giftName: string,
+  extraLines?: string[]
 ): MessageCreateOptions {
   const qtyText = typeof quantity === 'number' ? quantity.toString() : quantity;
   const lines = [
-    '【成功打赏】',
-    '',
     `感谢板板对陪玩${workerMention}赠送的${qtyText}个${giftName}`,
     '祝板板天天开心！',
+    ...(extraLines?.length ? ['', ...extraLines] : []),
   ];
 
   const embed = new EmbedBuilder()
+    .setTitle('打赏成功！谢谢老板😘')
     .setDescription(lines.join('\n'))
     .setColor(DEFAULT_EMBED_COLOR)
     .setThumbnail('attachment://thankBoss.gif');

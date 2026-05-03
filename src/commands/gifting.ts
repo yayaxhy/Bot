@@ -272,11 +272,13 @@ export interface GiftTransactionResult {
   unitPrice: Prisma.Decimal;
   gross: Prisma.Decimal;
   payable: Prisma.Decimal;
+  pointsEarned: Prisma.Decimal;
   receiverRate: Prisma.Decimal;
   feeAmount: Prisma.Decimal;
   netAmount: Prisma.Decimal;
   heartGain: Prisma.Decimal;
   imageUrl?: string;
+  giverLoyaltyLines?: string[];
 }
 
 async function grantReferralForGift(
@@ -495,6 +497,7 @@ export async function performGift(
     couponVoucherId?: string;
     voucherRequestId?: string;
     expenseReason?: string;
+    notifyGiverPointsDm?: boolean;
   }
 ): Promise<GiftTransactionResult> {
   const {
@@ -512,6 +515,7 @@ export async function performGift(
     couponVoucherId,
     voucherRequestId,
     expenseReason,
+    notifyGiverPointsDm = true,
   } = params;
 
   if (giverId === receiverId) throw new Error('不能给自己打赏。');
@@ -535,7 +539,7 @@ export async function performGift(
   const gross = unitPrice.mul(qtyDecimal);
   if (gross.lte(0)) throw new Error('金额必须大于 0。');
 
-  const result = await prisma.$transaction(async (tx) => {
+  const result: GiftTransactionResult = await prisma.$transaction(async (tx) => {
     // 避免触发充值类通知
     await suppressRechargeNotifications(tx);
     const giverIdentity = await ensureJinleeIdentityForDiscordTx(tx, giverId);
@@ -653,43 +657,50 @@ export async function performGift(
         voucherValue = voucherValue.add(unitPrice.mul(discountRate));
       } else {
         let pointShopPrizeName: string | null = null;
-        if (allowedCouponTypes.length > 0) {
-          const pointShopGrantRows = await tx.$queryRaw<
-            Array<{ id: string; couponType: string | null }>
-          >(
-            Prisma.sql`
-              SELECT "id", "couponType"
-              FROM "PointShopGrant"
-              WHERE "id" = ${couponVoucherId}
-                AND "jinleeId" = ${giverIdentity.jinleeId}
-                AND "deliveryType" = 'COUPON'
-                AND "deliveryStatus" = 'DELIVERED'
-                AND "status" = 'ACTIVE'
-                AND ("expiresAt" IS NULL OR "expiresAt" > ${now})
-                AND "couponType" IN (${Prisma.join(allowedCouponTypes)})
-              LIMIT 1
-            `,
-          );
-          const pointShopGrant = pointShopGrantRows[0];
-          if (pointShopGrant?.couponType) {
-            pointShopPrizeName =
-              PRIZE_BY_VOUCHER_COUPON_TYPE[pointShopGrant.couponType as CouponType] ?? null;
-            if (pointShopPrizeName) {
-              const consumeAmount = computeVoucherConsumeAmount(pointShopPrizeName, unitPrice);
-              await tx.$executeRaw(
-                Prisma.sql`
-                  UPDATE "PointShopGrant"
-                  SET "status" = 'USED',
-                      "consumedAt" = ${now},
-                      "consumeAmount" = ${consumeAmount ?? null},
-                      "consumeTargetId" = ${receiverId},
-                      "consumeTargetJinleeId" = ${receiverIdentity.jinleeId}
-                  WHERE "id" = ${pointShopGrant.id}
-                `,
-              );
-              consumedCouponIds.push(pointShopGrant.id);
-              consumedVoucherIds.push(pointShopGrant.id);
-            }
+        const pointShopGrant = await tx.pointShopGrant.findFirst({
+          where: {
+            id: couponVoucherId,
+            jinleeId: giverIdentity.jinleeId,
+            deliveryType: 'COUPON',
+            deliveryStatus: 'DELIVERED',
+            couponStatus: 'ACTIVE',
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            ...(allowedCouponTypes.length > 0
+              ? {
+                  AND: [
+                    {
+                      OR: [
+                        { couponType: { in: allowedCouponTypes } },
+                        { couponType: null, itemName: { in: allowedPrizeNames } },
+                      ],
+                    },
+                  ],
+                }
+              : {
+                  couponType: null,
+                  itemName: { in: allowedPrizeNames },
+                }),
+          },
+          select: { id: true, couponType: true, itemName: true },
+        });
+        if (pointShopGrant) {
+          pointShopPrizeName = pointShopGrant.couponType
+            ? (PRIZE_BY_VOUCHER_COUPON_TYPE[pointShopGrant.couponType as CouponType] ?? null)
+            : pointShopGrant.itemName;
+          if (pointShopPrizeName) {
+            const consumeAmount = computeVoucherConsumeAmount(pointShopPrizeName, unitPrice);
+            await tx.pointShopGrant.update({
+              where: { id: pointShopGrant.id },
+              data: {
+                couponStatus: 'USED',
+                consumedAt: now,
+                consumeAmount: consumeAmount ?? undefined,
+                consumeTargetId: receiverId,
+                consumeTargetJinleeId: receiverIdentity.jinleeId,
+              },
+            });
+            consumedCouponIds.push(pointShopGrant.id);
+            consumedVoucherIds.push(pointShopGrant.id);
           }
         }
 
@@ -752,46 +763,109 @@ export async function performGift(
 
       const remaining = quantity - coupons.length;
       if (remaining > 0) {
-        await tx.lotteryDraw.updateMany({
+        await tx.pointShopGrant.updateMany({
           where: {
             jinleeId: giverIdentity.jinleeId,
-            status: LotteryStatus.UNUSED,
+            deliveryType: 'COUPON',
+            deliveryStatus: 'DELIVERED',
+            couponStatus: 'ACTIVE',
             expiresAt: { lte: now },
-            prize: { name: { in: allowedPrizeNames } },
+            OR: [
+              ...(allowedCouponTypes.length > 0 ? [{ couponType: { in: allowedCouponTypes } }] : []),
+              { couponType: null, itemName: { in: allowedPrizeNames } },
+            ],
           },
-          data: { status: LotteryStatus.EXPIRED },
+          data: { couponStatus: 'EXPIRED' },
         });
-        const vouchers = await tx.lotteryDraw.findMany({
+        const pointShopVouchers = await tx.pointShopGrant.findMany({
           where: {
             jinleeId: giverIdentity.jinleeId,
-            status: LotteryStatus.UNUSED,
-            expiresAt: { gt: now },
-            prize: { name: { in: allowedPrizeNames } },
+            deliveryType: 'COUPON',
+            deliveryStatus: 'DELIVERED',
+            couponStatus: 'ACTIVE',
+            AND: [
+              { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+              {
+                OR: [
+                  ...(allowedCouponTypes.length > 0 ? [{ couponType: { in: allowedCouponTypes } }] : []),
+                  { couponType: null, itemName: { in: allowedPrizeNames } },
+                ],
+              },
+            ],
           },
-          select: { id: true, prize: { select: { name: true } } },
-          orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+          select: { id: true, couponType: true, itemName: true, issuedAt: true },
+          orderBy: [{ issuedAt: 'asc' }, { id: 'asc' }],
           take: remaining,
         });
-        voucherCount = coupons.length + vouchers.length;
-        if (vouchers.length > 0) {
-          for (const v of vouchers) {
-            const consumeAmount = computeVoucherConsumeAmount(v.prize?.name ?? '', unitPrice);
-          await tx.lotteryDraw.update({
-            where: { id: v.id },
+        for (const pointShopVoucher of pointShopVouchers) {
+          const pointShopPrizeName = pointShopVoucher.couponType
+            ? (PRIZE_BY_VOUCHER_COUPON_TYPE[pointShopVoucher.couponType as CouponType] ?? null)
+            : pointShopVoucher.itemName;
+          if (!pointShopPrizeName) continue;
+          const consumeAmount = computeVoucherConsumeAmount(pointShopPrizeName, unitPrice);
+          await tx.pointShopGrant.update({
+            where: { id: pointShopVoucher.id },
             data: {
-              status: LotteryStatus.USED,
-              consumeAt: now,
+              couponStatus: 'USED',
+              consumedAt: now,
               consumeAmount: consumeAmount ?? undefined,
               consumeTargetId: receiverId,
               consumeTargetJinleeId: receiverIdentity.jinleeId,
             },
           });
-            consumedVoucherIds.push(v.id);
-            const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
-            const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
-            const discountRate = new Prisma.Decimal(1).sub(payRate);
-            voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+          consumedCouponIds.push(pointShopVoucher.id);
+          consumedVoucherIds.push(pointShopVoucher.id);
+          const cfg = voucherConfigs.find((v) => v.prizeName === pointShopPrizeName);
+          const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+          const discountRate = new Prisma.Decimal(1).sub(payRate);
+          voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+        }
+
+        const remainingAfterPointShop = remaining - pointShopVouchers.length;
+        if (remainingAfterPointShop > 0) {
+          await tx.lotteryDraw.updateMany({
+            where: {
+              jinleeId: giverIdentity.jinleeId,
+              status: LotteryStatus.UNUSED,
+              expiresAt: { lte: now },
+              prize: { name: { in: allowedPrizeNames } },
+            },
+            data: { status: LotteryStatus.EXPIRED },
+          });
+          const vouchers = await tx.lotteryDraw.findMany({
+            where: {
+              jinleeId: giverIdentity.jinleeId,
+              status: LotteryStatus.UNUSED,
+              expiresAt: { gt: now },
+              prize: { name: { in: allowedPrizeNames } },
+            },
+            select: { id: true, prize: { select: { name: true } } },
+            orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+            take: remainingAfterPointShop,
+          });
+          voucherCount = coupons.length + pointShopVouchers.length + vouchers.length;
+          if (vouchers.length > 0) {
+            for (const v of vouchers) {
+              const consumeAmount = computeVoucherConsumeAmount(v.prize?.name ?? '', unitPrice);
+              await tx.lotteryDraw.update({
+                where: { id: v.id },
+                data: {
+                  status: LotteryStatus.USED,
+                  consumeAt: now,
+                  consumeAmount: consumeAmount ?? undefined,
+                  consumeTargetId: receiverId,
+                  consumeTargetJinleeId: receiverIdentity.jinleeId,
+                },
+              });
+              consumedVoucherIds.push(v.id);
+              const cfg = voucherConfigs.find((c) => c.prizeName === v.prize?.name);
+              const payRate = new Prisma.Decimal(cfg?.payRate ?? 1);
+              const discountRate = new Prisma.Decimal(1).sub(payRate);
+              voucherValue = voucherValue.add(unitPrice.mul(discountRate));
+            }
           }
+        } else {
+          voucherCount = coupons.length + pointShopVouchers.length;
         }
       } else {
         voucherCount = coupons.length;
@@ -1086,20 +1160,23 @@ export async function performGift(
     const basePoints = new Prisma.Decimal(result.payable);
     const bonusLine = buildVipBonusLine(basePoints, result.pointsEarned);
     const totalText = Number((pointsRow?.points ?? 0).toString()).toFixed(2);
+    const giverLoyaltyLines = bonusLine
+      ? [
+          `获得锦鲤积分${formatPointText(basePoints)}`,
+          bonusLine,
+          `已累计锦鲤积分 ${totalText}`,
+        ]
+      : [`获得锦鲤积分${formatPointText(result.pointsEarned)}，已累计锦鲤积分 ${totalText}。`];
+    result.giverLoyaltyLines = giverLoyaltyLines;
+
+    if (!notifyGiverPointsDm) return result;
+
     const giverUser = await client.users.fetch(giverId).catch(() => null);
     if (giverUser) {
       const embed = new EmbedBuilder()
         .setColor(0xf7c948)
         .setTitle('打赏成功！谢谢老板😘')
-        .setDescription(
-          bonusLine
-            ? [
-                `获得锦鲤积分${formatPointText(basePoints)}`,
-                bonusLine,
-                `已累计锦鲤积分 ${totalText}`,
-              ].join('\n')
-            : `获得锦鲤积分${formatPointText(result.pointsEarned)}，已累计锦鲤积分 ${totalText}。`,
-        );
+        .setDescription(giverLoyaltyLines.join('\n'));
       await safeSend(
         () => giverUser.send({ embeds: [embed] }),
         'notify giver points'
@@ -1200,12 +1277,18 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           giftName,
           quantity,
           anonymous: true,
+          notifyGiverPointsDm: false,
           giverUsername: msg.author.username,
           receiverUsername: receiverUser?.username,
         });
 
         await msg.reply(
-          giftBox_success(`<@${receiverId}>`, result.quantity.toString(), result.giftName)
+          giftBox_success(
+            `<@${receiverId}>`,
+            result.quantity.toString(),
+            result.giftName,
+            result.giverLoyaltyLines
+          )
         );
         return;
       }
