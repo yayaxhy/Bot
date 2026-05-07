@@ -20,6 +20,7 @@ import {
   anonymous_ongoing_order_request_embed,
   order_request_sent_successfully_embed,
   buildQuotationSelect,
+  ORDER_REQUEST_HINT,
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
 import prisma from '../db/prisma.js';
@@ -46,7 +47,7 @@ import {
   GENERAL_BROADCAST_CHANNEL_ID,
   getOrderChannelBindingSnapshot,
 } from '../services/orderChannelBindingService.js';
-import { tryHandleAssistantMessage } from '../assistant/index.js';
+// import { tryHandleAssistantMessage } from '../assistant/index.js';
 
 dotenv.config();
 
@@ -680,7 +681,8 @@ export async function execute(message: Message) {
   if (await tryHandleEndOrderCommand(message)) return;
   if (await tryHandleInviteResponseCommand(message)) return;
   if (await tryHandleQuickOrderCommand(message)) return;
-  if (await tryHandleAssistantMessage(message)) return;
+  // Natural-language assistant disabled.
+  // if (await tryHandleAssistantMessage(message)) return;
 
   if (!orderAnonChannelId) return;
 
@@ -727,12 +729,14 @@ export async function execute(message: Message) {
           userA.tag, content, originalMsg, orderId, ownerId, callEmoji, activities, dispatchImageUrl
         );
         if (message.channel instanceof TextChannel || message.channel instanceof DMChannel) {
-          const hintMsg = await message.channel.send('老板派单啦，快来抢单');
-          clickStore.registerMessage(orderId, hintMsg.id, hintMsg.channelId, ownerId, 'hint');
-          const posted = await message.channel.send(embedResponse);
-          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'body');
-        scheduleOrderRequestClosure(posted);
-      }
+          const posted = await message.channel.send({
+            ...embedResponse,
+            content: ORDER_REQUEST_HINT,
+            allowedMentions: { parse: [] },
+          });
+          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'broadcast');
+          scheduleOrderRequestClosure(posted);
+        }
 
       // 专属派单区同步到综合派单区
       if (
@@ -755,10 +759,12 @@ export async function execute(message: Message) {
               },
             });
           }
-          const hintGeneral = await generalChannel.send('老板派单啦，快来抢单');
-          clickStore.registerMessage(orderId, hintGeneral.id, hintGeneral.channelId, ownerId, 'hint');
-          const postedCopy = await generalChannel.send(embedResponse);
-          clickStore.registerMessage(orderId, postedCopy.id, postedCopy.channelId, ownerId, 'body');
+          const postedCopy = await generalChannel.send({
+            ...embedResponse,
+            content: ORDER_REQUEST_HINT,
+            allowedMentions: { parse: [] },
+          });
+          clickStore.registerMessage(orderId, postedCopy.id, postedCopy.channelId, ownerId, 'broadcast');
           scheduleOrderRequestClosure(postedCopy);
         }
       }
@@ -791,13 +797,15 @@ export async function execute(message: Message) {
               allowedMentions: { users: [], roles: roleInfo.roleIds, parse: [] },
             });
           }
-          const anonHint = await channelB.send('老板派单啦，快来抢单');
-          clickStore.registerMessage(orderId, anonHint.id, anonHint.channelId, ownerId, 'hint');
           const embedResponse = anonymous_ongoing_order_request_embed(
             content, content, orderId, ownerId, callEmoji, activities
           );
-          const posted = await channelB.send(embedResponse);
-          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'body');
+          const posted = await channelB.send({
+            ...embedResponse,
+            content: ORDER_REQUEST_HINT,
+            allowedMentions: { parse: [] },
+          });
+          clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'broadcast');
           scheduleOrderRequestClosure(posted);
         }
 
