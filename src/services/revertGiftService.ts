@@ -12,6 +12,9 @@ type TxLike = PrismaClient | Prisma.TransactionClient;
 const DEC = (n: Prisma.Decimal | number | string) =>
   n instanceof Prisma.Decimal ? n : new Prisma.Decimal(n);
 
+const resolveAuditActionLabel = (giftName: string | null | undefined) =>
+  String(giftName ?? '').trim() === '真人试音' ? '真人试音' : '打赏';
+
 async function restoreSpendBuff(
   tx: TxLike,
   userId: string,
@@ -334,22 +337,23 @@ export async function revertGiftByIndividualTx(params: RevertGiftParams) {
       const workerNetText = Number(result.netAmount.toString()).toFixed(2);
       const giverName =
         giver?.username || (giver as any)?.displayName || result.audit.giverId;
+      const actionLabel = resolveAuditActionLabel(result.audit.giftName);
       const voucherUsed =
         Array.isArray(result.audit.voucherIds) && result.audit.voucherIds.length > 0;
       if (giver) {
         let giverMsg: string;
         if (voucherUsed && refundText === '0.00') {
-          giverMsg = `你的一笔打赏已撤销，消耗的券已返还。`;
+          giverMsg = `你的一笔${actionLabel}已撤销，消耗的券已返还。`;
         } else if (voucherUsed) {
-          giverMsg = `你的一笔打赏已撤销，消耗的券和金额 ¥${refundText} 已返还。`;
+          giverMsg = `你的一笔${actionLabel}已撤销，消耗的券和金额 ¥${refundText} 已返还。`;
         } else {
-          giverMsg = `你的一笔打赏已撤销，金额 ¥${refundText} 已返还。`;
+          giverMsg = `你的一笔${actionLabel}已撤销，金额 ¥${refundText} 已返还。`;
         }
         await giver.send(giverMsg).catch(() => {});
       }
       if (receiver) {
         await receiver
-          .send(`有一笔打赏（老板 ${giverName}）已被撤销，金额 ¥${workerNetText} 已扣回。`)
+          .send(`有一笔${actionLabel}（老板 ${giverName}）已被撤销，金额 ¥${workerNetText} 已扣回。`)
           .catch(() => {});
       }
     }

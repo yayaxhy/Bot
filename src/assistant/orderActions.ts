@@ -201,7 +201,6 @@ export async function executeNaturalDispatchCreate(
   const orderId = context.id;
   const user = actorUser(context);
   const ownerId = user.id;
-  clickStore.init(orderId, ownerId);
 
   const activities = await getActiveActivities();
   const channel = await safeFetchChannel(context.client, ORDER_ANON_CHANNEL_ID, 'anon order channel');

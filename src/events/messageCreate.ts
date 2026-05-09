@@ -705,7 +705,6 @@ export async function execute(message: Message) {
   const originalMsg = content;
   const orderId = message.id;       // 用消息 ID 作为 orderId
   const ownerId = userA.id;         // 🔴 显式传给按钮
-  clickStore.init(orderId, ownerId);
   const defaultCallEmoji = '<:11:1422321930043789343>';
   const activities = await getActiveActivities();
 

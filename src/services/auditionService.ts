@@ -29,6 +29,7 @@ import { getActiveCommissionBoost } from './buffService.js';
 import { getAutoCommissionBoost } from './autoCommissionBuffService.js';
 import { resolveOrderRequestOwnerId } from './orderRequestLogService.js';
 import { ORDER_REQUEST_CLOSE_MS } from './orderInteractionManager.js';
+import { scheduleSpentRoleSync } from './spentRoleService.js';
 
 const AUDITION_CATEGORY_ID = process.env.AUDITION_CATEGORY_ID ?? '1421488476913795072';
 const AUDITION_PRICE = new Prisma.Decimal(process.env.AUDITION_PRICE ?? '5');
@@ -71,17 +72,39 @@ function buildStateRow(label: string) {
   ];
 }
 
-function buildInviteSentNotice(
+function buildAuditionNoticeEmbed(title: string, description: string, color = 0xf5a623) {
+  return new EmbedBuilder().setColor(color).setTitle(title).setDescription(description);
+}
+
+function buildPeiwanIdentityText(
   workerId: string,
   peiwanId: number | null | undefined,
   workerDisplayName?: string | null,
 ) {
   const displayName = String(workerDisplayName ?? '').trim();
-  const peiwanText =
-    peiwanId != null
-      ? `陪玩${peiwanId}${displayName ? ` ${displayName}` : ''} ${userMention(workerId)}`
-      : `${displayName ? `${displayName} ` : ''}${userMention(workerId)}`;
-  return `已向${peiwanText}发送真人试音邀请，等待对方确认。该邀请两分钟内有效。`;
+  const pieces: string[] = [];
+  if (peiwanId != null) {
+    pieces.push(`陪玩${peiwanId}`);
+  } else if (displayName) {
+    pieces.push('陪玩');
+  }
+  if (displayName) {
+    pieces.push(displayName);
+  }
+  pieces.push(userMention(workerId));
+  return pieces.join(' ');
+}
+
+function buildInviteSentEmbed(
+  workerId: string,
+  peiwanId: number | null | undefined,
+  workerDisplayName?: string | null,
+) {
+  const peiwanText = buildPeiwanIdentityText(workerId, peiwanId, workerDisplayName);
+  return buildAuditionNoticeEmbed(
+    '真人试音邀请已发送',
+    `已向${peiwanText}发送真人试音邀请，等待对方确认。该邀请两分钟内有效。`,
+  );
 }
 
 function buildDuplicateInviteNotice(channelUrl?: string | null) {
@@ -99,7 +122,7 @@ function buildWorkerDmPayload(inviteId: string, bossId: string): MessageCreateOp
       [
         `${userMention(bossId)} 老板邀请你进行真人试音`,
         '同意后系统会立即为老板创建专属试音频道',
-        `进入试音厅后可获得 ${AUDITION_PRICE.toString()} 锦鲤币试音收入（按当前抽成结算）`,
+        `老板将支付 ${AUDITION_PRICE.toString()} 锦鲤币，您的试音收入按当前抽成结算`,
         '该邀请两分钟内有效',
       ].join('\n'),
     );
@@ -149,20 +172,47 @@ function buildBossInsufficientBalanceNotice(workerId: string, peiwanId: number |
   return `${peiwanText} 已进入试音厅，但您的可用余额不足，真人试音未能生效。请充值后重新邀请 ${userMention(workerId)}。`;
 }
 
-function buildBossSuccessNotice(workerId: string) {
-  return `${userMention(workerId)} 已进入试音厅，本次真人试音已扣除 ${AUDITION_PRICE.toString()} 锦鲤币。`;
+function buildBossAcceptedRoomEmbed(
+  workerId: string,
+  peiwanId: number | null | undefined,
+  workerDisplayName: string | null | undefined,
+  channelUrl: string,
+) {
+  const peiwanText = buildPeiwanIdentityText(workerId, peiwanId, workerDisplayName);
+  return buildAuditionNoticeEmbed(
+    '真人试音邀请已接受',
+    `${peiwanText} 已经接受试音请求，您可以前往您的专属试音频道进行试音：\n${channelUrl}`,
+    0x57f287,
+  );
 }
 
-function buildWorkerSuccessNotice(netAmount: Prisma.Decimal) {
-  return `您已进入试音厅，本次真人试音收入 ${netAmount.toFixed(2)} 锦鲤币。`;
+function buildWorkerAcceptedRoomEmbed(channelUrl: string, bossId: string) {
+  return buildAuditionNoticeEmbed(
+    '请立刻前往试音频道',
+    `请立刻前往试音频道进行试音，请不要让老板等待，如果突发状况请立刻联系老板 ${userMention(bossId)}\n频道链接：${channelUrl}`,
+    0x57f287,
+  );
 }
 
-function buildBossAcceptedRoomNotice(channelUrl: string) {
-  return `陪陪已经接受试音请求，您可以前往您的专属试音频道进行试音 《${channelUrl}》`;
+function buildBossSuccessEmbed(
+  workerId: string,
+  peiwanId: number | null | undefined,
+  workerDisplayName: string | null | undefined,
+) {
+  const peiwanText = buildPeiwanIdentityText(workerId, peiwanId, workerDisplayName);
+  return buildAuditionNoticeEmbed(
+    '真人试音已完成',
+    `${peiwanText} 已进入试音厅，本次真人试音已扣除 ${AUDITION_PRICE.toString()} 锦鲤币。`,
+    0x57f287,
+  );
 }
 
-function buildWorkerAcceptedRoomNotice(channelUrl: string, bossId: string) {
-  return `请立刻前往试音频道《${channelUrl}》进行试音，请不要让老板等待，如果突发状况请立刻联系老板 ${userMention(bossId)}`;
+function buildWorkerSuccessEmbed(netAmount: Prisma.Decimal) {
+  return buildAuditionNoticeEmbed(
+    '您已经进入试音频道',
+    `您已经进入试音频道，本次真人试音收入 ${netAmount.toFixed(2)} 锦鲤币。`,
+    0x57f287,
+  );
 }
 
 function buildWorkerCanceledNotice(reason: string) {
@@ -176,6 +226,51 @@ function sanitizeBossLabel(raw: string) {
     .trim();
   const trimmed = normalized.slice(0, 32) || '老板';
   return trimmed.endsWith('老板') ? trimmed : `${trimmed}老板`;
+}
+
+async function resolveBossRoomLabel(
+  client: Client,
+  bossId: string,
+  preferredDisplayName?: string | null,
+) {
+  const preferred = String(preferredDisplayName ?? '').trim();
+  if (preferred) return preferred;
+  const user = await client.users.fetch(bossId).catch(() => null);
+  const fallback = String(user?.displayName ?? user?.username ?? '').trim();
+  return fallback || '老板';
+}
+
+async function resolvePeiwanIdentity(
+  client: Client,
+  workerId: string,
+  fallbackPeiwanId?: number | null,
+  preferredDisplayName?: string | null,
+) {
+  let peiwanId = fallbackPeiwanId ?? null;
+  let workerDisplayName = String(preferredDisplayName ?? '').trim();
+
+  if (peiwanId == null || !workerDisplayName) {
+    const peiwan = await prisma.pEIWAN.findUnique({
+      where: { discordUserId: workerId },
+      select: { PEIWANID: true, serverDisplayName: true },
+    }).catch(() => null);
+    if (peiwanId == null) {
+      peiwanId = peiwan?.PEIWANID ?? null;
+    }
+    if (!workerDisplayName) {
+      workerDisplayName = String(peiwan?.serverDisplayName ?? '').trim();
+    }
+  }
+
+  if (!workerDisplayName) {
+    const user = await client.users.fetch(workerId).catch(() => null);
+    workerDisplayName = String(user?.displayName ?? user?.username ?? '').trim();
+  }
+
+  return {
+    peiwanId,
+    workerDisplayName: workerDisplayName || null,
+  };
 }
 
 function parseAuditionRequestCustomId(customId: string) {
@@ -266,9 +361,17 @@ async function notifyBossWithPayload(
 }
 
 async function notifyWorker(client: Client, workerId: string, content: string) {
+  return notifyWorkerWithPayload(client, workerId, { content });
+}
+
+async function notifyWorkerWithPayload(
+  client: Client,
+  workerId: string,
+  payload: MessageCreateOptions,
+) {
   try {
     const user = await client.users.fetch(workerId);
-    await user.send(content);
+    await user.send(payload);
   } catch (err) {
     console.error('[audition] notify worker failed:', err);
   }
@@ -299,10 +402,18 @@ async function ensureAuditionRoom(
   bossId: string,
   bossDisplayName: string,
 ) {
+  const channelName = `${sanitizeBossLabel(bossDisplayName)}的试音厅`;
   const existing = await prisma.auditionRoom.findUnique({ where: { bossId } });
   if (existing) {
     const channel = await client.channels.fetch(existing.channelId).catch(() => null);
     if (channel?.type === ChannelType.GuildVoice) {
+      if (channel.name !== channelName) {
+        await channel.setName(channelName).catch(() => null);
+        await prisma.auditionRoom.update({
+          where: { bossId },
+          data: { channelName },
+        }).catch(() => null);
+      }
       return { room: existing, created: false };
     }
     await prisma.auditionRoom.delete({ where: { bossId } }).catch(() => null);
@@ -318,8 +429,6 @@ async function ensureAuditionRoom(
     create: { discordUserId: bossId },
     update: {},
   });
-
-  const channelName = `${sanitizeBossLabel(bossDisplayName)}的试音厅`;
   const channel = await category.guild.channels.create({
     name: channelName,
     type: ChannelType.GuildVoice,
@@ -609,12 +718,13 @@ async function settleAuditionInvite(client: Client, inviteId: string) {
       const netAmount = round2(gross.mul(payoutShare));
       const feeAmount = round2(gross.sub(netAmount));
 
-      await applyJinleeWalletDeltaTx(tx, {
+      const bossWalletAfter = await applyJinleeWalletDeltaTx(tx, {
         jinleeId: bossIdentity.jinleeId,
         discordUserId: bossIdentity.discordUserId,
         incomeDelta: bossSplit.fromIncome.neg(),
         rechargeDelta: bossSplit.fromRecharge.neg(),
         totalBalanceDelta: gross.neg(),
+        totalSpentDelta: gross,
       });
 
       const bossIndividualTx = await recordIndividualTransaction(tx, {
@@ -623,7 +733,7 @@ async function settleAuditionInvite(client: Client, inviteId: string) {
         thirdPartydiscordId: invite.workerId,
         balanceBefore: bossWallet.totalBalance,
         amountChange: gross,
-        balanceAfter: bossSplit.totalAfter,
+        balanceAfter: bossWalletAfter.totalBalance,
         typeOfTransaction: '试音花费',
       });
 
@@ -675,6 +785,38 @@ async function settleAuditionInvite(client: Client, inviteId: string) {
           fromJinleeId: bossIdentity.jinleeId,
           toJinleeId: workerIdentity.jinleeId,
           feeAmount,
+        },
+      });
+
+      await tx.giftAudit.create({
+        data: {
+          paymentTransactionId: transactionRow.Transid,
+          individualTransactionId: bossIndividualTx.transactionId,
+          orderId: transactionRow.orderID,
+          giftName: '真人试音',
+          quantity: new Prisma.Decimal(1),
+          unitPrice: gross,
+          gross,
+          payable: gross,
+          pointsEarned: new Prisma.Decimal(0),
+          feeAmount,
+          netAmount,
+          receiverRate: payoutShare,
+          heartGain: 0,
+          giverId: bossIdentity.discordUserId ?? invite.bossId,
+          receiverId: invite.workerId,
+          giverFromIncome: bossSplit.fromIncome,
+          giverFromRecharge: bossSplit.fromRecharge,
+          spendBonusExtra: new Prisma.Decimal(0),
+          spendRemainingBefore: new Prisma.Decimal(0),
+          flowBonusExtra: new Prisma.Decimal(0),
+          flowRemainingBefore: new Prisma.Decimal(0),
+          voucherIds: [],
+          couponIds: [],
+          bossReferralInviterId: null,
+          bossReferralAmount: null,
+          workerReferralInviterId: null,
+          workerReferralAmount: null,
         },
       });
 
@@ -741,14 +883,31 @@ async function settleAuditionInvite(client: Client, inviteId: string) {
 
     if (result.outcome !== 'fulfilled') return;
 
+    const workerIdentity = await resolvePeiwanIdentity(
+      client,
+      result.invite.workerId,
+      result.invite.peiwanId,
+    );
     await updateInviteMessageState(client, result.invite, '真人试音已完成');
-    await notifyBoss(
+    await notifyBossWithPayload(
       client,
       result.invite.bossId,
       result.invite.bossContactChannelId,
-      buildBossSuccessNotice(result.invite.workerId),
+      {
+        embeds: [
+          buildBossSuccessEmbed(
+            result.invite.workerId,
+            workerIdentity.peiwanId,
+            workerIdentity.workerDisplayName,
+          ),
+        ],
+      },
     );
-    await notifyWorker(client, result.invite.workerId, buildWorkerSuccessNotice(result.netAmount));
+    await notifyWorkerWithPayload(client, result.invite.workerId, {
+      embeds: [buildWorkerSuccessEmbed(result.netAmount)],
+    });
+    scheduleSpentRoleSync(result.invite.bossId, { announceVipUpgrade: true });
+    scheduleSpentRoleSync(result.invite.workerId, { includeSpendRoles: false });
   } finally {
     settlingInviteIds.delete(inviteId);
   }
@@ -823,6 +982,14 @@ async function replyToButtonWithPayload(
     return;
   }
   await i.reply(replyPayload);
+}
+
+async function replyAlreadyHandled(i: ButtonInteraction) {
+  if (!i.inGuild() && !i.deferred && !i.replied) {
+    await i.deferUpdate().catch(() => null);
+    return;
+  }
+  await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
 }
 
 export async function handleAuditionRequestButton(i: ButtonInteraction) {
@@ -1009,7 +1176,7 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
 
   scheduleInviteExpiry(i.client, invitation.invite.id, invitation.invite.expiresAt);
   await replyToButtonWithPayload(i, {
-    content: buildInviteSentNotice(parsed.workerId, invitation.peiwanId, invitation.workerDisplayName),
+    embeds: [buildInviteSentEmbed(parsed.workerId, invitation.peiwanId, invitation.workerDisplayName)],
     components: buildBossCancelRow(invitation.invite.id),
   });
 }
@@ -1064,7 +1231,7 @@ export async function handleAuditionAcceptButton(i: ButtonInteraction) {
     return;
   }
   if (invite.status !== AuditionInviteStatus.PENDING && invite.status !== AuditionInviteStatus.ACCEPTED) {
-    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    await replyAlreadyHandled(i);
     return;
   }
 
@@ -1072,7 +1239,7 @@ export async function handleAuditionAcceptButton(i: ButtonInteraction) {
     where: { orderId: invite.orderRequestId },
     select: { ownerDisplayName: true },
   });
-  const bossDisplayName = requestLog?.ownerDisplayName?.trim() || invite.bossId;
+  const bossDisplayName = await resolveBossRoomLabel(i.client, invite.bossId, requestLog?.ownerDisplayName);
 
   let room;
   try {
@@ -1154,18 +1321,32 @@ export async function handleAuditionAcceptButton(i: ButtonInteraction) {
     return;
   }
   if (acceptedInvite.status !== AuditionInviteStatus.ACCEPTED) {
-    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    await replyAlreadyHandled(i);
     return;
   }
 
   const roomUrl = buildChannelUrl(room.guildId, room.channelId);
+  const workerIdentity = await resolvePeiwanIdentity(
+    i.client,
+    acceptedInvite.workerId,
+    acceptedInvite.peiwanId,
+  );
   scheduleInviteExpiry(i.client, acceptedInvite.id, acceptedInvite.expiresAt);
   await i.update({ components: buildStateRow('已接受，请立即进房') });
   await notifyBossWithPayload(i.client, acceptedInvite.bossId, acceptedInvite.bossContactChannelId, {
-    content: buildBossAcceptedRoomNotice(roomUrl),
+    embeds: [
+      buildBossAcceptedRoomEmbed(
+        acceptedInvite.workerId,
+        workerIdentity.peiwanId,
+        workerIdentity.workerDisplayName,
+        roomUrl,
+      ),
+    ],
     components: buildBossCancelRow(acceptedInvite.id),
   });
-  await replyToButton(i, buildWorkerAcceptedRoomNotice(roomUrl, acceptedInvite.bossId));
+  await replyToButtonWithPayload(i, {
+    embeds: [buildWorkerAcceptedRoomEmbed(roomUrl, acceptedInvite.bossId)],
+  });
   await syncAuditionRoomByChannelId(i.client, room.channelId);
 }
 
@@ -1199,7 +1380,7 @@ export async function handleAuditionCancelButton(i: ButtonInteraction) {
     return;
   }
   if (!ACTIVE_INVITE_STATUSES.includes(inviteSnapshot.status as (typeof ACTIVE_INVITE_STATUSES)[number])) {
-    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    await replyAlreadyHandled(i);
     return;
   }
 
@@ -1254,7 +1435,7 @@ export async function handleAuditionCancelButton(i: ButtonInteraction) {
     return;
   }
   if (result.outcome === 'inactive') {
-    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    await replyAlreadyHandled(i);
     return;
   }
   if (result.outcome !== 'canceled') {
@@ -1311,7 +1492,7 @@ export async function handleAuditionDeclineButton(i: ButtonInteraction) {
     return;
   }
   if (invite.status !== AuditionInviteStatus.REJECTED) {
-    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    await replyAlreadyHandled(i);
     return;
   }
 

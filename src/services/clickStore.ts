@@ -30,6 +30,19 @@ class ClickStore {
     return this.loadPromise;
   }
 
+  private pruneDanglingEntries() {
+    let pruned = 0;
+    for (const [orderId, state] of this.map.entries()) {
+      const hasMessages = state.messages.length > 0;
+      const hasOwnerControls = state.ownerControls.length > 0;
+      const hasClicks = state.userIds.size > 0;
+      if (hasMessages || hasOwnerControls || hasClicks) continue;
+      this.map.delete(orderId);
+      pruned += 1;
+    }
+    return pruned;
+  }
+
   private schedulePersist() {
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
@@ -87,7 +100,12 @@ class ClickStore {
         };
         this.map.set(entry.orderId, state);
       }
-      console.log('[clickStore] restored state entries:', data.entries.length);
+      const pruned = this.pruneDanglingEntries();
+      console.log('[clickStore] restored state entries:', this.map.size);
+      if (pruned > 0) {
+        console.log('[clickStore] pruned dangling entries:', pruned);
+        await this.persist();
+      }
     } catch (err: any) {
       if (err?.code === 'ENOENT') return; // no persisted state yet
       throw err;

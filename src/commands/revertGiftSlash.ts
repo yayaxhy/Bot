@@ -28,6 +28,7 @@ export async function handleRevertGiftSlash(i: ChatInputCommandInteraction) {
     const result = await revertGiftByIndividualTx({ transactionId: txId, operatorId: i.user.id, reason });
     const refundText = Number(result.payable.toString()).toFixed(2);
     const workerNetText = Number(result.netAmount.toString()).toFixed(2);
+    const actionLabel = result.audit.giftName === '真人试音' ? '真人试音' : '打赏';
     const voucherUsed =
       (Array.isArray(result.audit.voucherIds) && result.audit.voucherIds.length > 0) ||
       (Array.isArray((result.audit as any).couponIds) && (result.audit as any).couponIds.length > 0);
@@ -43,7 +44,7 @@ export async function handleRevertGiftSlash(i: ChatInputCommandInteraction) {
 
     await i.editReply({
       content:
-        `已撤销打赏流水 ${txId}，` +
+        `已撤销${actionLabel}流水 ${txId}，` +
         `老板 <@${result.audit.giverId}>：${bossMessage} ` +
         `陪玩 <@${result.audit.receiverId}>：金额 ¥${workerNetText} 已扣回。`,
       allowedMentions: {

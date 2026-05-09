@@ -62,6 +62,7 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
 
   const mentionLine = roleMentions.join(' ').trim();
   const messageText = [mentionLine, content].filter(Boolean).join(' ').trim();
+  const publicDispatchText = messageText || content;
 
   const channel = await i.client.channels.fetch(ORDER_CHANNEL_ID).catch(() => null);
   if (!channel || !(channel instanceof TextChannel)) {
@@ -73,7 +74,6 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
   const ownerId = boss.id;
   const activities = await getActiveActivities();
   const dispatchImageUrl = isAnonymous ? null : await getDispatchImageUrlForOwner(ownerId);
-  clickStore.init(orderId, ownerId);
 
   try {
     await i.deferReply({ ephemeral: true });
@@ -109,21 +109,17 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
           dispatchImageUrl,
         );
 
-    if (isAnonymous && mentionLine) {
+    if (publicDispatchText) {
       await channel.send({
-        content: mentionLine,
+        content: publicDispatchText,
         allowedMentions: { users: [], roles: allowedRoleIds, parse: [] },
       });
     }
 
     const posted = await channel.send({
       ...embedPayload,
-      content: isAnonymous
-        ? ORDER_REQUEST_HINT
-        : [mentionLine, ORDER_REQUEST_HINT].filter(Boolean).join('\n'),
-      allowedMentions: isAnonymous
-        ? { parse: [] }
-        : { users: [], roles: allowedRoleIds, parse: [] },
+      content: ORDER_REQUEST_HINT,
+      allowedMentions: { parse: [] },
     });
     clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'broadcast');
     scheduleOrderRequestClosure(posted, undefined, ORDER_REQUEST_CLOSED_HINT, orderId);

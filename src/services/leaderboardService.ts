@@ -14,8 +14,9 @@ const EXCLUDED_USER_IDS = new Set<string>([
   '1421651539247894549',
   '525770714574225408',
 ]);
-const SPEND_TYPES = new Set<string>(['点单', '打赏', '客服代打赏', '抽奖消费', '红包发出']);
-const INCOME_TYPES = new Set<string>(['点单', '打赏', '客服代打赏', '红包收入']);
+const SPEND_POSITIVE_TYPES = new Set<string>(['点单', '打赏', '客服代打赏', '抽奖消费', '红包发出', '试音花费']);
+const INCOME_POSITIVE_TYPES = new Set<string>(['点单', '打赏', '客服代打赏', '红包收入', '试音收入']);
+const REVERT_TYPES = new Set<string>(['订单撤销', '打赏撤销']);
 
 type SnapshotRow = {
   discordUserId: string;
@@ -259,9 +260,9 @@ async function loadActualSpend(start: Date, end: Date) {
   const rows = await prisma.individualTransaction.findMany({
     where: {
       timeCreatedAt: { gte: start, lt: end },
-      typeOfTransaction: { in: Array.from(SPEND_TYPES) },
+      typeOfTransaction: { in: Array.from(new Set([...SPEND_POSITIVE_TYPES, ...REVERT_TYPES])) },
     },
-    select: { discordId: true, balanceBefore: true, balanceAfter: true },
+    select: { discordId: true, balanceBefore: true, balanceAfter: true, typeOfTransaction: true },
   });
 
   const spendMap = new Map<string, Prisma.Decimal>();
@@ -270,7 +271,14 @@ async function loadActualSpend(start: Date, end: Date) {
     const before = new Prisma.Decimal(row.balanceBefore ?? 0);
     const after = new Prisma.Decimal(row.balanceAfter ?? 0);
     const delta = before.sub(after);
-    if (delta.lte(0)) return;
+    const txType = String(row.typeOfTransaction ?? '');
+    if (SPEND_POSITIVE_TYPES.has(txType)) {
+      if (delta.lte(0)) return;
+    } else if (REVERT_TYPES.has(txType)) {
+      if (delta.gte(0)) return;
+    } else {
+      return;
+    }
     const prev = spendMap.get(row.discordId) ?? new Prisma.Decimal(0);
     spendMap.set(row.discordId, prev.add(delta));
   });
@@ -281,9 +289,9 @@ async function loadActualIncome(start: Date, end: Date) {
   const rows = await prisma.individualTransaction.findMany({
     where: {
       timeCreatedAt: { gte: start, lt: end },
-      typeOfTransaction: { in: Array.from(INCOME_TYPES) },
+      typeOfTransaction: { in: Array.from(new Set([...INCOME_POSITIVE_TYPES, ...REVERT_TYPES])) },
     },
-    select: { discordId: true, balanceBefore: true, balanceAfter: true },
+    select: { discordId: true, balanceBefore: true, balanceAfter: true, typeOfTransaction: true },
   });
 
   const incomeMap = new Map<string, Prisma.Decimal>();
@@ -292,7 +300,14 @@ async function loadActualIncome(start: Date, end: Date) {
     const before = new Prisma.Decimal(row.balanceBefore ?? 0);
     const after = new Prisma.Decimal(row.balanceAfter ?? 0);
     const delta = after.sub(before);
-    if (delta.lte(0)) return;
+    const txType = String(row.typeOfTransaction ?? '');
+    if (INCOME_POSITIVE_TYPES.has(txType)) {
+      if (delta.lte(0)) return;
+    } else if (REVERT_TYPES.has(txType)) {
+      if (delta.gte(0)) return;
+    } else {
+      return;
+    }
     const prev = incomeMap.get(row.discordId) ?? new Prisma.Decimal(0);
     incomeMap.set(row.discordId, prev.add(delta));
   });
