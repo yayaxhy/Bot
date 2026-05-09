@@ -39,6 +39,13 @@ const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773
 const INSUFFICIENT_BALANCE_ERROR = '余额不足，无法完成打赏。';
 const INSUFFICIENT_RESERVED_ERROR = '可用余额不足（存在进行中的订单已计费预留）。';
 
+function debugLeadingChars(text: string, count = 4) {
+  return Array.from(text.slice(0, count)).map((char) => ({
+    char,
+    codePoint: `U+${char.codePointAt(0)?.toString(16).toUpperCase() ?? 'UNKNOWN'}`,
+  }));
+}
+
 function resolveInsufficientReason(message: unknown): string | null {
   if (typeof message !== 'string') return null;
   if (message.includes(INSUFFICIENT_RESERVED_ERROR)) return INSUFFICIENT_RESERVED_ERROR;
@@ -1200,6 +1207,21 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       if (msg.author.bot) return;
 
       const content = msg.content.trim();
+      if (content.includes('代打赏')) {
+        console.log('[gifting.debug] delegate candidate', JSON.stringify({
+          messageId: msg.id,
+          userId: msg.author.id,
+          channelId: msg.channel.id,
+          guildId: msg.guild?.id ?? null,
+          rawContent: msg.content,
+          trimmedContent: content,
+          leadingChars: debugLeadingChars(content),
+          startsWithBangDelegate: content.startsWith('!代打赏'),
+          startsWithFullwidthBangDelegate: content.startsWith('！代打赏'),
+          startsWithDotDelegate: content.startsWith('.代打赏'),
+          mentionUserIds: Array.from(msg.mentions.users.keys()),
+        }));
+      }
       const isAnon = content.startsWith('!匿名打赏');
       const isService = content.startsWith('!客服打赏');
       const isRegular = content.startsWith('!打赏');
@@ -1320,6 +1342,11 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         }
 
         const parsed = parseDelegateGiftingCommand(msg, '!代打赏');
+        console.log('[gifting.debug] delegate parsed', JSON.stringify({
+          messageId: msg.id,
+          userId: msg.author.id,
+          parsed,
+        }));
         if (!parsed) {
           await msg.reply('用法：`!代打赏 数量/礼物名 @老板 @陪玩A @陪玩B`');
           return;

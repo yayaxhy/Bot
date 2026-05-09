@@ -669,16 +669,36 @@ export async function evaluateAutoCommissionBuffWithReason(
 }
 
 export async function refreshAllAutoCommissionBuffs(now = new Date()) {
+  console.log('[auto-commission] full refresh start', { at: now.toISOString() });
   const peiwanRows = await prisma.pEIWAN.findMany({
     select: { discordUserId: true },
   });
+  let processed = 0;
+  let failed = 0;
+  let promoted = 0;
+  let active = 0;
+  let refreshed = 0;
   for (const row of peiwanRows) {
     try {
-      await evaluateAutoCommissionBuffWithReason(row.discordUserId, 'manual', now);
+      const result = await evaluateAutoCommissionBuffWithReason(row.discordUserId, 'manual', now);
+      processed += 1;
+      if (result.promotedNow) promoted += 1;
+      if (result.roleActive) active += 1;
+      if (result.refreshedNow) refreshed += 1;
     } catch (err) {
+      failed += 1;
       console.error('[auto-commission] refresh one user failed', { userId: row.discordUserId, err });
     }
   }
+  console.log('[auto-commission] full refresh complete', {
+    at: now.toISOString(),
+    total: peiwanRows.length,
+    processed,
+    failed,
+    promoted,
+    active,
+    refreshed,
+  });
 }
 
 async function refreshExpiredAutoCommissionBuffs(batchSize: number): Promise<number> {
