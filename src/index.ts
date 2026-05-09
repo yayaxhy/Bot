@@ -354,78 +354,81 @@ registerChatVoucherDropService(client, prisma);
 registerAuditionService(client);
 console.log('[startup] background service hooks registered');
 
-client.once(Events.ClientReady, async () => {
+function runStartupTask(name: string, task: () => Promise<unknown>) {
+  console.log(`[startup] ${name} started`);
+  void Promise.resolve()
+    .then(task)
+    .then(() => {
+      console.log(`[startup] ${name} finished`);
+    })
+    .catch((err) => {
+      console.error(`[startup] ${name} failed:`, err);
+    });
+}
+
+function runStartupAction(name: string, action: () => void) {
+  console.log(`[startup] ${name} started`);
+  try {
+    action();
+    console.log(`[startup] ${name} finished`);
+  } catch (err) {
+    console.error(`[startup] ${name} failed:`, err);
+  }
+}
+
+async function registerStartupSlashCommands() {
+  if (!client.application) return;
+  await client.application.commands.create(grantCouponCommand);
+  await client.application.commands.create(registerPeiwanCommand);
+  await client.application.commands.create(redEnvelopeSlashCommand);
+  await client.application.commands.create(keywordRedEnvelopeSlashCommand);
+  await client.application.commands.create(customerGangCommand);
+  await client.application.commands.create(revertGiftCommand);
+  await client.application.commands.create(revertOrderCommand);
+  await client.application.commands.create(bulkDmCommand);
+  await client.application.commands.create(giftSlashCommand);
+  await client.application.commands.create(scratchStockCommand);
+  await client.application.commands.create(getAvatarCommand);
+  await client.application.commands.create(channelMessageCommand);
+  await client.application.commands.create(lookSelfCommand);
+  const existingCommands = await client.application.commands.fetch();
+  const legacyVoicePreviewCommand = existingCommands.find((command) => command.name === '设置试音');
+  if (legacyVoicePreviewCommand) {
+    await client.application.commands.delete(legacyVoicePreviewCommand.id);
+  }
+}
+
+client.once(Events.ClientReady, () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
   console.log('[startup] ready recovery started');
-  console.log('[startup] auto commission refresh scheduled');
-  refreshAllAutoCommissionBuffs().catch((err) =>
-    console.error('[startup] refresh auto commission buffs failed:', err),
-  );
-  console.log('[startup] recoverAllTimers started');
-  await recoverAllTimers();
-  console.log('[startup] recoverAllTimers finished');
-  startOrderTimerGuard();
-  startGlobalRecalcLoop();
-  try {
-    console.log('[startup] recoverPendingInvitations started');
-    await recoverPendingInvitations();
-    console.log('[startup] recoverPendingInvitations finished');
-  } catch (err) {
-    console.error('[startup] recover pending invites failed:', err);
-  }
-  try {
-    console.log('[startup] recoverPendingOrderRequests started');
-    await recoverPendingOrderRequests(client);
-    console.log('[startup] recoverPendingOrderRequests finished');
-  } catch (err) {
-    console.error('[startup] recover pending order requests failed:', err);
-  }
-  try {
-    console.log('[startup] recoverAuditionState started');
-    await recoverAuditionState(client);
-    console.log('[startup] recoverAuditionState finished');
-  } catch (err) {
-    console.error('[startup] recover audition state failed:', err);
-  }
-  console.log('[startup] recoverRunningOrders scheduled');
-  recoverRunningOrders().catch((err) =>
-    console.error('[startup] recover running orders failed:', err),
-  );
-  console.log('[startup] slash command registration started');
-  try {
-        if (client.application) {
-            await client.application.commands.create(grantCouponCommand);
-            await client.application.commands.create(registerPeiwanCommand);
-            await client.application.commands.create(redEnvelopeSlashCommand);
-            await client.application.commands.create(keywordRedEnvelopeSlashCommand);
-            await client.application.commands.create(customerGangCommand);
-            await client.application.commands.create(revertGiftCommand);
-            await client.application.commands.create(revertOrderCommand);
-            await client.application.commands.create(bulkDmCommand);
-            await client.application.commands.create(giftSlashCommand);
-            await client.application.commands.create(scratchStockCommand);
-            await client.application.commands.create(getAvatarCommand);
-            await client.application.commands.create(channelMessageCommand);
-            await client.application.commands.create(lookSelfCommand);
-            const existingCommands = await client.application.commands.fetch();
-            const legacyVoicePreviewCommand = existingCommands.find((command) => command.name === '设置试音');
-            if (legacyVoicePreviewCommand) {
-              await client.application.commands.delete(legacyVoicePreviewCommand.id);
-            }
-        }
-  } catch (err) {
-    console.error('[slash] register error:', err);
-  }
-  console.log('[startup] slash command registration finished');
-  await recoverRedEnvelopeSchedules(client);
-  console.log('[startup] red envelope schedules recovered');
-  startInternalWebhookServer();
-  console.log('[startup] internal webhook server started');
-  startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));
-  startRechargeWatcher().catch((err) => console.error('[recharge.watch] init failed', err));
-  startCommissionBuffWatcher();
-  startAutoCommissionBuffWatcher();
-  startLeaderboardScheduler(client);
+  runStartupTask('auto commission refresh', () => refreshAllAutoCommissionBuffs());
+  runStartupTask('recoverAllTimers', () => recoverAllTimers());
+  runStartupAction('startOrderTimerGuard', () => {
+    startOrderTimerGuard();
+  });
+  runStartupAction('startGlobalRecalcLoop', () => {
+    startGlobalRecalcLoop();
+  });
+  runStartupTask('recoverPendingInvitations', () => recoverPendingInvitations());
+  runStartupTask('recoverPendingOrderRequests', () => recoverPendingOrderRequests(client));
+  runStartupTask('recoverAuditionState', () => recoverAuditionState(client));
+  runStartupTask('recoverRunningOrders', () => recoverRunningOrders());
+  runStartupTask('slash command registration', () => registerStartupSlashCommands());
+  runStartupTask('recoverRedEnvelopeSchedules', () => recoverRedEnvelopeSchedules(client));
+  runStartupAction('startInternalWebhookServer', () => {
+    startInternalWebhookServer();
+  });
+  runStartupTask('startPeiwanWatcher', () => startPeiwanWatcher());
+  runStartupTask('startRechargeWatcher', () => startRechargeWatcher());
+  runStartupAction('startCommissionBuffWatcher', () => {
+    startCommissionBuffWatcher();
+  });
+  runStartupAction('startAutoCommissionBuffWatcher', () => {
+    startAutoCommissionBuffWatcher();
+  });
+  runStartupAction('startLeaderboardScheduler', () => {
+    startLeaderboardScheduler(client);
+  });
   console.log('[startup] background services started');
   console.log('[startup] ready recovery finished');
 });
