@@ -200,6 +200,7 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
     console.error('[red-envelope] reaction handler error:', err);
   }
 });
+console.log('[startup] reaction handlers attached');
 
 	// interaction router
 client.on(Events.InteractionCreate, async (i: Interaction) => {
@@ -342,6 +343,7 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
     }
   }
 });
+console.log('[startup] interaction handlers attached');
 
 
 
@@ -350,9 +352,11 @@ registerInviteReward(client);
 registerVoicePointService(client);
 registerChatVoucherDropService(client, prisma);
 registerAuditionService(client);
+console.log('[startup] background service hooks registered');
 
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
+  console.log('[startup] ready recovery started');
   await recoverAllTimers();
   startOrderTimerGuard();
   startGlobalRecalcLoop();
@@ -377,6 +381,7 @@ client.once(Events.ClientReady, async () => {
   refreshAllAutoCommissionBuffs().catch((err) =>
     console.error('[startup] refresh auto commission buffs failed:', err),
   );
+  console.log('[startup] slash command registration started');
   try {
         if (client.application) {
             await client.application.commands.create(grantCouponCommand);
@@ -401,13 +406,18 @@ client.once(Events.ClientReady, async () => {
   } catch (err) {
     console.error('[slash] register error:', err);
   }
+  console.log('[startup] slash command registration finished');
   await recoverRedEnvelopeSchedules(client);
+  console.log('[startup] red envelope schedules recovered');
   startInternalWebhookServer();
+  console.log('[startup] internal webhook server started');
   startPeiwanWatcher().catch((err) => console.error('[peiwan.watch] init failed', err));
   startRechargeWatcher().catch((err) => console.error('[recharge.watch] init failed', err));
   startCommissionBuffWatcher();
   startAutoCommissionBuffWatcher();
   startLeaderboardScheduler(client);
+  console.log('[startup] background services started');
+  console.log('[startup] ready recovery finished');
 });
 
 process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));
