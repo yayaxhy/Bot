@@ -125,6 +125,14 @@ const client = new Client({
 // message create
 client.on(Events.MessageCreate, messageCreateHandler);
 registerRedEnvelopeMessageHandlers(client, prisma);
+registerGiftingCommand(client, prisma);
+registerCashCommand(client, prisma);
+registerBalanceCommands(client);
+registerBlockStackCommand(client);
+registerScratchCommand(client);
+registerTotalEarnCommand(client, prisma);
+registerTotalSpentCommand(client, prisma);
+registerLoyaltyPointCommand(client, prisma);
 
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   try {
@@ -367,14 +375,6 @@ client.once(Events.ClientReady, async () => {
   refreshAllAutoCommissionBuffs().catch((err) =>
     console.error('[startup] refresh auto commission buffs failed:', err),
   );
-  registerGiftingCommand(client, prisma);
-  registerCashCommand(client, prisma);
-  registerBalanceCommands(client);
-  registerBlockStackCommand(client);
-  registerScratchCommand(client);
-  registerTotalEarnCommand(client, prisma);
-  registerTotalSpentCommand(client, prisma);
-  registerLoyaltyPointCommand(client, prisma);
   try {
         if (client.application) {
             await client.application.commands.create(grantCouponCommand);
