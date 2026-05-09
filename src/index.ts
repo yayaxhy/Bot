@@ -125,6 +125,7 @@ const client = new Client({
 // message create
 client.on(Events.MessageCreate, messageCreateHandler);
 registerRedEnvelopeMessageHandlers(client, prisma);
+console.log('[startup] messageCreate handlers attached');
 registerGiftingCommand(client, prisma);
 registerCashCommand(client, prisma);
 registerBalanceCommands(client);
@@ -133,6 +134,7 @@ registerScratchCommand(client);
 registerTotalEarnCommand(client, prisma);
 registerTotalSpentCommand(client, prisma);
 registerLoyaltyPointCommand(client, prisma);
+console.log('[startup] text commands registered');
 
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   try {
