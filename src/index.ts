@@ -357,29 +357,39 @@ console.log('[startup] background service hooks registered');
 client.once(Events.ClientReady, async () => {
   console.log(`[ready] Logged in as ${client.user?.tag}`);
   console.log('[startup] ready recovery started');
+  console.log('[startup] auto commission refresh scheduled');
+  refreshAllAutoCommissionBuffs().catch((err) =>
+    console.error('[startup] refresh auto commission buffs failed:', err),
+  );
+  console.log('[startup] recoverAllTimers started');
   await recoverAllTimers();
+  console.log('[startup] recoverAllTimers finished');
   startOrderTimerGuard();
   startGlobalRecalcLoop();
   try {
+    console.log('[startup] recoverPendingInvitations started');
     await recoverPendingInvitations();
+    console.log('[startup] recoverPendingInvitations finished');
   } catch (err) {
     console.error('[startup] recover pending invites failed:', err);
   }
   try {
+    console.log('[startup] recoverPendingOrderRequests started');
     await recoverPendingOrderRequests(client);
+    console.log('[startup] recoverPendingOrderRequests finished');
   } catch (err) {
     console.error('[startup] recover pending order requests failed:', err);
   }
   try {
+    console.log('[startup] recoverAuditionState started');
     await recoverAuditionState(client);
+    console.log('[startup] recoverAuditionState finished');
   } catch (err) {
     console.error('[startup] recover audition state failed:', err);
   }
+  console.log('[startup] recoverRunningOrders scheduled');
   recoverRunningOrders().catch((err) =>
     console.error('[startup] recover running orders failed:', err),
-  );
-  refreshAllAutoCommissionBuffs().catch((err) =>
-    console.error('[startup] refresh auto commission buffs failed:', err),
   );
   console.log('[startup] slash command registration started');
   try {
