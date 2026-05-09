@@ -1,0 +1,2 @@
+ALTER TABLE "PEIWAN"
+ADD COLUMN "auditionInviteEnabled" BOOLEAN NOT NULL DEFAULT false;

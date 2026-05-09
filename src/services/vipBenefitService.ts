@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { EmbedBuilder, type Client } from 'discord.js';
 import {
+  CouponSource,
   CouponStatus,
   LotteryStatus,
   Prisma,
@@ -109,6 +110,7 @@ async function createCouponBenefitTx(
           discordId: identity.discordUserId ?? discordUserId,
           jinleeId: identity.jinleeId,
           type: benefit.couponType,
+          source: CouponSource.VIP_BENEFIT,
           status: CouponStatus.ACTIVE,
           expiresAt,
         },

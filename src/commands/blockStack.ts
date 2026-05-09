@@ -1,5 +1,5 @@
 import { AttachmentBuilder, Client, Message } from 'discord.js';
-import { CouponStatus, LotteryStatus, PointShopDeliveryStatus, PointShopDeliveryType, Prisma } from '@prisma/client';
+import { CouponStatus, CouponType, LotteryStatus, PointShopDeliveryStatus, PointShopDeliveryType, Prisma } from '@prisma/client';
 import fs from 'node:fs';
 import path from 'node:path';
 import prisma from '../db/prisma.js';
@@ -51,7 +51,10 @@ export function registerBlockStackCommand(client: Client) {
             deliveryType: PointShopDeliveryType.COUPON,
             deliveryStatus: PointShopDeliveryStatus.DELIVERED,
             couponStatus: CouponStatus.ACTIVE,
-            itemSku: { in: [...BLOCK_STACK_POINT_SHOP_SKUS] },
+            OR: [
+              { itemSku: { in: [...BLOCK_STACK_POINT_SHOP_SKUS] } },
+              { couponType: CouponType.BLOCK_STACK_VOUCHER },
+            ],
             expiresAt: { lte: now },
           },
           data: { couponStatus: CouponStatus.EXPIRED },
@@ -63,8 +66,17 @@ export function registerBlockStackCommand(client: Client) {
             deliveryType: PointShopDeliveryType.COUPON,
             deliveryStatus: PointShopDeliveryStatus.DELIVERED,
             couponStatus: CouponStatus.ACTIVE,
-            itemSku: { in: [...BLOCK_STACK_POINT_SHOP_SKUS] },
-            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            AND: [
+              {
+                OR: [
+                  { itemSku: { in: [...BLOCK_STACK_POINT_SHOP_SKUS] } },
+                  { couponType: CouponType.BLOCK_STACK_VOUCHER },
+                ],
+              },
+              {
+                OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+              },
+            ],
           },
           orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
           select: { id: true },
@@ -75,6 +87,50 @@ export function registerBlockStackCommand(client: Client) {
             where: { id: freePointShopVoucher.id },
             data: {
               couponStatus: CouponStatus.USED,
+              consumedAt: now,
+              consumeAmount: START_COST,
+              consumeTargetId: msg.author.id,
+              consumeTargetJinleeId: authorIdentity.jinleeId,
+            },
+          });
+
+          const game = await tx.blockStackGame.create({
+            data: {
+              creatorId: targetCreatorId,
+              channelId: msg.channel.id,
+              status: 'ACTIVE',
+              totalRevenue: START_COST,
+            },
+          });
+          return { status: 'ok' as const, game, spentCharged: false };
+        }
+
+        await tx.coupon.updateMany({
+          where: {
+            jinleeId: authorIdentity.jinleeId,
+            type: CouponType.BLOCK_STACK_VOUCHER,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { lte: now },
+          },
+          data: { status: CouponStatus.EXPIRED },
+        });
+
+        const freeCouponVoucher = await tx.coupon.findFirst({
+          where: {
+            jinleeId: authorIdentity.jinleeId,
+            type: CouponType.BLOCK_STACK_VOUCHER,
+            status: CouponStatus.ACTIVE,
+            expiresAt: { gt: now },
+          },
+          orderBy: { issuedAt: 'asc' },
+          select: { id: true },
+        });
+
+        if (freeCouponVoucher) {
+          await tx.coupon.update({
+            where: { id: freeCouponVoucher.id },
+            data: {
+              status: CouponStatus.USED,
               consumedAt: now,
               consumeAmount: START_COST,
               consumeTargetId: msg.author.id,

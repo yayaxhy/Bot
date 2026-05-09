@@ -51,6 +51,7 @@ const GIFT_VOUCHER_OPTIONS: GiftVoucherOption[] = [
 ];
 
 const SPECIAL_ACTION_VOUCHERS = [
+  { prizeName: PRIZE_NAMES.BLOCK_STACK_VOUCHER, couponType: CouponType.BLOCK_STACK_VOUCHER },
   { prizeName: PRIZE_NAMES.CUSTOM_GIFT_VOUCHER, couponType: CouponType.CUSTOM_GIFT_VOUCHER },
   { prizeName: PRIZE_NAMES.CUSTOM_TAG_VOUCHER, couponType: CouponType.CUSTOM_TAG_VOUCHER },
   { prizeName: PRIZE_NAMES.COMMISSION_MINUS1_VOUCHER, couponType: CouponType.COMMISSION_MINUS1_VOUCHER },

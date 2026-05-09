@@ -7,12 +7,13 @@ import {
   Client,
   EmbedBuilder,
   Events,
+  InteractionReplyOptions,
   userMention,
   type MessageCreateOptions,
   type VoiceChannel,
   type VoiceState,
 } from 'discord.js';
-import { AuditionInviteStatus, Prisma } from '@prisma/client';
+import { AuditionInviteStatus, MemberStatus, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { MIN } from '../lib/time.js';
 import { round2 } from '../lib/money.js';
@@ -27,6 +28,7 @@ import { recordIndividualTransaction } from './individualTransactionService.js';
 import { getActiveCommissionBoost } from './buffService.js';
 import { getAutoCommissionBoost } from './autoCommissionBuffService.js';
 import { resolveOrderRequestOwnerId } from './orderRequestLogService.js';
+import { ORDER_REQUEST_CLOSE_MS } from './orderInteractionManager.js';
 
 const AUDITION_CATEGORY_ID = process.env.AUDITION_CATEGORY_ID ?? '1421488476913795072';
 const AUDITION_PRICE = new Prisma.Decimal(process.env.AUDITION_PRICE ?? '5');
@@ -69,29 +71,34 @@ function buildStateRow(label: string) {
   ];
 }
 
-function buildRoomNotice(channelUrl: string) {
-  return [
-    `您的临时试音厅已经创建：${channelUrl}`,
-    '请老板移步到试音厅等待陪玩试音。真人试音邀请会在两分钟后过期，超过两分钟如果陪玩没有出现在试音厅则视为拒绝试音邀请，老板可以选择点击该陪玩名片下方的语音条进行试音。',
-  ].join('\n');
+function buildInviteSentNotice(
+  workerId: string,
+  peiwanId: number | null | undefined,
+  workerDisplayName?: string | null,
+) {
+  const displayName = String(workerDisplayName ?? '').trim();
+  const peiwanText =
+    peiwanId != null
+      ? `陪玩${peiwanId}${displayName ? ` ${displayName}` : ''} ${userMention(workerId)}`
+      : `${displayName ? `${displayName} ` : ''}${userMention(workerId)}`;
+  return `已向${peiwanText}发送真人试音邀请，等待对方确认。该邀请两分钟内有效。`;
 }
 
-function buildInviteSentNotice(channelUrl: string) {
-  return `已向陪玩发送真人试音邀请。试音厅链接：${channelUrl}`;
+function buildDuplicateInviteNotice(channelUrl?: string | null) {
+  const normalized = String(channelUrl ?? '').trim();
+  return normalized
+    ? `该陪玩已有待处理的真人试音邀请，请等待对方处理。当前试音频道：${normalized}`
+    : '该陪玩已有待处理的真人试音邀请，请等待对方处理。';
 }
 
-function buildDuplicateInviteNotice(channelUrl: string) {
-  return `该陪玩已有待处理的真人试音邀请，请等待对方进入试音厅或邀请过期。试音厅链接：${channelUrl}`;
-}
-
-function buildWorkerDmPayload(inviteId: string, bossId: string, channelUrl: string): MessageCreateOptions {
+function buildWorkerDmPayload(inviteId: string, bossId: string): MessageCreateOptions {
   const embed = new EmbedBuilder()
     .setColor(0xf5a623)
     .setTitle('真人试音邀请')
     .setDescription(
       [
         `${userMention(bossId)} 老板邀请你进行真人试音`,
-        `请在两分钟内到 ${channelUrl} 进行试音`,
+        '同意后系统会立即为老板创建专属试音频道',
         `进入试音厅后可获得 ${AUDITION_PRICE.toString()} 锦鲤币试音收入（按当前抽成结算）`,
         '该邀请两分钟内有效',
       ].join('\n'),
@@ -111,14 +118,30 @@ function buildWorkerDmPayload(inviteId: string, bossId: string, channelUrl: stri
   return { embeds: [embed], components: [row] };
 }
 
+function buildBossCancelRow(inviteId: string) {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`audition:cancel:${inviteId}`)
+        .setLabel('取消真人试音')
+        .setStyle(ButtonStyle.Danger),
+    ),
+  ];
+}
+
 function buildBossRejectNotice(workerId: string, peiwanId: number | null | undefined) {
   const peiwanText = peiwanId != null ? `陪玩 ${peiwanId}` : '该陪玩';
   return `<@${workerId}> ${peiwanText} 正在忙，拒绝了您的真人试音邀请`;
 }
 
-function buildBossExpireNotice(workerId: string, peiwanId: number | null | undefined) {
+function buildBossPendingExpireNotice(workerId: string, peiwanId: number | null | undefined) {
   const peiwanText = peiwanId != null ? `陪玩 ${peiwanId}` : '该陪玩';
-  return `<@${workerId}> ${peiwanText} 未在两分钟内出现在试音厅，已视为拒绝真人试音邀请。您可以选择点击该陪玩名片下方的语音条进行试音。`;
+  return `<@${workerId}> ${peiwanText} 未在两分钟内接受真人试音邀请。您可以选择点击该陪玩名片下方的语音条进行试音。`;
+}
+
+function buildBossAcceptedExpireNotice(workerId: string, peiwanId: number | null | undefined) {
+  const peiwanText = peiwanId != null ? `陪玩 ${peiwanId}` : '该陪玩';
+  return `${peiwanText} 与您未能在两分钟内同时到达试音厅，本次真人试音邀请已失效。您可以选择点击该陪玩名片下方的语音条进行试音。`;
 }
 
 function buildBossInsufficientBalanceNotice(workerId: string, peiwanId: number | null | undefined) {
@@ -132,6 +155,14 @@ function buildBossSuccessNotice(workerId: string) {
 
 function buildWorkerSuccessNotice(netAmount: Prisma.Decimal) {
   return `您已进入试音厅，本次真人试音收入 ${netAmount.toFixed(2)} 锦鲤币。`;
+}
+
+function buildBossAcceptedRoomNotice(channelUrl: string) {
+  return `陪陪已经接受试音请求，您可以前往您的专属试音频道进行试音 《${channelUrl}》`;
+}
+
+function buildWorkerAcceptedRoomNotice(channelUrl: string, bossId: string) {
+  return `请立刻前往试音频道《${channelUrl}》进行试音，请不要让老板等待，如果突发状况请立刻联系老板 ${userMention(bossId)}`;
 }
 
 function buildWorkerCanceledNotice(reason: string) {
@@ -160,11 +191,16 @@ function parseAuditionRequestCustomId(customId: string) {
   };
 }
 
-function parseAuditionInviteCustomId(customId: string, action: 'accept' | 'decline') {
+function parseAuditionInviteCustomId(customId: string, action: 'accept' | 'decline' | 'cancel') {
   const parts = customId.split(':');
   if (parts.length < 3) return null;
   if (parts[1] !== action) return null;
   return parts[2] || null;
+}
+
+function isAuditionRequestExpired(createdAtMs: number | null | undefined) {
+  if (!Number.isFinite(createdAtMs)) return false;
+  return Date.now() - Number(createdAtMs) > ORDER_REQUEST_CLOSE_MS;
 }
 
 export function buildAuditionRequestButtonRow(orderRequestId: string, workerId: string, peiwanId: number) {
@@ -194,9 +230,18 @@ async function notifyBoss(
   fallbackChannelId: string | null | undefined,
   content: string,
 ) {
+  return notifyBossWithPayload(client, bossId, fallbackChannelId, { content });
+}
+
+async function notifyBossWithPayload(
+  client: Client,
+  bossId: string,
+  fallbackChannelId: string | null | undefined,
+  payload: MessageCreateOptions,
+) {
   try {
     const user = await client.users.fetch(bossId);
-    await user.send(content);
+    await user.send(payload);
     return;
   } catch (err: any) {
     if (err?.code !== 50007) {
@@ -208,8 +253,10 @@ async function notifyBoss(
   const fallbackChannel = await safeFetchMessageChannel(client, fallbackChannelId);
   if (fallbackChannel && fallbackChannel.isTextBased() && hasSend(fallbackChannel)) {
     try {
+      const content = payload.content ? `<@${bossId}> ${payload.content}` : `<@${bossId}>`;
       await fallbackChannel.send({
-        content: `<@${bossId}> ${content}`,
+        ...payload,
+        content,
         allowedMentions: { parse: ['users'] },
       });
     } catch (err) {
@@ -381,11 +428,14 @@ async function expireAuditionInvite(client: Client, inviteId: string) {
     if (invite.status !== AuditionInviteStatus.EXPIRED) return;
 
     await updateInviteMessageState(client, invite, '邀请已过期');
+    const hasAssignedRoom = !!String(invite.roomChannelId ?? '').trim() || !!invite.acceptedAt;
     await notifyBoss(
       client,
       invite.bossId,
       invite.bossContactChannelId,
-      buildBossExpireNotice(invite.workerId, invite.peiwanId),
+      hasAssignedRoom
+        ? buildBossAcceptedExpireNotice(invite.workerId, invite.peiwanId)
+        : buildBossPendingExpireNotice(invite.workerId, invite.peiwanId),
     );
   } finally {
     expiringInviteIds.delete(inviteId);
@@ -672,7 +722,7 @@ async function settleAuditionInvite(client: Client, inviteId: string) {
         client,
         result.invite.bossId,
         result.invite.bossContactChannelId,
-        buildBossExpireNotice(result.invite.workerId, result.invite.peiwanId),
+        buildBossAcceptedExpireNotice(result.invite.workerId, result.invite.peiwanId),
       );
       return;
     }
@@ -705,10 +755,10 @@ async function settleAuditionInvite(client: Client, inviteId: string) {
 }
 
 async function maybeSettleRoomInvites(client: Client, roomChannelId: string, channel: VoiceChannel) {
-  const activeInvites = await prisma.auditionInvite.findMany({
+  const acceptedInvites = await prisma.auditionInvite.findMany({
     where: {
       roomChannelId,
-      status: { in: [...ACTIVE_INVITE_STATUSES] },
+      status: AuditionInviteStatus.ACCEPTED,
     },
     select: {
       id: true,
@@ -720,7 +770,7 @@ async function maybeSettleRoomInvites(client: Client, roomChannelId: string, cha
   });
 
   const now = Date.now();
-  for (const invite of activeInvites) {
+  for (const invite of acceptedInvites) {
     if (invite.expiresAt.getTime() <= now) {
       await expireAuditionInvite(client, invite.id);
       continue;
@@ -763,6 +813,18 @@ async function replyToButton(i: ButtonInteraction, content: string) {
   await i.reply(payload);
 }
 
+async function replyToButtonWithPayload(
+  i: ButtonInteraction,
+  payload: InteractionReplyOptions,
+) {
+  const replyPayload = i.inGuild() ? { ...payload, ephemeral: true } : payload;
+  if (i.deferred || i.replied) {
+    await i.followUp(replyPayload);
+    return;
+  }
+  await i.reply(replyPayload);
+}
+
 export async function handleAuditionRequestButton(i: ButtonInteraction) {
   if (!i.isButton()) return;
   if (!i.customId.startsWith('audition:request:')) return;
@@ -773,19 +835,26 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
     return;
   }
 
-  const ownerId = await resolveOrderRequestOwnerId(parsed.orderRequestId, null);
+  const orderRequest = await prisma.orderRequestLog.findUnique({
+    where: { orderId: parsed.orderRequestId },
+    select: { ownerId: true, createdAt: true },
+  }).catch((err) => {
+    console.error('[audition] load order request failed:', err);
+    return null;
+  });
+  const ownerId = orderRequest?.ownerId ?? (await resolveOrderRequestOwnerId(parsed.orderRequestId, null));
   if (!ownerId || ownerId !== i.user.id) {
     await replyToButton(i, '这不是你的陪玩名片，无法发起真人试音。');
     return;
   }
+  const requestCreatedAtMs =
+    orderRequest?.createdAt?.getTime() ??
+    (Number.isFinite(i.message?.createdTimestamp) ? i.message.createdTimestamp : null);
+  if (isAuditionRequestExpired(requestCreatedAtMs)) {
+    await replyToButton(i, '这张陪玩名片已过期，请让对方重新抢单。');
+    return;
+  }
 
-  const requestLog = await prisma.orderRequestLog.findUnique({
-    where: { orderId: parsed.orderRequestId },
-    select: { ownerDisplayName: true },
-  });
-  const bossDisplayName = requestLog?.ownerDisplayName?.trim() || i.user.globalName || i.user.username;
-  const { room } = await ensureAuditionRoom(i.client, ownerId, bossDisplayName);
-  const roomUrl = buildChannelUrl(room.guildId, room.channelId);
   const now = new Date();
 
   const invitation = await prisma.$transaction(async (tx) => {
@@ -800,6 +869,32 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
       update: {},
     });
     await tx.$executeRaw`SELECT 1 FROM "Member" WHERE "discordUserId" = ${ownerId} FOR UPDATE`;
+
+    const workerPeiwan = await tx.pEIWAN.findUnique({
+      where: { discordUserId: parsed.workerId },
+      select: {
+        PEIWANID: true,
+        auditionInviteEnabled: true,
+        serverDisplayName: true,
+        member: { select: { status: true } },
+      },
+    });
+    if (!workerPeiwan || workerPeiwan.member?.status !== MemberStatus.PEIWAN) {
+      return { outcome: 'inactive' as const };
+    }
+    if (parsed.peiwanId != null && workerPeiwan.PEIWANID !== parsed.peiwanId) {
+      return { outcome: 'stale' as const };
+    }
+    const deletionRecord = await tx.peiwanDeletion.findUnique({
+      where: { peiwanId: workerPeiwan.PEIWANID },
+      select: { peiwanId: true },
+    });
+    if (deletionRecord) {
+      return { outcome: 'inactive' as const };
+    }
+    if (!workerPeiwan.auditionInviteEnabled) {
+      return { outcome: 'disabled' as const };
+    }
 
     await tx.auditionInvite.updateMany({
       where: {
@@ -822,20 +917,19 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
         status: { in: [...ACTIVE_INVITE_STATUSES] },
       },
       orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        expiresAt: true,
+        roomChannelId: true,
+        roomGuildId: true,
+      },
     });
     if (existingActiveInvite) {
-      return { invite: existingActiveInvite, created: false, shouldSendRoomNotice: false };
+      return {
+        outcome: 'duplicate' as const,
+        invite: existingActiveInvite,
+      };
     }
-
-    const hasRoomNoticeForOrder = await tx.auditionInvite.findFirst({
-      where: {
-        bossId: ownerId,
-        orderRequestId: parsed.orderRequestId,
-        roomChannelId: room.channelId,
-        bossRoomNoticeSentAt: { not: null },
-      },
-      select: { id: true },
-    });
 
     const invite = await tx.auditionInvite.create({
       data: {
@@ -843,31 +937,51 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
         bossId: ownerId,
         workerId: parsed.workerId,
         peiwanId: parsed.peiwanId ?? undefined,
-        roomChannelId: room.channelId,
-        roomGuildId: room.guildId,
+        roomChannelId: '',
+        roomGuildId: '',
         bossContactChannelId: i.channelId,
         expiresAt: new Date(now.getTime() + AUDITION_INVITE_EXPIRE_MS),
-        bossRoomNoticeSentAt: hasRoomNoticeForOrder ? null : now,
       },
     });
 
     return {
+      outcome: 'created' as const,
       invite,
-      created: true,
-      shouldSendRoomNotice: !hasRoomNoticeForOrder,
+      workerDisplayName: workerPeiwan.serverDisplayName,
+      peiwanId: workerPeiwan.PEIWANID,
     };
   });
 
-  if (!invitation.created) {
+  if (invitation.outcome === 'inactive' || invitation.outcome === 'stale') {
+    await replyToButton(i, '该陪玩名片已失效，请让对方重新抢单。');
+    return;
+  }
+  if (invitation.outcome === 'disabled') {
+    await replyToButton(i, '该陪玩当前未开启真人试音邀请。');
+    return;
+  }
+  if (invitation.outcome === 'duplicate') {
     scheduleInviteExpiry(i.client, invitation.invite.id, invitation.invite.expiresAt);
-    await replyToButton(i, buildDuplicateInviteNotice(roomUrl));
+    const roomUrl =
+      invitation.invite.roomChannelId && invitation.invite.roomGuildId
+        ? buildChannelUrl(invitation.invite.roomGuildId, invitation.invite.roomChannelId)
+        : null;
+    await replyToButtonWithPayload(i, {
+      content: buildDuplicateInviteNotice(roomUrl),
+      components: buildBossCancelRow(invitation.invite.id),
+    });
+    return;
+  }
+
+  if (invitation.outcome !== 'created') {
+    await replyToButton(i, '真人试音邀请创建失败，请稍后再试。');
     return;
   }
 
   let workerDmSent = false;
   try {
     const worker = await i.client.users.fetch(parsed.workerId);
-    const dmMessage = await worker.send(buildWorkerDmPayload(invitation.invite.id, ownerId, roomUrl));
+    const dmMessage = await worker.send(buildWorkerDmPayload(invitation.invite.id, ownerId));
     workerDmSent = true;
     await prisma.auditionInvite.update({
       where: { id: invitation.invite.id },
@@ -889,19 +1003,15 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
   }
 
   if (!workerDmSent) {
-    const content = invitation.shouldSendRoomNotice
-      ? `${buildRoomNotice(roomUrl)}\n\n未能向该陪玩发送真人试音私信，本次邀请未生效。`
-      : '未能向该陪玩发送真人试音私信，本次邀请未生效。';
-    await replyToButton(i, content);
+    await replyToButton(i, '未能向该陪玩发送真人试音私信，本次邀请未生效。');
     return;
   }
 
   scheduleInviteExpiry(i.client, invitation.invite.id, invitation.invite.expiresAt);
-
-  const content = invitation.shouldSendRoomNotice
-    ? `${buildRoomNotice(roomUrl)}\n\n${buildInviteSentNotice(roomUrl)}`
-    : buildInviteSentNotice(roomUrl);
-  await replyToButton(i, content);
+  await replyToButtonWithPayload(i, {
+    content: buildInviteSentNotice(parsed.workerId, invitation.peiwanId, invitation.workerDisplayName),
+    components: buildBossCancelRow(invitation.invite.id),
+  });
 }
 
 export async function handleAuditionAcceptButton(i: ButtonInteraction) {
@@ -914,7 +1024,7 @@ export async function handleAuditionAcceptButton(i: ButtonInteraction) {
     return;
   }
 
-  const now = new Date();
+  const initialNow = new Date();
   const invite = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT 1 FROM "AuditionInvite" WHERE "id" = ${inviteId} FOR UPDATE`;
     const current = await tx.auditionInvite.findUnique({ where: { id: inviteId } });
@@ -923,23 +1033,17 @@ export async function handleAuditionAcceptButton(i: ButtonInteraction) {
     if (!ACTIVE_INVITE_STATUSES.includes(current.status as (typeof ACTIVE_INVITE_STATUSES)[number])) {
       return current;
     }
-    if (current.expiresAt.getTime() <= now.getTime()) {
+    if (current.expiresAt.getTime() <= initialNow.getTime()) {
       return tx.auditionInvite.update({
         where: { id: inviteId },
         data: {
           status: AuditionInviteStatus.EXPIRED,
-          canceledAt: now,
+          canceledAt: initialNow,
           failureReason: 'invite_expired',
         },
       });
     }
-    return tx.auditionInvite.update({
-      where: { id: inviteId },
-      data: {
-        status: AuditionInviteStatus.ACCEPTED,
-        acceptedAt: current.acceptedAt ?? now,
-      },
-    });
+    return current;
   }).catch(async (err) => {
     if (err instanceof Error && err.message === 'NOT_WORKER') return 'NOT_WORKER' as const;
     throw err;
@@ -956,16 +1060,213 @@ export async function handleAuditionAcceptButton(i: ButtonInteraction) {
   if (invite.status === AuditionInviteStatus.EXPIRED) {
     cancelInviteTimer(invite.id);
     await i.update({ components: buildStateRow('邀请已过期') });
-    await notifyBoss(i.client, invite.bossId, invite.bossContactChannelId, buildBossExpireNotice(invite.workerId, invite.peiwanId));
+    await notifyBoss(i.client, invite.bossId, invite.bossContactChannelId, buildBossPendingExpireNotice(invite.workerId, invite.peiwanId));
     return;
   }
-  if (invite.status !== AuditionInviteStatus.ACCEPTED) {
+  if (invite.status !== AuditionInviteStatus.PENDING && invite.status !== AuditionInviteStatus.ACCEPTED) {
     await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
     return;
   }
 
-  scheduleInviteExpiry(i.client, invite.id, invite.expiresAt);
-  await i.update({ components: buildStateRow('已接受，等待进入试音厅') });
+  const requestLog = await prisma.orderRequestLog.findUnique({
+    where: { orderId: invite.orderRequestId },
+    select: { ownerDisplayName: true },
+  });
+  const bossDisplayName = requestLog?.ownerDisplayName?.trim() || invite.bossId;
+
+  let room;
+  try {
+    const resolvedRoom = await ensureAuditionRoom(i.client, invite.bossId, bossDisplayName);
+    room = resolvedRoom.room;
+  } catch (err) {
+    console.error('[audition] ensure room failed:', err);
+    const canceled = await prisma.auditionInvite.update({
+      where: { id: invite.id },
+      data: {
+        status: AuditionInviteStatus.CANCELED,
+        canceledAt: new Date(),
+        failureReason: 'room_create_failed',
+      },
+    }).catch(() => null);
+    cancelInviteTimer(invite.id);
+    await i.update({ components: buildStateRow('试音厅创建失败') });
+    await notifyBoss(
+      i.client,
+      invite.bossId,
+      canceled?.bossContactChannelId ?? invite.bossContactChannelId,
+      '试音厅创建失败，本次真人试音邀请未能生效，请稍后重试。',
+    );
+    await replyToButton(i, '创建试音厅失败，请稍后让老板重新发起真人试音邀请。');
+    return;
+  }
+
+  const acceptedNow = new Date();
+  const acceptedInvite = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT 1 FROM "AuditionInvite" WHERE "id" = ${inviteId} FOR UPDATE`;
+    const current = await tx.auditionInvite.findUnique({ where: { id: inviteId } });
+    if (!current) return null;
+    if (current.workerId !== i.user.id) throw new Error('NOT_WORKER');
+    if (!ACTIVE_INVITE_STATUSES.includes(current.status as (typeof ACTIVE_INVITE_STATUSES)[number])) {
+      return current;
+    }
+    if (current.expiresAt.getTime() <= acceptedNow.getTime()) {
+      return tx.auditionInvite.update({
+        where: { id: inviteId },
+        data: {
+          status: AuditionInviteStatus.EXPIRED,
+          canceledAt: acceptedNow,
+          failureReason: 'invite_expired',
+        },
+      });
+    }
+    return tx.auditionInvite.update({
+      where: { id: inviteId },
+      data: {
+        status: AuditionInviteStatus.ACCEPTED,
+        acceptedAt: current.acceptedAt ?? acceptedNow,
+        roomChannelId: room.channelId,
+        roomGuildId: room.guildId,
+        expiresAt: new Date(acceptedNow.getTime() + AUDITION_INVITE_EXPIRE_MS),
+      },
+    });
+  }).catch(async (err) => {
+    if (err instanceof Error && err.message === 'NOT_WORKER') return 'NOT_WORKER' as const;
+    throw err;
+  });
+
+  if (acceptedInvite === 'NOT_WORKER') {
+    await replyToButton(i, '您不是这条真人试音邀请的目标陪玩。');
+    return;
+  }
+  if (!acceptedInvite) {
+    await replyToButton(i, '真人试音邀请不存在或已失效。');
+    return;
+  }
+  if (acceptedInvite.status === AuditionInviteStatus.EXPIRED) {
+    cancelInviteTimer(acceptedInvite.id);
+    await i.update({ components: buildStateRow('邀请已过期') });
+    await notifyBoss(
+      i.client,
+      acceptedInvite.bossId,
+      acceptedInvite.bossContactChannelId,
+      buildBossAcceptedExpireNotice(acceptedInvite.workerId, acceptedInvite.peiwanId),
+    );
+    return;
+  }
+  if (acceptedInvite.status !== AuditionInviteStatus.ACCEPTED) {
+    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    return;
+  }
+
+  const roomUrl = buildChannelUrl(room.guildId, room.channelId);
+  scheduleInviteExpiry(i.client, acceptedInvite.id, acceptedInvite.expiresAt);
+  await i.update({ components: buildStateRow('已接受，请立即进房') });
+  await notifyBossWithPayload(i.client, acceptedInvite.bossId, acceptedInvite.bossContactChannelId, {
+    content: buildBossAcceptedRoomNotice(roomUrl),
+    components: buildBossCancelRow(acceptedInvite.id),
+  });
+  await replyToButton(i, buildWorkerAcceptedRoomNotice(roomUrl, acceptedInvite.bossId));
+  await syncAuditionRoomByChannelId(i.client, room.channelId);
+}
+
+export async function handleAuditionCancelButton(i: ButtonInteraction) {
+  if (!i.isButton()) return;
+  if (!i.customId.startsWith('audition:cancel:')) return;
+
+  const inviteId = parseAuditionInviteCustomId(i.customId, 'cancel');
+  if (!inviteId) {
+    await replyToButton(i, '未能识别真人试音邀请。');
+    return;
+  }
+
+  const inviteSnapshot = await prisma.auditionInvite.findUnique({
+    where: { id: inviteId },
+    select: {
+      id: true,
+      bossId: true,
+      workerId: true,
+      roomChannelId: true,
+      status: true,
+    },
+  });
+
+  if (!inviteSnapshot) {
+    await replyToButton(i, '真人试音邀请不存在或已失效。');
+    return;
+  }
+  if (inviteSnapshot.bossId !== i.user.id) {
+    await replyToButton(i, '只有发起真人试音的老板才能取消这条邀请。');
+    return;
+  }
+  if (!ACTIVE_INVITE_STATUSES.includes(inviteSnapshot.status as (typeof ACTIVE_INVITE_STATUSES)[number])) {
+    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    return;
+  }
+
+  const assignedRoomId = String(inviteSnapshot.roomChannelId ?? '').trim();
+  if (assignedRoomId) {
+    const roomChannel =
+      i.client.channels.cache.get(assignedRoomId) ??
+      (await i.client.channels.fetch(assignedRoomId).catch((err) => {
+        console.error('[audition] fetch room before cancel failed:', err);
+        return null;
+      }));
+    if (!roomChannel) {
+      await replyToButton(i, '当前无法确认试音频道状态，请稍后再试。');
+      return;
+    }
+    if (roomChannel.type === ChannelType.GuildVoice) {
+      const bossPresent = roomChannel.members.has(inviteSnapshot.bossId);
+      const workerPresent = roomChannel.members.has(inviteSnapshot.workerId);
+      if (bossPresent && workerPresent) {
+        await replyToButton(i, '老板和陪玩已经同时在试音频道中，当前不能取消真人试音。');
+        return;
+      }
+    }
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT 1 FROM "AuditionInvite" WHERE "id" = ${inviteId} FOR UPDATE`;
+    const current = await tx.auditionInvite.findUnique({ where: { id: inviteId } });
+    if (!current) return { outcome: 'missing' as const };
+    if (current.bossId !== i.user.id) return { outcome: 'not_boss' as const };
+    if (!ACTIVE_INVITE_STATUSES.includes(current.status as (typeof ACTIVE_INVITE_STATUSES)[number])) {
+      return { outcome: 'inactive' as const };
+    }
+
+    const invite = await tx.auditionInvite.update({
+      where: { id: inviteId },
+      data: {
+        status: AuditionInviteStatus.CANCELED,
+        canceledAt: new Date(),
+        failureReason: 'boss_canceled',
+      },
+    });
+    return { outcome: 'canceled' as const, invite };
+  });
+
+  if (result.outcome === 'not_boss') {
+    await replyToButton(i, '只有发起真人试音的老板才能取消这条邀请。');
+    return;
+  }
+  if (result.outcome === 'missing') {
+    await replyToButton(i, '真人试音邀请不存在或已失效。');
+    return;
+  }
+  if (result.outcome === 'inactive') {
+    await replyToButton(i, '该真人试音邀请已处理，请勿重复操作。');
+    return;
+  }
+  if (result.outcome !== 'canceled') {
+    await replyToButton(i, '取消真人试音失败，请稍后再试。');
+    return;
+  }
+
+  const invite = result.invite;
+  cancelInviteTimer(invite.id);
+  await updateInviteMessageState(i.client, invite, '老板已取消');
+  await i.update({ components: buildStateRow('已取消') });
+  await notifyWorker(i.client, invite.workerId, buildWorkerCanceledNotice('老板已取消本次真人试音邀请。'));
 }
 
 export async function handleAuditionDeclineButton(i: ButtonInteraction) {

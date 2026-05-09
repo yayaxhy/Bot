@@ -1,9 +1,9 @@
-import { CouponStatus, CouponType, LotteryPool, Prisma } from '@prisma/client';
+import { CouponSource, CouponStatus, CouponType, Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 import { isUniqueConstraintError, realignCouponSequence } from './sequenceService.js';
-import { PRIZE_NAMES } from './lotteryService.js';
+import { ensureJinleeIdentityForDiscordTx } from './jinleeAccountService.js';
 
-type RewardKind = 'coupon' | 'lottery';
+type RewardKind = 'coupon';
 
 type GiftWallReward = {
   key: string;
@@ -11,17 +11,14 @@ type GiftWallReward = {
   label: string;
   quantity: number;
   couponType?: CouponType;
-  prizeName?: string;
 };
-
-const LOTTERY_REWARD_EXPIRES_MS = 30 * 24 * 60 * 60 * 1000;
 
 const GIFT_WALL_REWARDS: GiftWallReward[] = [
   {
     key: 'category',
-    kind: 'lottery',
+    kind: 'coupon',
     label: '抽奖代金券',
-    prizeName: PRIZE_NAMES.LOTTERY_VOUCHER,
+    couponType: CouponType.LOTTERY_VOUCHER,
     quantity: 1,
   },
 ];
@@ -38,11 +35,14 @@ async function grantCouponReward(
   reward: GiftWallReward
 ) {
   if (!reward.couponType) return false;
+  const identity = await ensureJinleeIdentityForDiscordTx(tx, receiverId);
 
   const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   const data = Array.from({ length: reward.quantity }, () => ({
-    discordId: receiverId,
+    discordId: identity.discordUserId ?? receiverId,
+    jinleeId: identity.jinleeId,
     type: reward.couponType!,
+    source: CouponSource.GIFT_WALL,
     status: CouponStatus.ACTIVE,
     expiresAt,
   }));
@@ -59,30 +59,6 @@ async function grantCouponReward(
       throw err;
     }
   }
-  return true;
-}
-
-async function grantLotteryReward(
-  tx: Prisma.TransactionClient,
-  receiverId: string,
-  reward: GiftWallReward,
-  prize: { id: string; pool: LotteryPool }
-) {
-
-  const now = Date.now();
-  const expiresAt = new Date(now + LOTTERY_REWARD_EXPIRES_MS);
-  const cost = new Prisma.Decimal(0);
-  const data = Array.from({ length: reward.quantity }, (_, idx) => ({
-    nonce: `giftwall:${reward.key}:${receiverId}:${now}:${idx}`,
-    userId: receiverId,
-    pool: prize.pool,
-    prizeId: prize.id,
-    cost,
-    random: Math.random(),
-    expiresAt,
-  }));
-
-  await tx.lotteryDraw.createMany({ data });
   return true;
 }
 
@@ -162,26 +138,6 @@ export async function unlockGiftWallForPeiwan(params: {
         }
 
         await grantCouponReward(tx, receiverId, reward);
-      } else if (reward.kind === 'lottery') {
-        if (!reward.prizeName) continue;
-        const prize = await tx.lotteryPrize.findFirst({
-          where: { name: reward.prizeName },
-          select: { id: true, pool: true },
-        });
-        if (!prize) continue;
-
-        try {
-          await tx.peiwanGiftRewardClaim.create({
-            data: { discordUserId: receiverId, rewardKey },
-          });
-        } catch (err) {
-          if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-            continue;
-          }
-          throw err;
-        }
-
-        await grantLotteryReward(tx, receiverId, reward, prize);
       } else {
         continue;
       }

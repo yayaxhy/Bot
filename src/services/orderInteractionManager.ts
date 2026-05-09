@@ -2,50 +2,240 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  Client,
   Message,
+  TextChannel,
 } from 'discord.js';
 import prisma from '../db/prisma.js';
 import { OrderStatus } from '@prisma/client';
 import { MIN } from '../lib/time.js';
+import { clickStore, type ClickMessageKind } from './clickStore.js';
+import { ORDER_REQUEST_CLOSED_HINT } from '../constants/orderRequestCopy.js';
 
 export const ORDER_REQUEST_CLOSE_MS = 20 * MIN;
 export const INVITATION_EXPIRE_MS = 10 * MIN;
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
+const CLOSED_ORDER_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
+const DISCORD_EPOCH_MS = 1420070400000;
 
 const requestTimers = new Map<string, NodeJS.Timeout>();
+const trackedRequestTimers = new Map<string, NodeJS.Timeout>();
 const invitationTimers = new Map<string, NodeJS.Timeout>();
 const invitationMessages = new Map<string, Message>();
 const expiredInvitations = new Set<string>();
+const closedOrderRequests = new Map<string, 'manual' | 'timeout'>();
+const closedOrderRequestCleanupTimers = new Map<string, NodeJS.Timeout>();
 
-async function closeOrderRequestMessage(message: Message) {
-  if (!message.editable) return;
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+function makePublicClosedRow() {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
       .setCustomId('request:closed')
       .setLabel('派单已关闭')
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(true),
   );
+}
 
+function makeOwnerClosedRow(orderId: string, ownerId: string, reason: 'manual' | 'timeout') {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`requestEnd:${orderId}:${ownerId}`)
+      .setLabel(reason === 'manual' ? '已结束派单' : '派单已关闭')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+  );
+}
+
+function buildPublicClosePayload(kind: ClickMessageKind, closedContent?: string | null) {
+  const row = makePublicClosedRow();
+  if (kind === 'broadcast' && closedContent != null) {
+    return { content: closedContent, components: [row] };
+  }
+  return { components: [row] };
+}
+
+function scheduleClosedOrderRequestCleanup(orderId: string) {
+  const existing = closedOrderRequestCleanupTimers.get(orderId);
+  if (existing) clearTimeout(existing);
+  closedOrderRequestCleanupTimers.set(
+    orderId,
+    setTimeout(() => {
+      closedOrderRequestCleanupTimers.delete(orderId);
+      closedOrderRequests.delete(orderId);
+    }, CLOSED_ORDER_REQUEST_TTL_MS),
+  );
+}
+
+export function getOrderRequestCloseReason(orderId: string): 'manual' | 'timeout' | null {
+  return closedOrderRequests.get(orderId) ?? null;
+}
+
+export function markOrderRequestClosed(orderId: string, reason: 'manual' | 'timeout') {
+  if (!orderId) return;
+  if (!closedOrderRequests.has(orderId)) {
+    closedOrderRequests.set(orderId, reason);
+  }
+  scheduleClosedOrderRequestCleanup(orderId);
+}
+
+export function cancelOrderRequestClosures(messageIds: string[]) {
+  for (const messageId of messageIds) {
+    const timer = requestTimers.get(messageId);
+    if (timer) {
+      clearTimeout(timer);
+      requestTimers.delete(messageId);
+    }
+  }
+}
+
+export function cancelTrackedOrderRequestClosure(orderId: string) {
+  const timer = trackedRequestTimers.get(orderId);
+  if (timer) {
+    clearTimeout(timer);
+    trackedRequestTimers.delete(orderId);
+  }
+}
+
+export function registerOrderRequestOwnerControl(orderId: string, ownerId: string, message: Message) {
+  if (!orderId || !ownerId) return;
+  clickStore.registerOwnerControl(orderId, ownerId, message.id, message.channelId);
+}
+
+export async function syncOrderRequestOwnerControls(
+  client: Client,
+  orderId: string,
+  reason: 'manual' | 'timeout',
+) {
+  const items = clickStore.getOwnerControls(orderId);
+  for (const item of items) {
+    try {
+      const channel = await client.channels.fetch(item.channelId).catch(() => null);
+      if (!channel || !channel.isTextBased() || !('messages' in channel)) continue;
+      const message = await (channel as TextChannel).messages.fetch(item.messageId).catch(() => null);
+      if (!message?.editable) continue;
+      await message.edit({ components: [makeOwnerClosedRow(orderId, item.ownerId, reason)] });
+    } catch (err) {
+      console.error('[orderInteractionManager] sync owner control failed:', err);
+    }
+  }
+}
+
+async function closeOrderRequestMessage(message: Message, closedContent?: string | null) {
+  if (!message.editable) return;
   try {
-    await message.edit({ components: [row] });
+    await message.edit(buildPublicClosePayload('body', closedContent));
   } catch (err) {
     console.error('[orderInteractionManager] close order request message failed:', err);
   }
 }
 
-export function scheduleOrderRequestClosure(message: Message, timeoutMs = ORDER_REQUEST_CLOSE_MS) {
+async function closeTrackedOrderRequest(
+  client: Client,
+  orderId: string,
+  closedContent?: string | null,
+) {
+  const existingReason = getOrderRequestCloseReason(orderId);
+  if (existingReason) return;
+
+  markOrderRequestClosed(orderId, 'timeout');
+  cancelTrackedOrderRequestClosure(orderId);
+  const targets = clickStore.getMessages(orderId, 'body');
+
+  for (const target of targets) {
+    try {
+      const channel = await client.channels.fetch(target.channelId).catch(() => null);
+      if (!channel || !channel.isTextBased() || !('messages' in channel)) continue;
+      const message = await (channel as TextChannel).messages.fetch(target.messageId).catch(() => null);
+      if (!message?.editable) continue;
+      await message.edit(buildPublicClosePayload(target.kind, closedContent));
+    } catch (err) {
+      console.error('[orderInteractionManager] sync closed order request failed:', err);
+    }
+  }
+
+  await syncOrderRequestOwnerControls(client, orderId, 'timeout');
+  clickStore.remove(orderId);
+}
+
+function scheduleTrackedOrderRequestClosure(
+  client: Client,
+  orderId: string,
+  timeoutMs = ORDER_REQUEST_CLOSE_MS,
+  closedContent: string | null = null,
+) {
+  const existing = trackedRequestTimers.get(orderId);
+  if (existing) clearTimeout(existing);
+
+  trackedRequestTimers.set(
+    orderId,
+    setTimeout(async () => {
+      trackedRequestTimers.delete(orderId);
+      await closeTrackedOrderRequest(client, orderId, closedContent);
+    }, timeoutMs),
+  );
+}
+
+export function scheduleOrderRequestClosure(
+  message: Message,
+  timeoutMs = ORDER_REQUEST_CLOSE_MS,
+  closedContent: string | null = null,
+  orderId?: string,
+) {
+  if (orderId) {
+    scheduleTrackedOrderRequestClosure(message.client, orderId, timeoutMs, closedContent);
+    return;
+  }
+
   const key = message.id;
   const existing = requestTimers.get(key);
   if (existing) clearTimeout(existing);
 
   requestTimers.set(
     key,
-    setTimeout(() => {
+    setTimeout(async () => {
       requestTimers.delete(key);
-      closeOrderRequestMessage(message);
+      await closeOrderRequestMessage(message, closedContent);
     }, timeoutMs),
   );
+}
+
+function estimateSnowflakeTimestamp(orderId: string): Date | null {
+  try {
+    const snowflake = BigInt(orderId);
+    const timestamp = Number((snowflake >> 22n) + BigInt(DISCORD_EPOCH_MS));
+    if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
+    return new Date(timestamp);
+  } catch {
+    return null;
+  }
+}
+
+export async function recoverPendingOrderRequests(client: Client, now = new Date()) {
+  await clickStore.ready();
+  const openRequests = clickStore.listOpenRequests();
+  if (openRequests.length === 0) return;
+
+  const requestLogs = await prisma.orderRequestLog.findMany({
+    where: { orderId: { in: openRequests.map((request) => request.orderId) } },
+    select: { orderId: true, createdAt: true },
+  });
+  const createdAtByOrderId = new Map(requestLogs.map((item) => [item.orderId, item.createdAt]));
+
+  for (const request of openRequests) {
+    const createdAt = createdAtByOrderId.get(request.orderId) ?? estimateSnowflakeTimestamp(request.orderId);
+    if (!createdAt) {
+      console.warn('[orderInteractionManager] unable to recover order request without timestamp:', request.orderId);
+      continue;
+    }
+
+    const remainingMs = ORDER_REQUEST_CLOSE_MS - (now.getTime() - createdAt.getTime());
+    if (remainingMs <= 0) {
+      await closeTrackedOrderRequest(client, request.orderId, ORDER_REQUEST_CLOSED_HINT);
+      continue;
+    }
+
+    scheduleTrackedOrderRequestClosure(client, request.orderId, remainingMs, ORDER_REQUEST_CLOSED_HINT);
+  }
 }
 
 async function expireInvitation(orderId: string) {

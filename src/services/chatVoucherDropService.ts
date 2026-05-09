@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Client, EmbedBuilder, Events, Message } from 'discord.js';
-import { CouponStatus, CouponType, LotteryPool, LotteryStatus, PrismaClient } from '@prisma/client';
+import { CouponSource, CouponStatus, CouponType, LotteryPool, LotteryStatus, PrismaClient } from '@prisma/client';
 import { ensureJinleeIdentityForDiscordTx } from './jinleeAccountService.js';
 import { isUniqueConstraintError, realignCouponSequence } from './sequenceService.js';
 import { PRIZE_NAMES } from './lotteryService.js';
@@ -53,9 +53,9 @@ const BASE_REWARD_POOL: Record<string, DropRewardConfig> = {
     prizeName: PRIZE_NAMES.LOTTERY_VOUCHER,
   },
   BLOCK_STACK_VOUCHER: {
-    kind: 'LOTTERY_DRAW',
+    kind: 'COUPON',
     key: 'BLOCK_STACK_VOUCHER',
-    lotteryPrizeName: PRIZE_NAMES.BLOCK_STACK_VOUCHER,
+    couponType: CouponType.BLOCK_STACK_VOUCHER,
     label: '抽积木代金券',
     weight: 1,
     prizeName: PRIZE_NAMES.BLOCK_STACK_VOUCHER,
@@ -71,6 +71,10 @@ const BASE_REWARD_POOL: Record<string, DropRewardConfig> = {
 
 const DEFAULT_POOL = Object.values(BASE_REWARD_POOL);
 const HARD_EXCLUDED_USER_IDS = new Set(['1421651539247894549']);
+const CHAT_VOUCHER_ALLOWED_CHANNEL_IDS = new Set([
+  '1421498529209385011',
+  '1421498686491328603',
+]);
 const CHAT_VOUCHER_EMOJI = '<a:chatVoucherEmoji:1441148279059386418>';
 const STABLE_USER_KEY_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -177,7 +181,6 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
   const minLength = Math.max(1, Math.floor(parseNumber(process.env.CHAT_VOUCHER_DROP_MIN_LEN, 4)));
   const dailyCap = Math.max(1, Math.floor(parseNumber(process.env.CHAT_VOUCHER_DROP_DAILY_CAP, 3)));
   const expireDays = Math.max(1, Math.floor(parseNumber(process.env.CHAT_VOUCHER_DROP_EXPIRE_DAYS, 30)));
-  const includeChannels = parseIdList(process.env.CHAT_VOUCHER_DROP_CHANNEL_IDS);
   const excludeChannels = parseIdList(process.env.CHAT_VOUCHER_DROP_EXCLUDE_CHANNEL_IDS);
   const excludeUsers = parseIdList(process.env.CHAT_VOUCHER_DROP_EXCLUDE_USER_IDS);
   for (const id of HARD_EXCLUDED_USER_IDS) excludeUsers.add(id);
@@ -239,7 +242,7 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
     dailyCap,
     expireDays,
     pool: pool.map((p) => `${p.key}:${p.weight}`),
-    includeChannels: includeChannels.size,
+    allowedChannels: [...CHAT_VOUCHER_ALLOWED_CHANNEL_IDS],
     excludeChannels: excludeChannels.size,
     excludeUsers: excludeUsers.size,
   });
@@ -249,8 +252,8 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
       if (shouldIgnoreMessage(message, minLength)) return;
 
       const channelId = message.channelId;
+      if (!CHAT_VOUCHER_ALLOWED_CHANNEL_IDS.has(channelId)) return;
       if (excludeChannels.has(channelId)) return;
-      if (includeChannels.size > 0 && !includeChannels.has(channelId)) return;
 
       const nowMs = Date.now();
       if (nowMs < globalNextEligibleAt) return;
@@ -283,6 +286,7 @@ export function registerChatVoucherDropService(client: Client, prisma: PrismaCli
                 discordId: userId,
                 jinleeId: identity.jinleeId,
                 type: picked.couponType!,
+                source: CouponSource.CHAT_DROP,
                 status: CouponStatus.ACTIVE,
                 expiresAt,
               },

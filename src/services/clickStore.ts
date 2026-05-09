@@ -1,20 +1,33 @@
+export type ClickMessageKind = 'hint' | 'body' | 'broadcast';
+export type OrderRequestOwnerControl = {
+  ownerId: string;
+  channelId: string;
+  messageId: string;
+};
+
 export type ClickState = {
   ownerId: string;
   userIds: Set<string>;
-  messages: Array<{ channelId: string; messageId: string; kind: 'hint' | 'body' }>;
+  messages: Array<{ channelId: string; messageId: string; kind: ClickMessageKind }>;
+  ownerControls: OrderRequestOwnerControl[];
 };
 
 class ClickStore {
   private map = new Map<string, ClickState>();
   private persistTimer: NodeJS.Timeout | null = null;
   private readonly persistPath: string;
+  private readonly loadPromise: Promise<void>;
 
   constructor() {
     const defaultPath = path.join(process.cwd(), 'clickstore-state.json');
     this.persistPath = process.env.CLICKSTORE_PATH ?? defaultPath;
-    this.loadFromDisk().catch((err) => {
+    this.loadPromise = this.loadFromDisk().catch((err) => {
       console.warn('[clickStore] failed to load persisted state:', err);
     });
+  }
+
+  ready() {
+    return this.loadPromise;
   }
 
   private schedulePersist() {
@@ -32,6 +45,7 @@ class ClickStore {
       ownerId: state.ownerId,
       userIds: Array.from(state.userIds),
       messages: state.messages,
+      ownerControls: state.ownerControls,
     }));
     await fs.promises.writeFile(this.persistPath, JSON.stringify({ entries }), 'utf8');
   }
@@ -39,13 +53,37 @@ class ClickStore {
   private async loadFromDisk() {
     try {
       const raw = await fs.promises.readFile(this.persistPath, 'utf8');
-      const data = JSON.parse(raw) as { entries?: Array<{ orderId: string; ownerId: string; userIds: string[]; messages: Array<{ channelId: string; messageId: string; kind: 'hint' | 'body' }> }> };
+      const data = JSON.parse(raw) as { entries?: Array<{
+        orderId: string;
+        ownerId: string;
+        userIds: string[];
+        messages: Array<{ channelId: string; messageId: string; kind?: string }>;
+        ownerControls?: Array<{ ownerId?: string; channelId?: string; messageId?: string }>;
+      }> };
       if (!data?.entries) return;
       for (const entry of data.entries) {
         const state: ClickState = {
           ownerId: entry.ownerId,
           userIds: new Set(entry.userIds ?? []),
-          messages: Array.isArray(entry.messages) ? entry.messages : [],
+          messages: Array.isArray(entry.messages)
+            ? entry.messages.map((message) => ({
+                channelId: message.channelId,
+                messageId: message.messageId,
+                kind:
+                  message.kind === 'hint' || message.kind === 'body' || message.kind === 'broadcast'
+                    ? message.kind
+                    : 'body',
+              }))
+            : [],
+          ownerControls: Array.isArray(entry.ownerControls)
+            ? entry.ownerControls
+                .filter((item) => item?.ownerId && item?.channelId && item?.messageId)
+                .map((item) => ({
+                  ownerId: item.ownerId as string,
+                  channelId: item.channelId as string,
+                  messageId: item.messageId as string,
+                }))
+            : [],
         };
         this.map.set(entry.orderId, state);
       }
@@ -59,22 +97,28 @@ class ClickStore {
   init(messageId: string, ownerId: string) {
     const existing = this.map.get(messageId);
     if (!existing) {
-      this.map.set(messageId, { ownerId, userIds: new Set(), messages: [] });
+      this.map.set(messageId, { ownerId, userIds: new Set(), messages: [], ownerControls: [] });
     } else if (!existing.ownerId || (ownerId && existing.ownerId !== ownerId)) {
       existing.ownerId = ownerId;
       this.schedulePersist();
     }
   }
 
-  registerMessage(orderId: string, messageId: string, channelId: string, ownerId: string, kind: 'hint' | 'body' = 'body') {
+  registerMessage(orderId: string, messageId: string, channelId: string, ownerId: string, kind: ClickMessageKind = 'body') {
     this.init(orderId, ownerId);
     const state = this.map.get(orderId);
     if (!state) return;
-    const exists = state.messages.some(
+    const existing = state.messages.find(
       (m) => m.channelId === channelId && m.messageId === messageId
     );
-    if (!exists) {
+    if (!existing) {
       state.messages.push({ channelId, messageId, kind });
+      this.schedulePersist();
+      return;
+    }
+
+    if (existing.kind !== kind && existing.kind !== 'broadcast') {
+      existing.kind = 'broadcast';
       this.schedulePersist();
     }
   }
@@ -105,6 +149,34 @@ class ClickStore {
     };
   }
 
+  registerOwnerControl(orderId: string, ownerId: string, messageId: string, channelId: string) {
+    this.init(orderId, ownerId);
+    const state = this.map.get(orderId);
+    if (!state) return;
+    const exists = state.ownerControls.some(
+      (item) => item.ownerId === ownerId && item.channelId === channelId && item.messageId === messageId,
+    );
+    if (!exists) {
+      state.ownerControls.push({ ownerId, channelId, messageId });
+      this.schedulePersist();
+    }
+  }
+
+  getOwnerControls(orderId: string) {
+    const state = this.map.get(orderId);
+    if (!state) return [];
+    return [...state.ownerControls];
+  }
+
+  listOpenRequests() {
+    return Array.from(this.map.entries()).map(([orderId, state]) => ({
+      orderId,
+      ownerId: state.ownerId,
+      messages: [...state.messages],
+      ownerControls: [...state.ownerControls],
+    }));
+  }
+
   /**
    * 获取最新一条派单（按消息 ID 最大值）及其关联消息列表
    */
@@ -128,11 +200,15 @@ class ClickStore {
     return latest;
   }
 
-  getMessages(orderId: string, kind?: 'hint' | 'body') {
+  getMessages(orderId: string, kind?: ClickMessageKind) {
     const state = this.map.get(orderId);
     if (!state) return [];
     if (!kind) return [...state.messages];
-    return state.messages.filter((m) => m.kind === kind);
+    return state.messages.filter((message) => {
+      if (kind === 'broadcast') return message.kind === 'broadcast';
+      if (message.kind === 'broadcast') return true;
+      return message.kind === kind;
+    });
   }
 
   remove(orderId: string) {

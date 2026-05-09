@@ -14,12 +14,11 @@ import { updateMemberServerDisplayName } from '../../services/memberDisplayNameS
 import { clickStore } from '../../services/clickStore.js';
 import { findBlacklistConflict } from '../../services/blacklistService.js';
 import { ensureJinleeIdentityForDiscordTx } from '../../services/jinleeAccountService.js';
+import { ORDER_SELECTED_HINT } from '../../constants/orderRequestCopy.js';
 
 const ORDER_ID_PREFIX = process.env.ORDER_ID_PREFIX ?? '';
 const SUPPORT_STAFF_USER_ID = process.env.SUPPORT_STAFF_USER_ID ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
-const ORDER_SELECTED_HINT = '老板点到了心仪的陪玩。派单还未结束，可继续扣单！';
-
 const PEIWAN_ID_FIELD_NAMES = new Set(['PEIWANID', '陪玩ID']);
 const ORDER_CONTENT_FIELD_NAMES = new Set(['订单内容']);
 const QUOTATION_LABEL: Record<QuotationCode, string> = {
@@ -317,7 +316,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
     ephemeral: shouldBeEphemeral,
   });
 
-  // 公告：老板已点到心仪的陪玩（编辑“提示”消息，不改按钮消息）
+  // 公告：老板已点到心仪的陪玩。合并后的派单消息也会作为提示消息一起更新。
   if (orderIdFromCustom) {
     const hintMsgs = clickStore.getMessages(orderIdFromCustom, 'hint');
     for (const msg of hintMsgs) {

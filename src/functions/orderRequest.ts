@@ -16,6 +16,7 @@ import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 import { getActiveActivities } from '../services/activityService.js';
 import { getDispatchImageUrlForOwner } from '../services/orderDispatchImageService.js';
+import { registerOrderRequestOwnerControl } from '../services/orderInteractionManager.js';
 
 export async function sendOrderRequest(interaction: Interaction) {
   const userA = interaction.user;
@@ -78,5 +79,6 @@ export async function sendOrderRequest(interaction: Interaction) {
   }
 
   const { embed, components } = order_request_sent_successfully_embed(orderId, ownerId, activities);
-  await userA.send({ embeds: [embed], components });
+  const successMessage = await userA.send({ embeds: [embed], components });
+  registerOrderRequestOwnerControl(orderId, ownerId, successMessage);
 }

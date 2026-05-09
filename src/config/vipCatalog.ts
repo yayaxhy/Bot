@@ -40,7 +40,6 @@ export type VipTierConfig = {
 };
 
 const LOTTERY_VOUCHER_PRIZE_NAME = '抽奖代金券';
-const BLOCK_STACK_VOUCHER_PRIZE_NAME = '积木游戏代金券';
 
 export const VIP_TIERS: VipTierConfig[] = [
   {
@@ -177,8 +176,8 @@ export const VIP_TIERS: VipTierConfig[] = [
       {
         code: 'VIP6_BLOCK_STACK_VOUCHER',
         label: '抽积木代金券',
-        kind: 'lottery',
-        lotteryPrizeName: BLOCK_STACK_VOUCHER_PRIZE_NAME,
+        kind: 'coupon',
+        couponType: CouponType.BLOCK_STACK_VOUCHER,
         quantity: 1,
         revocable: true,
       },
@@ -374,8 +373,8 @@ export const VIP_TIERS: VipTierConfig[] = [
       {
         code: 'VIP11_BLOCK_STACK_VOUCHER',
         label: '抽积木代金券',
-        kind: 'lottery',
-        lotteryPrizeName: BLOCK_STACK_VOUCHER_PRIZE_NAME,
+        kind: 'coupon',
+        couponType: CouponType.BLOCK_STACK_VOUCHER,
         quantity: 5,
         revocable: true,
       },

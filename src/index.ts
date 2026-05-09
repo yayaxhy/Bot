@@ -49,6 +49,7 @@ import { registerVoicePointService } from './services/voicePointService.js';
 import { registerChatVoucherDropService } from './services/chatVoucherDropService.js';
 import {
   handleAuditionAcceptButton,
+  handleAuditionCancelButton,
   handleAuditionDeclineButton,
   handleAuditionRequestButton,
   recoverAuditionState,
@@ -58,7 +59,7 @@ import { registerRedEnvelopeMessageHandlers } from './events/redEnvelopeMessageC
 import { startCommissionBuffWatcher } from './services/buffService.js';
 import { refreshAllAutoCommissionBuffs, startAutoCommissionBuffWatcher } from './services/autoCommissionBuffService.js';
 import { startLeaderboardScheduler } from './services/leaderboardService.js';
-import { recoverPendingInvitations } from './services/orderInteractionManager.js';
+import { recoverPendingInvitations, recoverPendingOrderRequests } from './services/orderInteractionManager.js';
 import { recoverRunningOrders } from './services/orderService.js';
 import {
   CLAIM_EMOJI_REACTION,
@@ -291,6 +292,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
         await handleAuditionAcceptButton(i);
         return;
       }
+      if (i.customId?.startsWith('audition:cancel:')) {
+        await handleAuditionCancelButton(i);
+        return;
+      }
       if (i.customId?.startsWith('audition:decline:')) {
         await handleAuditionDeclineButton(i);
         return;
@@ -345,6 +350,11 @@ client.once(Events.ClientReady, async () => {
     await recoverPendingInvitations();
   } catch (err) {
     console.error('[startup] recover pending invites failed:', err);
+  }
+  try {
+    await recoverPendingOrderRequests(client);
+  } catch (err) {
+    console.error('[startup] recover pending order requests failed:', err);
   }
   try {
     await recoverAuditionState(client);

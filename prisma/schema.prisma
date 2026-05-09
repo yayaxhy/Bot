@@ -243,6 +243,43 @@ model WechatProgramSession {
   @@index([jinleeId, expiresAt])
 }
 
+model DiscordMigrationAudit {
+  id                String   @id @default(cuid())
+  operatorDiscordId String?
+  oldDiscordId      String
+  newDiscordId      String
+  archiveDiscordId  String?
+  sourceJinleeId    String?
+  forceTakeover     Boolean  @default(false)
+  takeoverSnapshot  Json?
+  changed           Json?
+  createdAt         DateTime @default(now())
+
+  @@index([oldDiscordId, createdAt])
+  @@index([newDiscordId, createdAt])
+  @@index([createdAt])
+}
+
+model AssetTransferAudit {
+  id                String   @id @default(cuid())
+  operatorDiscordId String?
+  sourceDiscordId   String
+  targetDiscordId   String
+  sourceJinleeId    String?
+  targetJinleeId    String?
+  forceMerge        Boolean  @default(false)
+  sourceSnapshot    Json?
+  targetSnapshot    Json?
+  transferred       Json?
+  changed           Json?
+  warnings          Json?
+  createdAt         DateTime @default(now())
+
+  @@index([sourceDiscordId, createdAt])
+  @@index([targetDiscordId, createdAt])
+  @@index([createdAt])
+}
+
 model Member {
   // Primary key is the Discord user id
   discordUserId String       @id
@@ -632,6 +669,7 @@ enum CouponType {
   CROWN_WEEK_90_VOUCHER
   CROWN_MONTH_90_VOUCHER
   LOTTERY_VOUCHER
+  BLOCK_STACK_VOUCHER
   CUSTOM_GIFT_VOUCHER
   CUSTOM_TAG_VOUCHER
   COMMISSION_MINUS1_VOUCHER
@@ -650,11 +688,20 @@ enum CouponStatus {
   EXPIRED
 }
 
+enum CouponSource {
+  UNKNOWN
+  CHAT_DROP
+  MANUAL_GRANT
+  VIP_BENEFIT
+  GIFT_WALL
+}
+
 model Coupon {
   id                    String       @id @default(dbgenerated("concat('C', nextval('\"Coupon_id_seq\"'::regclass))"))
   discordId             String?
   jinleeId              String?
   type                  CouponType
+  source                CouponSource @default(UNKNOWN)
   status                CouponStatus @default(ACTIVE)
   issuedAt              DateTime     @default(now())
   expiresAt             DateTime
@@ -670,6 +717,7 @@ model Coupon {
 
   @@index([jinleeId, status, expiresAt])
   @@index([consumeTargetJinleeId])
+  @@index([source, issuedAt])
 }
 
 model Expense {
@@ -946,6 +994,7 @@ model PEIWAN {
   MP_url               String?
   voicePreviewUrl      String?
   voicePreviewFilename String?
+  auditionInviteEnabled Boolean     @default(false)
   status               PeiwanStatus @default(free)
   serverDisplayName    String?
   sex                  PeiwanSex    @default(小姐姐)

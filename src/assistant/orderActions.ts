@@ -18,10 +18,11 @@ import {
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
 import { clickStore } from '../services/clickStore.js';
-import { scheduleOrderRequestClosure } from '../services/orderInteractionManager.js';
+import { registerOrderRequestOwnerControl, scheduleOrderRequestClosure } from '../services/orderInteractionManager.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../services/memberDisplayNameService.js';
 import { getActiveActivities } from '../services/activityService.js';
+import { ORDER_REQUEST_CLOSED_HINT, ORDER_REQUEST_HINT } from '../constants/orderRequestCopy.js';
 
 type AssistantOrderContext = Message | ButtonInteraction;
 
@@ -228,8 +229,6 @@ export async function executeNaturalDispatchCreate(
     });
   }
 
-  const anonHint = await channel.send('老板派单啦，快来抢单');
-  clickStore.registerMessage(orderId, anonHint.id, anonHint.channelId, ownerId, 'hint');
   const embedResponse = anonymous_ongoing_order_request_embed(
     requestContent,
     requestContent,
@@ -238,17 +237,23 @@ export async function executeNaturalDispatchCreate(
     undefined,
     activities,
   );
-  const posted = await channel.send(embedResponse);
-  clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'body');
-  scheduleOrderRequestClosure(posted);
+  const posted = await channel.send({
+    ...embedResponse,
+    content: ORDER_REQUEST_HINT,
+    allowedMentions: { parse: [] },
+  });
+  clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'broadcast');
+  scheduleOrderRequestClosure(posted, undefined, ORDER_REQUEST_CLOSED_HINT, orderId);
 
   const { embed, components } = order_request_sent_successfully_embed(orderId, ownerId, activities);
-  await sendAssistantDirectMessage(context, {
+  const dmChannel = await actorUser(context).createDM();
+  const successMessage = await dmChannel.send({
     content: '已按你的要求发起派单。',
     embeds: [embed],
     components,
     allowedMentions: { parse: [] },
   });
+  registerOrderRequestOwnerControl(orderId, ownerId, successMessage);
 
   const balance = await getMemberBalance(ownerId);
   const balanceLabel = typeof balance === 'number' && Number.isFinite(balance) ? balance.toFixed(2) : '未知';

@@ -21,6 +21,7 @@ import {
 } from '../services/jinleeAccountService.js';
 import { syncAllPeiwanRoles, syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
 import { sendPeiwanNotification } from '../services/peiwanWatcher.js';
+import { syncSpentRolesForMember } from '../services/spentRoleService.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -1470,6 +1471,34 @@ async function handleSyncAllPeiwanRoles(_req: IncomingMessage, res: ServerRespon
   }
 }
 
+async function handleSyncSpentRoles(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const discordUserId = await resolveDiscordId({
+    discordId: payload?.discordId,
+    peiwanId: payload?.peiwanId,
+  });
+  if (!discordUserId) {
+    sendJson(res, 400, { ok: false, error: 'missing_target' });
+    return;
+  }
+
+  try {
+    await syncSpentRolesForMember(discordUserId, {
+      includeSpendRoles: payload?.includeSpendRoles !== false,
+      announceVipUpgrade: payload?.announceVipUpgrade === true,
+    });
+    sendJson(res, 200, {
+      ok: true,
+      discordId: discordUserId,
+    });
+  } catch (error) {
+    console.error('[internal-api] spent role sync failed', { discordUserId, error });
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+  }
+}
+
 export function startInternalWebhookServer() {
   if (serverInstance) {
     return serverInstance;
@@ -1558,6 +1587,10 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/peiwan/sync-roles-all') {
       await handleSyncAllPeiwanRoles(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/spent-role/sync') {
+      await handleSyncSpentRoles(req, res);
       return;
     }
 

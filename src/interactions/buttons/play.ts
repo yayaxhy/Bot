@@ -9,13 +9,14 @@ import {
   TextChannel,
 } from 'discord.js';
 import prisma from '../../db/prisma.js';
+import { ORDER_REQUEST_ENDED_HINT } from '../../constants/orderRequestCopy.js';
 import { findBlacklistConflict } from '../../services/blacklistService.js';
 import { clickStore } from '../../services/clickStore.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 import { resolveOrderRequestOwnerId } from '../../services/orderRequestLogService.js';
 import { formatBossReviews } from '../../services/peiwanReviewDisplayService.js';
 import { buildStoredVoicePreviewAttachment } from '../../services/peiwanVoicePreviewService.js';
-// import { buildAuditionRequestButtonRow } from '../../services/auditionService.js';
+import { buildAuditionRequestButtonRow } from '../../services/auditionService.js';
 import { MemberStatus, Prisma, PeiwanReviewDisplayMode, QuotationCode } from '@prisma/client';
 import {
   buildQuotationSelect,
@@ -26,7 +27,14 @@ import {
   refuse_order_request_embed,
   DEFAULT_GIFTS,
 } from '../../ui/orderEmbeds.js';
-import { ORDER_REQUEST_CLOSE_MS } from '../../services/orderInteractionManager.js';
+import {
+  cancelOrderRequestClosures,
+  cancelTrackedOrderRequestClosure,
+  getOrderRequestCloseReason,
+  markOrderRequestClosed,
+  ORDER_REQUEST_CLOSE_MS,
+  syncOrderRequestOwnerControls,
+} from '../../services/orderInteractionManager.js';
 
 const stripRoleMentions = (text: string) =>
   text.replace(/<@&\d+>/g, '').replace(/[ \t]{2,}/g, ' ').replace(/\n[ \t]+/g, '\n').trim();
@@ -60,6 +68,25 @@ function makeOwnerEndedRow(orderId: string, ownerId: string) {
     .setLabel('已结束派单')
     .setDisabled(true);
   return new ActionRowBuilder<ButtonBuilder>().addComponents(endedBtn);
+}
+
+function makeOwnerClosedRow(orderId: string, ownerId: string) {
+  const endedBtn = new ButtonBuilder()
+    .setCustomId(`requestEnd:${orderId}:${ownerId}`)
+    .setStyle(ButtonStyle.Secondary)
+    .setLabel('派单已关闭')
+    .setDisabled(true);
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(endedBtn);
+}
+
+function buildDispatchEndPayload(
+  kind: 'hint' | 'body' | 'broadcast',
+  row: ActionRowBuilder<ButtonBuilder>,
+) {
+  if (kind === 'broadcast') {
+    return { content: ORDER_REQUEST_ENDED_HINT, components: [row] };
+  }
+  return { components: [row] };
 }
 
 function numberOrZero(x: any): number {
@@ -445,8 +472,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
       anonymousGiftBox
     );
     const mpComponents = [
-      // 真人试音入口临时隐藏，先不向老板展示该按钮。
-      // buildAuditionRequestButtonRow(orderId, workerId, peiwan.PEIWANID),
+      ...(peiwan.auditionInviteEnabled ? [buildAuditionRequestButtonRow(orderId, workerId, peiwan.PEIWANID)] : []),
       ...components,
     ];
 
@@ -535,31 +561,48 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
       await i.deferUpdate();
     }
 
+    const closureReason = getOrderRequestCloseReason(orderId);
+    if (closureReason) {
+      if (i.message.editable) {
+        const row = closureReason === 'manual'
+          ? makeOwnerEndedRow(orderId, ownerId)
+          : makeOwnerClosedRow(orderId, ownerId);
+        try {
+          await i.message.edit({ components: [row] });
+        } catch (err) {
+          console.error('[handleEndRequestButton] refresh closed control failed:', err);
+        }
+      }
+      return;
+    }
+
     clickStore.init(orderId, ownerId);
     const count = await prisma.orderRequestClick.count({ where: { orderId } });
     const ownerRow = makeOwnerEndedRow(orderId, ownerId);
     const publicRow = makeEndedRow(count, orderId, ownerId);
     const targets = clickStore.getMessages(orderId, 'body');
-    const updatedIds = new Set<string>();
+    const targetMap = new Map(targets.map((target) => [`${target.channelId}:${target.messageId}`, target]));
+    markOrderRequestClosed(orderId, 'manual');
+    cancelTrackedOrderRequestClosure(orderId);
+    cancelOrderRequestClosures(targets.map((target) => target.messageId));
 
     if (i.message.editable) {
       try {
         await i.message.edit({ components: [ownerRow] });
-        updatedIds.add(`${i.channelId ?? ''}:${i.message.id}`);
       } catch (err) {
         console.error('[handleEndRequestButton] edit current failed:', err);
       }
     }
 
     for (const m of targets) {
-      const key = `${m.channelId}:${m.messageId}`;
-      if (updatedIds.has(key)) continue;
       try {
         const ch = await i.client.channels.fetch(m.channelId).catch(() => null);
         if (ch && ch.isTextBased() && 'messages' in ch) {
           const msg = await (ch as TextChannel).messages.fetch(m.messageId).catch(() => null);
           if (msg?.editable) {
-            await msg.edit({ components: [publicRow] });
+            const key = `${m.channelId}:${m.messageId}`;
+            const payload = buildDispatchEndPayload(targetMap.get(key)?.kind ?? m.kind, publicRow);
+            await msg.edit(payload);
           }
         }
       } catch (err) {
@@ -567,7 +610,7 @@ export async function handleEndRequestButton(i: ButtonInteraction) {
       }
     }
 
-    // 清理存储的派单状态
+    await syncOrderRequestOwnerControls(i.client, orderId, 'manual');
     clickStore.remove(orderId);
   } catch (err) {
     console.error('[handleEndRequestButton] error:', err);

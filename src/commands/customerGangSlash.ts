@@ -4,10 +4,12 @@ import {
   anonymous_ongoing_order_request_embed,
   order_request_sent_successfully_embed,
 } from '../ui/orderEmbeds.js';
-import { scheduleOrderRequestClosure } from '../services/orderInteractionManager.js';
+import { clickStore } from '../services/clickStore.js';
+import { registerOrderRequestOwnerControl, scheduleOrderRequestClosure } from '../services/orderInteractionManager.js';
 import { recordOrderRequest } from '../services/orderRequestLogService.js';
 import { getActiveActivities } from '../services/activityService.js';
 import { getDispatchImageUrlForOwner } from '../services/orderDispatchImageService.js';
+import { ORDER_REQUEST_CLOSED_HINT, ORDER_REQUEST_HINT } from '../constants/orderRequestCopy.js';
 
 const SUPPORT_USER_IDS = new Set(['1421651539247894549', '525770714574225408', '794340158991237121']);
 const ORDER_CHANNEL_ID = '1421495114928492604';
@@ -71,6 +73,7 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
   const ownerId = boss.id;
   const activities = await getActiveActivities();
   const dispatchImageUrl = isAnonymous ? null : await getDispatchImageUrlForOwner(ownerId);
+  clickStore.init(orderId, ownerId);
 
   try {
     await i.deferReply({ ephemeral: true });
@@ -86,7 +89,6 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
       }
     }
 
-    await channel.send({ content: '老板派单啦，快来抢单' });
     const embedPayload = isAnonymous
       ? anonymous_ongoing_order_request_embed(
           messageText,
@@ -107,12 +109,24 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
           dispatchImageUrl,
         );
 
+    if (isAnonymous && mentionLine) {
+      await channel.send({
+        content: mentionLine,
+        allowedMentions: { users: [], roles: allowedRoleIds, parse: [] },
+      });
+    }
+
     const posted = await channel.send({
       ...embedPayload,
-      content: messageText,
-      allowedMentions: { users: [], roles: allowedRoleIds, parse: [] },
+      content: isAnonymous
+        ? ORDER_REQUEST_HINT
+        : [mentionLine, ORDER_REQUEST_HINT].filter(Boolean).join('\n'),
+      allowedMentions: isAnonymous
+        ? { parse: [] }
+        : { users: [], roles: allowedRoleIds, parse: [] },
     });
-    scheduleOrderRequestClosure(posted);
+    clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'broadcast');
+    scheduleOrderRequestClosure(posted, undefined, ORDER_REQUEST_CLOSED_HINT, orderId);
     recordOrderRequest({
       orderId,
       ownerId,
@@ -121,7 +135,10 @@ export async function handleCustomerGangSlash(i: ChatInputCommandInteraction) {
     }).catch(() => {});
 
     const { embed: successEmbed, components: successComponents } = order_request_sent_successfully_embed(orderId, ownerId, activities);
-    await boss.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents }).catch(() => null);
+    const successMessage = await boss.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents }).catch(() => null);
+    if (successMessage) {
+      registerOrderRequestOwnerControl(orderId, ownerId, successMessage);
+    }
 
     await i.editReply({ content: '派单已发送。' });
   } catch (err) {

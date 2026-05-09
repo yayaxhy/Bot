@@ -20,9 +20,9 @@ import {
   anonymous_ongoing_order_request_embed,
   order_request_sent_successfully_embed,
   buildQuotationSelect,
-  ORDER_REQUEST_HINT,
   parseRoleMentions,
 } from '../ui/orderEmbeds.js';
+import { ORDER_REQUEST_CLOSED_HINT, ORDER_REQUEST_HINT } from '../constants/orderRequestCopy.js';
 import prisma from '../db/prisma.js';
 import { OrderStatus, OrderMode, QuotationCode } from '@prisma/client';
 import { endOrder } from '../services/orderService.js';
@@ -33,6 +33,7 @@ import {
   scheduleOrderRequestClosure,
   isInvitationExpired,
   markInvitationHandled,
+  registerOrderRequestOwnerControl,
 } from '../services/orderInteractionManager.js';
 import { runOrderAcceptanceFlow } from '../interactions/buttons/acceptOrder.js';
 import { runOrderDeclineFlow } from '../interactions/buttons/declineOrder.js';
@@ -735,7 +736,7 @@ export async function execute(message: Message) {
             allowedMentions: { parse: [] },
           });
           clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'broadcast');
-          scheduleOrderRequestClosure(posted);
+          scheduleOrderRequestClosure(posted, undefined, ORDER_REQUEST_CLOSED_HINT, orderId);
         }
 
       // 专属派单区同步到综合派单区
@@ -765,7 +766,7 @@ export async function execute(message: Message) {
             allowedMentions: { parse: [] },
           });
           clickStore.registerMessage(orderId, postedCopy.id, postedCopy.channelId, ownerId, 'broadcast');
-          scheduleOrderRequestClosure(postedCopy);
+          scheduleOrderRequestClosure(postedCopy, undefined, ORDER_REQUEST_CLOSED_HINT, orderId);
         }
       }
 
@@ -774,7 +775,8 @@ export async function execute(message: Message) {
         ownerId,
         activities,
       );
-      await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
+      const successMessage = await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
+      registerOrderRequestOwnerControl(orderId, ownerId, successMessage);
     } else if (!message.guild) {
       if (hasAllowedRole) {
         const ownerDisplayName = message.member?.displayName ?? null;
@@ -806,7 +808,7 @@ export async function execute(message: Message) {
             allowedMentions: { parse: [] },
           });
           clickStore.registerMessage(orderId, posted.id, posted.channelId, ownerId, 'broadcast');
-          scheduleOrderRequestClosure(posted);
+          scheduleOrderRequestClosure(posted, undefined, ORDER_REQUEST_CLOSED_HINT, orderId);
         }
 
         const { embed: successEmbed, components: successComponents } = order_request_sent_successfully_embed(
@@ -814,7 +816,8 @@ export async function execute(message: Message) {
           ownerId,
           activities,
         );
-        await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
+        const successMessage = await userA.send({ content: '订单创建成功！', embeds: [successEmbed], components: successComponents });
+        registerOrderRequestOwnerControl(orderId, ownerId, successMessage);
 
         const balance = await getMemberBalance(userA.id);
         const balanceLabel = typeof balance === 'number' && Number.isFinite(balance)
