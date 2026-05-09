@@ -303,7 +303,7 @@ function findTierOneQualification(
 
   for (let i = 0; i < events.length; i += 1) {
     const event = events[i];
-    if (event.at < recomputeStart || event.at > now) continue;
+    if (event.at > now) break;
 
     rollingSum = rollingSum.add(event.amount);
     const rollingStart = getAutoCommissionWindow(event.at).windowStart;
@@ -312,6 +312,7 @@ function findTierOneQualification(
       left += 1;
     }
 
+    if (event.at < recomputeStart) continue;
     if (rollingSum.gte(AUTO_COMMISSION_THRESHOLD)) {
       return event.at;
     }
@@ -343,20 +344,23 @@ function rebuildAutoCommissionTimeline(
   now: Date,
   fallbackQualifiedAt?: Date | null,
 ) {
-  const tierExpiries = new Map<number, Date>();
-  const qualificationDates: Date[] = [];
-  const tierOneSeedStart = getTierOneSeedStart(previousTierExpiries, now, fallbackQualifiedAt);
-  const tierOneQualifiedAt = findTierOneQualification(events, tierOneSeedStart, now);
+  let tierExpiries = new Map<number, Date>();
+  let lastQualifiedAt: Date | null = null;
+  let activeUntil: Date | null = null;
+  let tierOneSearchStart = getTierOneSeedStart(previousTierExpiries, now, fallbackQualifiedAt);
 
-  if (tierOneQualifiedAt) {
-    qualificationDates.push(tierOneQualifiedAt);
-    tierExpiries.set(1, getQualifiedUntil(tierOneQualifiedAt));
+  while (tierOneSearchStart <= now) {
+    const nextTierExpiries = new Map<number, Date>();
+    const tierOneQualifiedAt = findTierOneQualification(events, tierOneSearchStart, now);
+    if (!tierOneQualifiedAt) break;
 
-    let previousQualifiedAt = tierOneQualifiedAt;
+    nextTierExpiries.set(1, getQualifiedUntil(tierOneQualifiedAt));
+
+    let cycleLastQualifiedAt = tierOneQualifiedAt;
     let nextTier = 2;
     while (true) {
-      const windowStart = getUtcStartOfNextDay(previousQualifiedAt);
-      const deadline = getQualifiedUntil(previousQualifiedAt);
+      const windowStart = getUtcStartOfNextDay(cycleLastQualifiedAt);
+      const deadline = getQualifiedUntil(cycleLastQualifiedAt);
       if (windowStart > now) break;
 
       const qualifiedAt = findTierQualificationFromFixedWindow(
@@ -366,16 +370,28 @@ function rebuildAutoCommissionTimeline(
       );
       if (!qualifiedAt) break;
 
-      qualificationDates.push(qualifiedAt);
-      tierExpiries.set(nextTier, getQualifiedUntil(qualifiedAt));
-      previousQualifiedAt = qualifiedAt;
+      nextTierExpiries.set(nextTier, getQualifiedUntil(qualifiedAt));
+      cycleLastQualifiedAt = qualifiedAt;
       nextTier += 1;
     }
-  }
 
-  const lastQualifiedAt = qualificationDates.length ? qualificationDates[qualificationDates.length - 1] : null;
-  const activeTiers = Array.from(tierExpiries.entries()).filter(([, expiry]) => expiry > now);
-  const activeUntil = activeTiers.length ? activeTiers[activeTiers.length - 1][1] : null;
+    tierExpiries = nextTierExpiries;
+    lastQualifiedAt = cycleLastQualifiedAt;
+    activeUntil = tierExpiries.get(tierExpiries.size) ?? null;
+
+    if (activeUntil && activeUntil > now) {
+      break;
+    }
+
+    if (!activeUntil) {
+      break;
+    }
+
+    // Once a cycle has expired, the next promotion should start from a fresh
+    // rolling 30-day search beginning at the expiry boundary.
+    tierOneSearchStart = activeUntil;
+    activeUntil = null;
+  }
 
   if (activeUntil && lastQualifiedAt) {
     const progressWindowStart = getUtcStartOfNextDay(lastQualifiedAt);
