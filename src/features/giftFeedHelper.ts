@@ -11,7 +11,7 @@ export type GiftPayload = {
 };
 
 const HIGH_VALUE_GIFT_FEED_CHANNEL_ID = '1475724021709668414';
-const HIGH_VALUE_GIFT_THRESHOLD = 800;
+const HIGH_VALUE_GIFT_THRESHOLD = 520;
 const HIGH_VALUE_NOTIFY_USER_ID = '1421651539247894549';
 
 async function sendGiftFeedMessage(
