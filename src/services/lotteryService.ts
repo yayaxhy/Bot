@@ -9,6 +9,7 @@ import {
   applyJinleeWalletDeltaTx,
   ensureJinleeIdentityForDiscordTx,
   getJinleeWalletSnapshotTx,
+  lockJinleeUserForUpdateTx,
 } from './jinleeAccountService.js';
 import { scheduleSpentRoleSync } from './spentRoleService.js';
 
@@ -470,6 +471,70 @@ async function allocateTenDrawRotationRecipe(
   return TEN_DRAW_ROTATION_RECIPES[recipeIdx];
 }
 
+async function consumeLotteryCouponVoucherTx(
+  tx: TxClient,
+  params: {
+    couponId: string;
+    jinleeId: string;
+    ownerDiscordUserId: string | null;
+    ownerJinleeId: string;
+    now: Date;
+  }
+) {
+  const { couponId, jinleeId, ownerDiscordUserId, ownerJinleeId, now } = params;
+  const result = await tx.coupon.updateMany({
+    where: {
+      id: couponId,
+      jinleeId,
+      type: CouponType.LOTTERY_VOUCHER,
+      status: CouponStatus.ACTIVE,
+      consumedAt: null,
+      expiresAt: { gt: now },
+    },
+    data: {
+      status: CouponStatus.USED,
+      consumedAt: now,
+      consumeAmount: DRAW_COST,
+      consumeTargetId: ownerDiscordUserId,
+      consumeTargetJinleeId: ownerJinleeId,
+    },
+  });
+  return result.count === 1;
+}
+
+async function consumeLotteryDrawVoucherTx(
+  tx: TxClient,
+  params: {
+    drawId: string;
+    jinleeId: string;
+    ownerDiscordUserId: string | null;
+    ownerJinleeId: string;
+    now: Date;
+    requestId?: string;
+  }
+) {
+  const { drawId, jinleeId, ownerDiscordUserId, ownerJinleeId, now, requestId } = params;
+  const result = await tx.lotteryDraw.updateMany({
+    where: {
+      id: drawId,
+      jinleeId,
+      status: LotteryStatus.UNUSED,
+      consumeAt: null,
+      expiresAt: { gt: now },
+      prize: { name: PRIZE_NAMES.LOTTERY_VOUCHER },
+    },
+    data: {
+      status: LotteryStatus.USED,
+      consumeAt: now,
+      requestId,
+      consumeAmount: DRAW_COST, // 抽奖代金券固定面额
+      consumeTargetId: ownerDiscordUserId,
+      consumeTargetJinleeId: ownerJinleeId,
+    },
+  });
+  return result.count === 1;
+}
+
 export async function performLotteryDraw(params: {
   userId: string;
   payerId?: string;
@@ -486,6 +551,8 @@ export async function performLotteryDraw(params: {
     const payerIdentity =
       payerId === userId ? ownerIdentity : await ensureJinleeIdentityForDiscordTx(tx, payerId);
     payerDiscordForRoleSync = payerIdentity.discordUserId ?? null;
+    await lockJinleeUserForUpdateTx(tx, payerIdentity.jinleeId);
+
     const existing = await tx.lotteryDraw.findUnique({
       where: { nonce },
       include: { prize: true },
@@ -517,52 +584,61 @@ export async function performLotteryDraw(params: {
       },
       data: { status: CouponStatus.EXPIRED },
     });
-    const couponVoucher = await tx.coupon.findFirst({
-      where: {
-        jinleeId: payerIdentity.jinleeId,
-        type: CouponType.LOTTERY_VOUCHER,
-        status: CouponStatus.ACTIVE,
-        expiresAt: { gt: now },
-      },
-      orderBy: { issuedAt: 'asc' },
-    });
-
-    // 抽奖代金券：按最早优先，如果存在则免扣款
-    const freeVoucher = await tx.lotteryDraw.findFirst({
-      where: {
-        jinleeId: payerIdentity.jinleeId,
-        status: LotteryStatus.UNUSED,
-        expiresAt: { gt: now },
-        prize: { name: PRIZE_NAMES.LOTTERY_VOUCHER },
-      },
-      orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-    });
-
-    const useFreeVoucher = !!couponVoucher || !!freeVoucher;
-
-    if (couponVoucher) {
-      await tx.coupon.update({
-        where: { id: couponVoucher.id },
-        data: {
-          status: CouponStatus.USED,
-          consumedAt: now,
-          consumeAmount: DRAW_COST,
-          consumeTargetId: ownerIdentity.discordUserId ?? null,
-          consumeTargetJinleeId: ownerIdentity.jinleeId,
+    let useFreeVoucher = false;
+    while (true) {
+      const couponVoucher = await tx.coupon.findFirst({
+        where: {
+          jinleeId: payerIdentity.jinleeId,
+          type: CouponType.LOTTERY_VOUCHER,
+          status: CouponStatus.ACTIVE,
+          expiresAt: { gt: now },
         },
+        orderBy: { issuedAt: 'asc' },
+        select: { id: true },
       });
-    } else if (useFreeVoucher) {
-      await tx.lotteryDraw.update({
-        where: { id: freeVoucher!.id },
-        data: {
-          status: LotteryStatus.USED,
-          consumeAt: now,
+      if (couponVoucher) {
+        if (
+          await consumeLotteryCouponVoucherTx(tx, {
+            couponId: couponVoucher.id,
+            jinleeId: payerIdentity.jinleeId,
+            ownerDiscordUserId: ownerIdentity.discordUserId ?? null,
+            ownerJinleeId: ownerIdentity.jinleeId,
+            now,
+          })
+        ) {
+          useFreeVoucher = true;
+          break;
+        }
+        continue;
+      }
+
+      // 抽奖代金券：按最早优先，如果存在则免扣款
+      const freeVoucher = await tx.lotteryDraw.findFirst({
+        where: {
+          jinleeId: payerIdentity.jinleeId,
+          status: LotteryStatus.UNUSED,
+          consumeAt: null,
+          expiresAt: { gt: now },
+          prize: { name: PRIZE_NAMES.LOTTERY_VOUCHER },
+        },
+        orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true },
+      });
+      if (!freeVoucher) break;
+
+      if (
+        await consumeLotteryDrawVoucherTx(tx, {
+          drawId: freeVoucher.id,
+          jinleeId: payerIdentity.jinleeId,
+          ownerDiscordUserId: ownerIdentity.discordUserId ?? null,
+          ownerJinleeId: ownerIdentity.jinleeId,
+          now,
           requestId,
-          consumeAmount: DRAW_COST, // 抽奖代金券固定面额
-          consumeTargetId: ownerIdentity.discordUserId ?? null,
-          consumeTargetJinleeId: ownerIdentity.jinleeId,
-        },
-      });
+        })
+      ) {
+        useFreeVoucher = true;
+        break;
+      }
     }
 
     if (ownerIdentity.discordUserId) {
@@ -634,6 +710,7 @@ export async function performLotteryTenDraw(params: {
     const payerIdentity =
       payerId === userId ? ownerIdentity : await ensureJinleeIdentityForDiscordTx(tx, payerId);
     payerDiscordForRoleSync = payerIdentity.discordUserId ?? null;
+    await lockJinleeUserForUpdateTx(tx, payerIdentity.jinleeId);
 
     const existing = await tx.lotteryDraw.findMany({
       where: { nonce: { startsWith: `${nonce}:` } },

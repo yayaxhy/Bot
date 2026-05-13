@@ -198,10 +198,11 @@ async function consumeCouponRecordTx(
     couponType: CouponType;
     now: Date;
     requestId?: string;
-    discordUserId: string | null;
+    consumeTargetDiscordUserId: string | null;
+    consumeTargetJinleeId: string;
   },
 ): Promise<boolean> {
-  const { couponId, jinleeId, couponType, now, requestId, discordUserId } = params;
+  const { couponId, jinleeId, couponType, now, requestId, consumeTargetDiscordUserId, consumeTargetJinleeId } = params;
   const result = await tx.coupon.updateMany({
     where: {
       id: couponId,
@@ -216,8 +217,8 @@ async function consumeCouponRecordTx(
       status: CouponStatus.USED,
       consumedAt: now,
       consumeAmount: 0,
-      consumeTargetId: discordUserId,
-      consumeTargetJinleeId: jinleeId,
+      consumeTargetId: consumeTargetDiscordUserId,
+      consumeTargetJinleeId: consumeTargetJinleeId,
       orderId: requestId ?? null,
     },
   });
@@ -232,10 +233,11 @@ async function consumePointShopVoucherRecordTx(
     couponType: CouponType;
     now: Date;
     requestId?: string;
-    discordUserId: string | null;
+    consumeTargetDiscordUserId: string | null;
+    consumeTargetJinleeId: string;
   },
 ): Promise<boolean> {
-  const { grantId, jinleeId, couponType, now, requestId, discordUserId } = params;
+  const { grantId, jinleeId, couponType, now, requestId, consumeTargetDiscordUserId, consumeTargetJinleeId } = params;
   const result = await tx.pointShopGrant.updateMany({
     where: {
       id: grantId,
@@ -252,8 +254,8 @@ async function consumePointShopVoucherRecordTx(
       couponStatus: CouponStatus.USED,
       consumedAt: now,
       consumeAmount: 0,
-      consumeTargetId: discordUserId,
-      consumeTargetJinleeId: jinleeId,
+      consumeTargetId: consumeTargetDiscordUserId,
+      consumeTargetJinleeId: consumeTargetJinleeId,
       consumeOrderId: requestId ?? null,
     },
   });
@@ -268,10 +270,11 @@ async function consumeLotteryVoucherRecordTx(
     prizeName: string;
     now: Date;
     requestId?: string;
-    discordUserId: string | null;
+    consumeTargetDiscordUserId: string | null;
+    consumeTargetJinleeId: string;
   },
 ): Promise<boolean> {
-  const { voucherId, jinleeId, prizeName, now, requestId, discordUserId } = params;
+  const { voucherId, jinleeId, prizeName, now, requestId, consumeTargetDiscordUserId, consumeTargetJinleeId } = params;
   const result = await tx.lotteryDraw.updateMany({
     where: {
       id: voucherId,
@@ -284,8 +287,8 @@ async function consumeLotteryVoucherRecordTx(
     data: {
       status: LotteryStatus.USED,
       consumeAt: now,
-      consumeTargetId: discordUserId,
-      consumeTargetJinleeId: jinleeId,
+      consumeTargetId: consumeTargetDiscordUserId,
+      consumeTargetJinleeId: consumeTargetJinleeId,
       ...(requestId ? { requestId } : {}),
     },
   });
@@ -298,13 +301,19 @@ async function consumeVoucher(
     prizeName: string;
     requestId?: string;
     voucherId?: string;
+    consumeTarget?: {
+      discordUserId: string | null;
+      jinleeId: string;
+    };
   },
   tx: import('@prisma/client').Prisma.TransactionClient
   ): Promise<{ voucherId: string } | null> {
-  const { userId, prizeName, requestId, voucherId } = params;
+  const { userId, prizeName, requestId, voucherId, consumeTarget } = params;
   const now = new Date();
   const couponType = VOUCHER_COUPON_TYPE_BY_PRIZE[prizeName];
   const userIdentity = await requireJinleeIdentityTx(tx, userId);
+  const consumeTargetDiscordUserId = consumeTarget?.discordUserId ?? userIdentity.discordUserId ?? null;
+  const consumeTargetJinleeId = consumeTarget?.jinleeId ?? userIdentity.jinleeId;
 
   if (couponType) {
     await tx.coupon.updateMany({
@@ -325,7 +334,8 @@ async function consumeVoucher(
             couponType,
             now,
             requestId,
-            discordUserId: userIdentity.discordUserId ?? null,
+            consumeTargetDiscordUserId,
+            consumeTargetJinleeId,
           })
         ) {
           return { voucherId };
@@ -350,7 +360,8 @@ async function consumeVoucher(
               couponType,
               now,
               requestId,
-              discordUserId: userIdentity.discordUserId ?? null,
+              consumeTargetDiscordUserId,
+              consumeTargetJinleeId,
             })
           ) {
             return { voucherId: coupon.id };
@@ -379,7 +390,8 @@ async function consumeVoucher(
               couponType,
               now,
               requestId,
-              discordUserId: userIdentity.discordUserId ?? null,
+              consumeTargetDiscordUserId,
+              consumeTargetJinleeId,
             })
           ) {
             return { voucherId };
@@ -406,7 +418,8 @@ async function consumeVoucher(
                 couponType,
                 now,
                 requestId,
-                discordUserId: userIdentity.discordUserId ?? null,
+                consumeTargetDiscordUserId,
+                consumeTargetJinleeId,
               })
             ) {
               return { voucherId: pointShopGrant.id };
@@ -436,7 +449,8 @@ async function consumeVoucher(
           prizeName,
           now,
           requestId,
-          discordUserId: userIdentity.discordUserId ?? null,
+          consumeTargetDiscordUserId,
+          consumeTargetJinleeId,
         })
       ) {
         return { voucherId };
@@ -463,7 +477,8 @@ async function consumeVoucher(
           prizeName,
           now,
           requestId,
-          discordUserId: userIdentity.discordUserId ?? null,
+          consumeTargetDiscordUserId,
+          consumeTargetJinleeId,
         })
       ) {
         return { voucherId: voucher.id };
@@ -949,50 +964,10 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
 
   try {
     const result = await prisma.$transaction(async (tx) => {
-      const now = new Date();
       const reviewerIdentity = await requireJinleeIdentityTx(tx, reviewerId);
       if (!reviewerIdentity.discordUserId) {
         return { code: 'discord_required' as const };
       }
-
-      await tx.pointShopGrant.updateMany({
-        where: {
-          jinleeId: reviewerIdentity.jinleeId,
-          deliveryType: PointShopDeliveryType.COUPON,
-          deliveryStatus: PointShopDeliveryStatus.DELIVERED,
-          couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
-          couponStatus: CouponStatus.ACTIVE,
-          expiresAt: { lte: now },
-        },
-        data: { couponStatus: CouponStatus.EXPIRED },
-      });
-
-      const grant = voucherId
-        ? await tx.pointShopGrant.findFirst({
-            where: {
-              id: voucherId,
-              jinleeId: reviewerIdentity.jinleeId,
-              deliveryType: PointShopDeliveryType.COUPON,
-              deliveryStatus: PointShopDeliveryStatus.DELIVERED,
-              couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
-              couponStatus: CouponStatus.ACTIVE,
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            },
-            select: { id: true },
-          })
-        : await tx.pointShopGrant.findFirst({
-            where: {
-              jinleeId: reviewerIdentity.jinleeId,
-              deliveryType: PointShopDeliveryType.COUPON,
-              deliveryStatus: PointShopDeliveryStatus.DELIVERED,
-              couponType: CouponType.PEIWAN_REVIEW_VOUCHER,
-              couponStatus: CouponStatus.ACTIVE,
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-            },
-            orderBy: { issuedAt: 'asc' },
-            select: { id: true },
-          });
-      if (!grant) return { code: 'no_voucher' as const };
 
       const targetPeiwan = await tx.pEIWAN.findUnique({
         where: { discordUserId: targetDiscordId },
@@ -1014,21 +989,24 @@ async function handlePeiwanReviewVoucher(req: IncomingMessage, res: ServerRespon
         }),
       ]);
 
-      await tx.pointShopGrant.update({
-        where: { id: grant.id },
-        data: {
-          couponStatus: CouponStatus.USED,
-          consumedAt: now,
-          consumeAmount: 0,
-          consumeTargetId: targetDiscordId,
-          consumeTargetJinleeId: targetIdentity.jinleeId,
-          consumeOrderId: requestId ?? null,
+      const voucher = await consumeVoucher(
+        {
+          userId: reviewerId,
+          prizeName: PRIZE_NAMES.PEIWAN_REVIEW_VOUCHER,
+          requestId,
+          voucherId,
+          consumeTarget: {
+            discordUserId: targetDiscordId,
+            jinleeId: targetIdentity.jinleeId,
+          },
         },
-      });
+        tx
+      );
+      if (!voucher) return { code: 'no_voucher' as const };
 
       const review = await tx.peiwanReview.create({
         data: {
-          sourceGrantId: grant.id,
+          sourceGrantId: voucher.voucherId,
           reviewerDiscordId: reviewerIdentity.discordUserId,
           reviewerName: reviewerMember?.serverDisplayName ?? null,
           peiwanDiscordId: targetDiscordId,
@@ -1306,41 +1284,62 @@ async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
         }
       }
 
-      const card = voucherId
-        ? await tx.lotteryDraw.findFirst({
-            where: {
-              id: voucherId,
-              jinleeId: userIdentity.jinleeId,
-              status: LotteryStatus.UNUSED,
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-              prize: { name: { in: RENAME_CARD_NAMES } },
-            },
-            select: { id: true, prize: { select: { name: true } } },
-          })
-        : await tx.lotteryDraw.findFirst({
-            where: {
-              jinleeId: userIdentity.jinleeId,
-              status: LotteryStatus.UNUSED,
-              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-              prize: { name: { in: RENAME_CARD_NAMES } },
-            },
-            select: { id: true, prize: { select: { name: true } } },
-            orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
-          });
-      if (!card) return { used: false as const };
+      const consumeLotteryCard = async (targetVoucherId?: string) => {
+        while (true) {
+          const card = targetVoucherId
+            ? await tx.lotteryDraw.findFirst({
+                where: {
+                  id: targetVoucherId,
+                  jinleeId: userIdentity.jinleeId,
+                  status: LotteryStatus.UNUSED,
+                  consumeAt: null,
+                  OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+                  prize: { name: { in: RENAME_CARD_NAMES } },
+                },
+                select: { id: true, prize: { select: { name: true } } },
+              })
+            : await tx.lotteryDraw.findFirst({
+                where: {
+                  jinleeId: userIdentity.jinleeId,
+                  status: LotteryStatus.UNUSED,
+                  consumeAt: null,
+                  OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+                  prize: { name: { in: RENAME_CARD_NAMES } },
+                },
+                select: { id: true, prize: { select: { name: true } } },
+                orderBy: [{ expiresAt: 'asc' }, { createdAt: 'asc' }],
+              });
+          if (!card) return null;
 
-      await tx.lotteryDraw.update({
-        where: { id: card.id },
-        data: {
-          status: LotteryStatus.USED,
-          consumeAt: now,
-          consumeTargetId: userIdentity.discordUserId,
-          consumeTargetJinleeId: userIdentity.jinleeId,
-        },
-      });
+          const updateResult = await tx.lotteryDraw.updateMany({
+            where: {
+              id: card.id,
+              jinleeId: userIdentity.jinleeId,
+              status: LotteryStatus.UNUSED,
+              consumeAt: null,
+              OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+              prize: { name: { in: RENAME_CARD_NAMES } },
+            },
+            data: {
+              status: LotteryStatus.USED,
+              consumeAt: now,
+              consumeTargetId: userIdentity.discordUserId,
+              consumeTargetJinleeId: userIdentity.jinleeId,
+            },
+          });
+          if (updateResult.count === 1) {
+            return card.prize?.name ?? '改名卡';
+          }
+          if (targetVoucherId) return null;
+        }
+      };
+
+      const prizeName = await consumeLotteryCard(voucherId);
+      if (!prizeName) return { used: false as const };
+
       return {
         used: true as const,
-        prizeName: card.prize?.name ?? '改名卡',
+        prizeName,
         discordUserId: userIdentity.discordUserId,
       };
     });
