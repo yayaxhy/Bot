@@ -1,5 +1,5 @@
+import { randomUUID } from 'node:crypto';
 import { Prisma, PrismaClient } from '@prisma/client';
-import { isUniqueConstraintError, realignIndividualTransactionSequence } from './sequenceService.js';
 import { ensureJinleeIdentityForDiscordTx, syncJinleeWalletFromMemberTx } from './jinleeAccountService.js';
 
 export const CUSTOMER_SERVICE_DISCORD_ID = '1421651539247894549';
@@ -8,6 +8,10 @@ type PrismaClientOrTransaction = Prisma.TransactionClient | PrismaClient;
 
 const asDecimal = (value: Prisma.Decimal | number | string) =>
   value instanceof Prisma.Decimal ? value : new Prisma.Decimal(value);
+
+// Avoid per-insert setval() repairs here: they can regress a shared PG sequence under concurrency.
+const generateIndividualTransactionId = (at: Date) =>
+  `IT${at.getTime()}${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
 
 type RecordTransactionParams = {
   discordId?: string | null;
@@ -37,6 +41,7 @@ export async function recordIndividualTransaction(
   const balanceBefore = asDecimal(params.balanceBefore);
   const balanceAfter = asDecimal(params.balanceAfter);
   const amountChange = asDecimal(params.amountChange).abs();
+  const timeCreatedAt = params.timeCreatedAt ?? new Date();
 
   let thirdParty = params.thirdPartydiscordId;
   if (!thirdParty) {
@@ -51,35 +56,20 @@ export async function recordIndividualTransaction(
     client.individualTransaction.create({
       data: {
         discordId: params.discordId ?? null,
+        transactionId: generateIndividualTransactionId(timeCreatedAt),
         jinleeId,
         thirdPartydiscordId: thirdParty,
         balanceBefore,
         amountChange,
         balanceAfter,
         typeOfTransaction: params.typeOfTransaction,
-        timeCreatedAt: params.timeCreatedAt ?? new Date(),
+        timeCreatedAt,
       },
     });
 
-  await realignIndividualTransactionSequence(client);
-
-  try {
-    const created = await createPayload();
-    if (params.discordId && params.discordId !== 'SYSTEM') {
-      await syncJinleeWalletFromMemberTx(client, params.discordId);
-    }
-    return created;
-  } catch (err) {
-    if (!isUniqueConstraintError(err, 'transactionId')) {
-      throw err;
-    }
-
-    await realignIndividualTransactionSequence(client);
-
-    const created = await createPayload();
-    if (params.discordId && params.discordId !== 'SYSTEM') {
-      await syncJinleeWalletFromMemberTx(client, params.discordId);
-    }
-    return created;
+  const created = await createPayload();
+  if (params.discordId && params.discordId !== 'SYSTEM') {
+    await syncJinleeWalletFromMemberTx(client, params.discordId);
   }
+  return created;
 }
