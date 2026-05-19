@@ -10,28 +10,25 @@ type GrantItem = {
   couponType?: CouponType;
 };
 
+const MAX_GRANT_QUANTITY = 10;
+
 const GRANT_ITEMS: Record<string, GrantItem> = {
   DISCOUNT_90: { label: '9折券', couponType: CouponType.DISCOUNT_90 },
   LOTTERY_DISCOUNT_80: { label: '8折券', couponType: CouponType.DISCOUNT_80 },
   LOTTERY_DISCOUNT_70: { label: '7折券', couponType: CouponType.DISCOUNT_70 },
   LOTTERY_DISCOUNT_90: { label: '特殊9折券', couponType: CouponType.DISCOUNT_90_LOTTERY },
-  CAKE: { label: '小蛋糕代金券', couponType: CouponType.CAKE_VOUCHER },
-  LOLLIPOP: { label: '棒棒糖代金券', couponType: CouponType.LOLLIPOP_VOUCHER },
-  PERFUME: { label: '香水代金券', couponType: CouponType.PERFUME_VOUCHER },
-  CAROUSEL: { label: '旋转木马代金券', couponType: CouponType.CAROUSEL_VOUCHER },
+  CROWN_DAY_95: { label: '一日冠95折券', couponType: CouponType.CROWN_DAY_95_VOUCHER },
+  CROWN_DAY_92: { label: '一日冠92折券', couponType: CouponType.CROWN_DAY_92_VOUCHER },
   CROWN_75: { label: '一日冠75折券', couponType: CouponType.CROWN_75_VOUCHER },
   CROWN_DAY_90: { label: '一日冠9折券', couponType: CouponType.CROWN_DAY_90_VOUCHER },
+  CROWN_3DAY_92: { label: '三日冠92折券', couponType: CouponType.CROWN_3DAY_92_VOUCHER },
   CROWN_3DAY_90: { label: '三日冠9折券', couponType: CouponType.CROWN_3DAY_90_VOUCHER },
+  CROWN_WEEK_92: { label: '一周冠92折券', couponType: CouponType.CROWN_WEEK_92_VOUCHER },
   CROWN_WEEK_90: { label: '一周冠9折券', couponType: CouponType.CROWN_WEEK_90_VOUCHER },
+  CROWN_MONTH_92: { label: '月冠名92折券', couponType: CouponType.CROWN_MONTH_92_VOUCHER },
   CROWN_MONTH_90: { label: '月冠名9折券', couponType: CouponType.CROWN_MONTH_90_VOUCHER },
-  RENAME_CARD_3: { label: '3位数靓号卡', couponType: CouponType.RENAME_CARD_3 },
-  RENAME_CARD_4: { label: '4位数靓号卡', couponType: CouponType.RENAME_CARD },
-  RENAME_CARD_5: { label: '5位数靓号卡', couponType: CouponType.RENAME_CARD_5 },
   LOTTERY_VOUCHER: { label: '抽奖代金券', couponType: CouponType.LOTTERY_VOUCHER },
-  CUSTOM_GIFT: { label: '自定义礼物券', couponType: CouponType.CUSTOM_GIFT_VOUCHER },
-  CUSTOM_TAG: { label: '自定义tag券', couponType: CouponType.CUSTOM_TAG_VOUCHER },
   PEIWAN_REVIEW: { label: '陪玩评语券', couponType: CouponType.PEIWAN_REVIEW_VOUCHER },
-  COMMISSION_MINUS1: { label: '抽成降1%券', couponType: CouponType.COMMISSION_MINUS1_VOUCHER },
   DOUBLE_FLOW_5000: { label: '双倍流水5000券', couponType: CouponType.DOUBLE_FLOW_5000_VOUCHER },
   DOUBLE_SPEND_5000: { label: '双倍消费5000券', couponType: CouponType.DOUBLE_SPEND_5000_VOUCHER },
   SCRATCH_TICKET: { label: '刮刮乐代金券', couponType: CouponType.SCRATCH_TICKET_VOUCHER },
@@ -59,6 +56,7 @@ export const grantCouponCommand = new SlashCommandBuilder()
       .setDescription('要发放的张数')
       .setRequired(true)
       .setMinValue(1)
+      .setMaxValue(MAX_GRANT_QUANTITY)
   )
   .addUserOption((option) =>
     option
@@ -105,6 +103,10 @@ export async function handleGrantCouponSlash(i: ChatInputCommandInteraction) {
 
     if (!quantity || quantity <= 0) {
       await respond('数量必须为正整数。', true);
+      return;
+    }
+    if (quantity > MAX_GRANT_QUANTITY) {
+      await respond(`数量不能超过 ${MAX_GRANT_QUANTITY} 张。`, true);
       return;
     }
 
