@@ -472,7 +472,9 @@ export async function handlePlayButton(i: ButtonInteraction) {
       anonymousGiftBox
     );
     const mpComponents = [
-      ...(peiwan.auditionInviteEnabled ? [buildAuditionRequestButtonRow(orderId, workerId, peiwan.PEIWANID)] : []),
+      ...(peiwan.auditionInviteEnabled && Boolean(voicePreviewUrl)
+        ? [buildAuditionRequestButtonRow(orderId, workerId, peiwan.PEIWANID)]
+        : []),
       ...components,
     ];
 

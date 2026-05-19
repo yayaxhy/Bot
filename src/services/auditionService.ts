@@ -1043,6 +1043,7 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
         PEIWANID: true,
         auditionInviteEnabled: true,
         serverDisplayName: true,
+        voicePreviewUrl: true,
         member: { select: { status: true } },
       },
     });
@@ -1061,6 +1062,9 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
     }
     if (!workerPeiwan.auditionInviteEnabled) {
       return { outcome: 'disabled' as const };
+    }
+    if (!workerPeiwan.voicePreviewUrl) {
+      return { outcome: 'missing_voice_preview' as const };
     }
 
     await tx.auditionInvite.updateMany({
@@ -1125,6 +1129,10 @@ export async function handleAuditionRequestButton(i: ButtonInteraction) {
   }
   if (invitation.outcome === 'disabled') {
     await replyToButton(i, '该陪玩当前未开启真人试音邀请。');
+    return;
+  }
+  if (invitation.outcome === 'missing_voice_preview') {
+    await replyToButton(i, '该陪玩当前未上传试音音频，暂时无法发起真人试音。');
     return;
   }
   if (invitation.outcome === 'duplicate') {
