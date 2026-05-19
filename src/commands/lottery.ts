@@ -1,4 +1,4 @@
-import { EmbedBuilder, Message } from 'discord.js';
+import { EmbedBuilder, Message, User } from 'discord.js';
 import { LotteryPool } from '@prisma/client';
 import {
   DRAW_COST,
@@ -17,6 +17,7 @@ const TEN_LOTTERY_CMD_PATTERN = /^!十连抽(?:\s+<@!?(\d+)>)?$/;
 const LOTTERY_REVEAL_DELAY_MS = 3000; // 动画结束后再揭晓，毫秒
 const TEN_DRAW_ANIMATION_DELAY_MS = 1500; // 十连每抽动画时长
 const TEN_DRAW_REVEAL_HOLD_MS = 500; // 十连每抽揭晓后额外停留
+const LOTTERY_BAG_URL = 'https://jinleeclub.vip/profile/bag';
 const LOTTERY_ANIMATIONS: Record<LotteryPool, string | undefined> = {
   NORMAL:
     process.env.LOTTERY_ANIM_NORMAL
@@ -41,6 +42,17 @@ const MYSTERY_CODE_PRIZE_NAME = '神秘代码';
 const buildMysteryCodeDmMessage = () => {
   const prefix = getScratchCodePrefix();
   return `刮刮乐150金额的号码在${prefix}600到${prefix}700之间有一张`;
+};
+const buildPrizeWonDmMessage = (prizeNames: string | string[]) => {
+  const prizeLabel = Array.isArray(prizeNames) ? prizeNames.join('、') : prizeNames;
+  return `恭喜你抽奖获得了奖品：${prizeLabel}，可以前往官网背包使用${LOTTERY_BAG_URL}`;
+};
+const resolveLotteryTargetUser = async (
+  message: Message,
+  params: { isGiftDraw: boolean; userId: string }
+): Promise<User | null> => {
+  const { isGiftDraw, userId } = params;
+  return isGiftDraw ? await message.client.users.fetch(userId).catch(() => null) : message.author;
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -216,15 +228,22 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
       console.error('[lottery] ten-draw summary edit failed:', err);
     }
 
-    if (result.draws.some((draw) => draw.prize.name === MYSTERY_CODE_PRIZE_NAME)) {
+    const targetUser = await resolveLotteryTargetUser(message, { isGiftDraw, userId });
+    if (targetUser) {
       try {
-        const targetUser =
-          isGiftDraw
-            ? await message.client.users.fetch(userId).catch(() => null)
-            : message.author;
-        if (targetUser) {
-          await targetUser.send({ content: buildMysteryCodeDmMessage() });
-        }
+        await targetUser.send({
+          content: buildPrizeWonDmMessage(result.draws.map((draw) => draw.prize.name)),
+        });
+      } catch (err) {
+        console.error('[lottery] ten-draw prize DM failed:', {
+          userId,
+          err,
+        });
+      }
+    }
+    if (targetUser && result.draws.some((draw) => draw.prize.name === MYSTERY_CODE_PRIZE_NAME)) {
+      try {
+        await targetUser.send({ content: buildMysteryCodeDmMessage() });
       } catch (err) {
         console.error('[lottery] ten-draw mystery-code DM failed:', {
           userId,
@@ -316,15 +335,20 @@ export async function handleLotteryMessage(message: Message): Promise<boolean> {
     console.error('[lottery] reveal edit failed:', err);
   }
 
-  if (prize.name === MYSTERY_CODE_PRIZE_NAME) {
+  const targetUser = await resolveLotteryTargetUser(message, { isGiftDraw, userId });
+  if (targetUser) {
     try {
-      const targetUser =
-        isGiftDraw
-          ? await message.client.users.fetch(userId).catch(() => null)
-          : message.author;
-      if (targetUser) {
-        await targetUser.send({ content: buildMysteryCodeDmMessage() });
-      }
+      await targetUser.send({ content: buildPrizeWonDmMessage(prize.name) });
+    } catch (err) {
+      console.error('[lottery] prize DM failed:', {
+        userId,
+        err,
+      });
+    }
+  }
+  if (targetUser && prize.name === MYSTERY_CODE_PRIZE_NAME) {
+    try {
+      await targetUser.send({ content: buildMysteryCodeDmMessage() });
     } catch (err) {
       console.error('[lottery] mystery-code DM failed:', {
         userId,
