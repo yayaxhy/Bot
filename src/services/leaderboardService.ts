@@ -2,7 +2,7 @@ import { Client, EmbedBuilder, TextChannel, userMention } from 'discord.js';
 import { Prisma } from '@prisma/client';
 import prisma from '../db/prisma.js';
 
-const ROME_TZ = 'Europe/Rome';
+const DEFAULT_LEADERBOARD_TZ = 'Europe/Rome';
 const DAILY_CONSUME_CHANNEL_ID = '1459927296025690242';
 const DAILY_INCOME_CHANNEL_ID = '1459927770477101168';
 const WEEKLY_CONSUME_CHANNEL_ID = '1451405411424141372';
@@ -34,10 +34,43 @@ type LeaderboardEntry = {
 };
 
 type LeaderboardKind = 'daily' | 'weekly' | 'monthly';
+type DailyLeaderboardData = {
+  targetDayStart: Date;
+  dateLabel: string;
+  spendTop: LeaderboardEntry[];
+  incomeTop: LeaderboardEntry[];
+};
 
-const formatRomeParts = (date: Date) => {
+let cachedLeaderboardTimeZone: string | null = null;
+
+function resolveLeaderboardTimeZone() {
+  const candidates = [
+    process.env.LEADERBOARD_TIMEZONE?.trim(),
+    DEFAULT_LEADERBOARD_TZ,
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: candidate }).format(new Date());
+      return candidate;
+    } catch {
+      continue;
+    }
+  }
+
+  return DEFAULT_LEADERBOARD_TZ;
+}
+
+function getLeaderboardTimeZone() {
+  cachedLeaderboardTimeZone ??= resolveLeaderboardTimeZone();
+  return cachedLeaderboardTimeZone;
+}
+
+const formatZonedDateParts = (date: Date) => {
+  const timeZone = getLeaderboardTimeZone();
   const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: ROME_TZ,
+    timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -53,21 +86,30 @@ const formatRomeParts = (date: Date) => {
   return { year, month, day };
 };
 
-const romeDateStart = (date: Date) => {
-  const { year, month, day } = formatRomeParts(date);
-  // Start with midnight UTC for that Rome calendar day…
-  const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
-  // …then adjust by the Rome offset for that date (handles DST).
-  const romeGuess = new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: ROME_TZ }));
-  const offsetMs = utcGuess - romeGuess.getTime();
-  return new Date(utcGuess + offsetMs);
+const parseTimeZoneOffsetMs = (raw: string) => {
+  if (raw === 'GMT' || raw === 'UTC') return 0;
+
+  const match = raw.match(/^GMT([+-])(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) throw new Error(`Unsupported timezone offset: ${raw}`);
+
+  const sign = match[1] === '-' ? -1 : 1;
+  const hours = Number(match[2]);
+  const minutes = Number(match[3] ?? 0);
+  return sign * ((hours * 60 + minutes) * 60 * 1000);
 };
 
-const romeDateLabel = (date: Date) => {
-  const { year, month, day } = formatRomeParts(date);
-  const mm = String(month).padStart(2, '0');
-  const dd = String(day).padStart(2, '0');
-  return `${year}-${mm}-${dd}`;
+const getTimeZoneOffsetMs = (date: Date) => {
+  const timeZone = getLeaderboardTimeZone();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'shortOffset',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(date);
+  const raw = parts.find((part) => part.type === 'timeZoneName')?.value ?? 'GMT';
+  return parseTimeZoneOffsetMs(raw);
 };
 
 const addDaysUtc = (date: Date, days: number) => {
@@ -76,34 +118,79 @@ const addDaysUtc = (date: Date, days: number) => {
   return next;
 };
 
-const romeDateFromParts = (year: number, month: number, day: number) => {
-  const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
-  const romeGuess = new Date(new Date(utcGuess).toLocaleString('en-US', { timeZone: ROME_TZ }));
-  const offsetMs = utcGuess - romeGuess.getTime();
-  return new Date(utcGuess + offsetMs);
+const zonedDateFromParts = (
+  year: number,
+  month: number,
+  day: number,
+  hour = 0,
+  minute = 0,
+  second = 0,
+  millisecond = 0
+) => {
+  let instant = new Date(Date.UTC(year, month - 1, day, hour, minute, second, millisecond));
+  for (let i = 0; i < 3; i += 1) {
+    const offsetMs = getTimeZoneOffsetMs(instant);
+    const next = new Date(
+      Date.UTC(year, month - 1, day, hour, minute, second, millisecond) - offsetMs
+    );
+    if (next.getTime() === instant.getTime()) return next;
+    instant = next;
+  }
+  return instant;
 };
 
-const romeWeekStart = (date: Date) => {
-  const romeNow = new Date(date.toLocaleString('en-US', { timeZone: ROME_TZ }));
-  const day = romeNow.getDay(); // 0 Sun ... 6 Sat
-  const daysSinceMonday = (day + 6) % 7;
-  return addDaysUtc(romeDateStart(date), -daysSinceMonday);
+const zonedDateStart = (date: Date) => {
+  const { year, month, day } = formatZonedDateParts(date);
+  return zonedDateFromParts(year, month, day);
 };
 
-const romeMonthStart = (date: Date) => {
-  const { year, month } = formatRomeParts(date);
-  return romeDateFromParts(year, month, 1);
+const zonedDateKey = (date: Date) => {
+  const { year, month, day } = formatZonedDateParts(date);
+  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
 };
 
-const romeNextMonthStart = (date: Date) => {
-  const { year, month } = formatRomeParts(date);
+const formatZonedDateLabel = (date: Date) => {
+  const { year, month, day } = formatZonedDateParts(date);
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
+
+export function parseLeaderboardDateLabel(input: string) {
+  const match = input.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return null;
+  }
+
+  const parsed = zonedDateFromParts(year, month, day);
+  return formatZonedDateLabel(parsed) === input.trim() ? parsed : null;
+}
+
+const zonedWeekStart = (date: Date) => {
+  const { year, month, day } = formatZonedDateParts(date);
+  const dayOfWeek = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).getUTCDay(); // 0 Sun ... 6 Sat
+  const daysSinceMonday = (dayOfWeek + 6) % 7;
+  return addDaysUtc(zonedDateFromParts(year, month, day), -daysSinceMonday);
+};
+
+const zonedMonthStart = (date: Date) => {
+  const { year, month } = formatZonedDateParts(date);
+  return zonedDateFromParts(year, month, 1);
+};
+
+const zonedNextMonthStart = (date: Date) => {
+  const { year, month } = formatZonedDateParts(date);
   const nextYear = month === 12 ? year + 1 : year;
   const nextMonth = month === 12 ? 1 : month + 1;
-  return romeDateFromParts(nextYear, nextMonth, 1);
+  return zonedDateFromParts(nextYear, nextMonth, 1);
 };
 
 async function ensureSnapshot(date: Date) {
-  const existing = await prisma.dailySnapshot.findFirst({ where: { date } });
+  const snapshotDate = zonedDateKey(date);
+  const existing = await prisma.dailySnapshot.findFirst({ where: { date: snapshotDate } });
   if (existing) return;
 
   const members = await prisma.member.findMany({
@@ -116,7 +203,7 @@ async function ensureSnapshot(date: Date) {
   if (members.length === 0) return;
 
   const data = members.map((m) => ({
-    date,
+    date: snapshotDate,
     discordUserId: m.discordUserId,
     totalEarn: m.peiwan?.totalEarn ?? new Prisma.Decimal(0),
     totalSpent: m.totalSpent,
@@ -191,9 +278,10 @@ const formatSpendRankingText = (entries: LeaderboardEntry[], includeAmount = fal
 
 async function loadSnapshotForDay(targetDayStart: Date) {
   await ensureSnapshot(targetDayStart);
+  const snapshotDate = zonedDateKey(targetDayStart);
 
   const startRows = await prisma.dailySnapshot.findMany({
-    where: { date: targetDayStart },
+    where: { date: snapshotDate },
     select: { discordUserId: true, totalEarn: true, totalSpent: true },
   });
 
@@ -202,14 +290,16 @@ async function loadSnapshotForDay(targetDayStart: Date) {
 
 async function loadSnapshotsForRange(start: Date, end: Date) {
   await Promise.all([ensureSnapshot(start), ensureSnapshot(end)]);
+  const startDate = zonedDateKey(start);
+  const endDate = zonedDateKey(end);
 
   const [startRows, endRows] = await Promise.all([
     prisma.dailySnapshot.findMany({
-      where: { date: start },
+      where: { date: startDate },
       select: { discordUserId: true, totalEarn: true, totalSpent: true },
     }),
     prisma.dailySnapshot.findMany({
-      where: { date: end },
+      where: { date: endDate },
       select: { discordUserId: true, totalEarn: true, totalSpent: true },
     }),
   ]);
@@ -328,6 +418,51 @@ const formatIncomeEmbed = (title: string, entries: LeaderboardEntry[], includeAm
   return new EmbedBuilder().setTitle(title).setDescription(lines).setImage(bannerUrl);
 };
 
+async function buildDailyLeaderboard(targetDayStart: Date): Promise<DailyLeaderboardData> {
+  const endDayStart = addDaysUtc(targetDayStart, 1);
+  const { startRows, endRows } = await loadSnapshotsForRange(targetDayStart, endDayStart);
+  const [actualSpend, actualIncome] = await Promise.all([
+    loadActualSpend(targetDayStart, endDayStart),
+    loadActualIncome(targetDayStart, endDayStart),
+  ]);
+  const displayMap = await loadDisplayMap(startRows, endRows);
+
+  const entries = buildEntries(startRows, endRows, displayMap, actualSpend, actualIncome);
+  const spendTop = entries
+    .filter((e) => e.deltaSpent.gt(0))
+    .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
+    .slice(0, RANK_LIMIT);
+  const incomeTop = entries
+    .filter((e) => e.deltaEarn.gt(0))
+    .sort((a, b) => b.deltaEarn.cmp(a.deltaEarn))
+    .slice(0, RANK_LIMIT);
+
+  return {
+    targetDayStart,
+    dateLabel: formatZonedDateLabel(targetDayStart),
+    spendTop,
+    incomeTop,
+  };
+}
+
+function buildDailyTargets(data: DailyLeaderboardData) {
+  const spendTitle = `${redCrown} 老板尊享日榜 ${data.dateLabel} ${redCrown}`;
+  const incomeTitle = `${crown} 陪玩人气日榜 ${data.dateLabel} ${crown}`;
+
+  return [
+    { channelId: DAILY_CONSUME_CHANNEL_ID, embed: formatSpendEmbed(spendTitle, data.spendTop) },
+    { channelId: DAILY_INCOME_CHANNEL_ID, embed: formatIncomeEmbed(incomeTitle, data.incomeTop) },
+    {
+      channelId: WEEKLY_CONSUME_CHANNEL_ID,
+      embed: formatSpendEmbed(spendTitle, data.spendTop, true),
+    },
+    {
+      channelId: WEEKLY_INCOME_CHANNEL_ID,
+      embed: formatIncomeEmbed(incomeTitle, data.incomeTop, true),
+    },
+  ];
+}
+
 async function hasLeaderboardPost(kind: LeaderboardKind, periodStart: Date) {
   const existing = await prisma.leaderboardPost.findUnique({
     where: { kind_periodStart: { kind, periodStart } },
@@ -399,6 +534,18 @@ async function sendTargets(
   return allOk;
 }
 
+async function sendTargetsDirect(
+  client: Client,
+  targets: Array<{ channelId: string; embed: EmbedBuilder }>
+) {
+  let allOk = true;
+  for (const target of targets) {
+    const ok = await sendLeaderboard(client, target.channelId, target.embed);
+    if (!ok) allOk = false;
+  }
+  return allOk;
+}
+
 async function sendLeaderboard(
   client: Client,
   channelId: string,
@@ -420,9 +567,8 @@ async function sendLeaderboard(
 
 async function generateDailyAndPost(client: Client) {
   const now = new Date();
-  const todayStart = romeDateStart(now);
+  const todayStart = zonedDateStart(now);
   const targetDayStart = addDaysUtc(todayStart, -1);
-  const dateLabel = romeDateLabel(targetDayStart);
   const needsAnyDaily = !(await hasLeaderboardPost('daily', targetDayStart));
   const needsConsumeDefault = !(await hasLeaderboardChannelPost(
     'daily',
@@ -454,57 +600,25 @@ async function generateDailyAndPost(client: Client) {
     return;
   }
 
-  const endDayStart = addDaysUtc(targetDayStart, 1);
-  const { startRows, endRows } = await loadSnapshotsForRange(targetDayStart, endDayStart);
-  const [actualSpend, actualIncome] = await Promise.all([
-    loadActualSpend(targetDayStart, endDayStart),
-    loadActualIncome(targetDayStart, endDayStart),
-  ]);
-  const displayMap = await loadDisplayMap(startRows, endRows);
-
-  const entries = buildEntries(startRows, endRows, displayMap, actualSpend, actualIncome);
-  const spendTop = entries
-    .filter((e) => e.deltaSpent.gt(0))
-    .sort((a, b) => b.deltaSpent.cmp(a.deltaSpent))
-    .slice(0, RANK_LIMIT);
-  const incomeTop = entries
-    .filter((e) => e.deltaEarn.gt(0))
-    .sort((a, b) => b.deltaEarn.cmp(a.deltaEarn))
-    .slice(0, RANK_LIMIT);
-
-  const spendEmbed = formatSpendEmbed(
-    `${redCrown} 老板尊享日榜 ${redCrown}`,
-    spendTop
-  );
-  const spendEmbedWithAmount = formatSpendEmbed(
-    `${redCrown} 老板尊享日榜 ${redCrown}`,
-    spendTop,
-    true
-  );
-  const incomeEmbed = formatIncomeEmbed(
-    `${crown} 陪玩人气日榜 ${crown}`,
-    incomeTop
-  );
-  const incomeEmbedWithAmount = formatIncomeEmbed(
-    `${crown} 陪玩人气日榜 ${crown}`,
-    incomeTop,
-    true
-  );
-
-  const allOk = await sendTargets(client, 'daily', targetDayStart, [
-    { channelId: DAILY_CONSUME_CHANNEL_ID, embed: spendEmbed },
-    { channelId: DAILY_INCOME_CHANNEL_ID, embed: incomeEmbed },
-    { channelId: WEEKLY_CONSUME_CHANNEL_ID, embed: spendEmbedWithAmount },
-    { channelId: WEEKLY_INCOME_CHANNEL_ID, embed: incomeEmbedWithAmount },
-  ]);
+  const data = await buildDailyLeaderboard(targetDayStart);
+  const allOk = await sendTargets(client, 'daily', targetDayStart, buildDailyTargets(data));
   if (allOk) {
     await recordLeaderboardPost('daily', targetDayStart);
   }
 }
 
+export async function repostDailyLeaderboard(
+  client: Client,
+  targetDayStart: Date
+) {
+  const data = await buildDailyLeaderboard(targetDayStart);
+  const allOk = await sendTargetsDirect(client, buildDailyTargets(data));
+  return { ...data, allOk };
+}
+
 async function generateWeeklyAndPost(client: Client) {
   const now = new Date();
-  const thisWeekStart = romeWeekStart(now);
+  const thisWeekStart = zonedWeekStart(now);
   const lastWeekStart = addDaysUtc(thisWeekStart, -7);
   const needsAnyWeekly = !(await hasLeaderboardPost('weekly', lastWeekStart));
   const needsSpend = !(await hasLeaderboardChannelPost(
@@ -558,11 +672,11 @@ async function generateWeeklyAndPost(client: Client) {
 
 async function generateMonthlyAndPost(client: Client) {
   const now = new Date();
-  const thisMonthStart = romeMonthStart(now);
-  const { year, month } = formatRomeParts(thisMonthStart);
+  const thisMonthStart = zonedMonthStart(now);
+  const { year, month } = formatZonedDateParts(thisMonthStart);
   const lastMonthYear = month === 1 ? year - 1 : year;
   const lastMonth = month === 1 ? 12 : month - 1;
-  const lastMonthStart = romeDateFromParts(lastMonthYear, lastMonth, 1);
+  const lastMonthStart = zonedDateFromParts(lastMonthYear, lastMonth, 1);
   const needsAnyMonthly = !(await hasLeaderboardPost('monthly', lastMonthStart));
   const needsSpend = !(await hasLeaderboardChannelPost(
     'monthly',
