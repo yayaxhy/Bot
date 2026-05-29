@@ -5,18 +5,12 @@ import {
   LotteryError,
   POOL_LABEL,
   PRIZE_NAMES,
-  TEN_DRAW_COST,
-  TEN_DRAW_GUARANTEE_PRIZE_NAMES,
   performLotteryDraw,
-  performLotteryTenDraw,
 } from '../services/lotteryService.js';
 import { getScratchCodePrefix } from '../services/scratchService.js';
 
 const LOTTERY_CMD_PATTERN = /^!抽奖(?:\s+<@!?(\d+)>)?$/;
-const TEN_LOTTERY_CMD_PATTERN = /^!十连抽(?:\s+<@!?(\d+)>)?$/;
 const LOTTERY_REVEAL_DELAY_MS = 3000; // 动画结束后再揭晓，毫秒
-const TEN_DRAW_ANIMATION_DELAY_MS = 1500; // 十连每抽动画时长
-const TEN_DRAW_REVEAL_HOLD_MS = 500; // 十连每抽揭晓后额外停留
 const LOTTERY_BAG_URL = 'https://jinleeclub.vip/profile/bag';
 const LOTTERY_ANIMATIONS: Record<LotteryPool, string | undefined> = {
   NORMAL:
@@ -75,186 +69,20 @@ const buildDrawStartText = (params: {
 
 export async function handleLotteryMessage(message: Message): Promise<boolean> {
   const content = (message.content ?? '').trim();
+  if (content.startsWith('!十连抽')) {
+    return true;
+  }
+
   const singleMatch = content.match(LOTTERY_CMD_PATTERN);
-  const tenMatch = content.match(TEN_LOTTERY_CMD_PATTERN);
-  if (!singleMatch && !tenMatch) {
-    if (content.startsWith('!抽奖') || content.startsWith('!十连抽')) {
-      await message.reply('用法：`!抽奖`、`!抽奖 @用户`、`!十连抽` 或 `!十连抽 @用户`');
+  if (!singleMatch) {
+    if (content.startsWith('!抽奖')) {
+      await message.reply('用法：`!抽奖` 或 `!抽奖 @用户`');
       return true;
     }
     return false;
   }
 
   const payerId = message.author.id;
-  if (tenMatch) {
-    const userId = tenMatch[1] ?? payerId;
-    const isGiftDraw = userId !== payerId;
-    const targetMention = `<@${userId}>`;
-    const nonce = `msg:${message.id}`;
-    const costLabel = toMoneyLabel(TEN_DRAW_COST);
-    let result;
-    try {
-      result = await performLotteryTenDraw({ userId, payerId, nonce, requestId: message.id });
-    } catch (err: any) {
-      if (err instanceof LotteryError) {
-        if (err.code === 'INSUFFICIENT_BALANCE') {
-          await message.reply(`余额不足 ${costLabel} 元，无法抽奖。`);
-          return true;
-        }
-        if (err.code === 'NO_PRIZE_AVAILABLE' || err.code === 'NO_FALLBACK_PRIZE') {
-          await message.reply('奖池暂不可用，请稍后再试。');
-          return true;
-        }
-      }
-      console.error('[lottery] ten-draw failed:', err);
-      await message.reply('抽奖失败，请稍后重试。');
-      return true;
-    }
-
-    const actualCostLabel = toMoneyLabel(result.cost);
-    const drawingText = buildDrawStartText({
-      isGiftDraw,
-      targetMention,
-      actualCostLabel,
-      drawCount: 10,
-    });
-    const buildTenStartEmbed = (index: number) => {
-      const draw = result.draws[index];
-      const poolColor = LOTTERY_COLORS[draw.pool] ?? undefined;
-      const animationUrl = LOTTERY_ANIMATIONS[draw.pool];
-      const description =
-        index === 0
-          ? drawingText
-          : isGiftDraw
-            ? `正在为 ${targetMention} 进行第 ${index + 1} / 10 抽...`
-            : `正在进行第 ${index + 1} / 10 抽...`;
-      const embed = new EmbedBuilder()
-        .setTitle(`十连抽进行中（第 ${index + 1} / 10 抽）`)
-        .setDescription(description);
-      if (poolColor) embed.setColor(poolColor);
-      if (animationUrl) embed.setImage(animationUrl);
-      return embed;
-    };
-    const buildTenRevealEmbed = (index: number) => {
-      const draw = result.draws[index];
-      const poolLabel = POOL_LABEL[draw.pool] ?? draw.pool;
-      const poolColor = LOTTERY_COLORS[draw.pool] ?? undefined;
-      const animationUrl = LOTTERY_ANIMATIONS[draw.pool];
-      const revealLines =
-        draw.prize.name === MYSTERY_CODE_PRIZE_NAME
-          ? [
-              isGiftDraw
-                ? `恭喜${targetMention}第 ${index + 1} 抽抽到了对应颜色礼物：神秘代码`
-                : `恭喜您第 ${index + 1} 抽抽到了对应颜色礼物：神秘代码`,
-              '请查看机器人私信噢',
-            ]
-          : [
-              isGiftDraw
-                ? `恭喜${targetMention}第 ${index + 1} 抽抽到了${poolLabel}礼物：${draw.prize.name}`
-                : `恭喜您第 ${index + 1} 抽抽到了${poolLabel}礼物：${draw.prize.name}`,
-            ];
-      if (draw.prize.name === PRIZE_NAMES.BLOCK_STACK_VOUCHER) {
-        revealLines.push('使用方法：输入!抽积木消耗该代金券');
-      }
-      const embed = new EmbedBuilder()
-        .setTitle(`十连抽进行中（第 ${index + 1} / 10 抽）`)
-        .setDescription(revealLines.join('\n'));
-      if (poolColor) embed.setColor(poolColor);
-      const prizeImage = draw.prize.imageUrl ?? animationUrl;
-      if (prizeImage) embed.setImage(prizeImage);
-      return embed;
-    };
-
-    const sent = await message.reply({
-      content: drawingText,
-      embeds: [buildTenStartEmbed(0)],
-    });
-
-    for (let index = 0; index < result.draws.length; index += 1) {
-      if (index > 0) {
-        try {
-          await sent.edit({
-            content: isGiftDraw ? `正在为 ${targetMention}十连抽...` : '十连抽进行中...',
-            embeds: [buildTenStartEmbed(index)],
-          });
-        } catch (err) {
-          console.error('[lottery] ten-draw start edit failed:', err);
-        }
-      }
-
-      await wait(TEN_DRAW_ANIMATION_DELAY_MS);
-
-      try {
-        await sent.edit({
-          content: `第 ${index + 1} / 10 抽结果`,
-          embeds: [buildTenRevealEmbed(index)],
-        });
-      } catch (err) {
-        console.error('[lottery] ten-draw reveal edit failed:', err);
-      }
-
-      if (index < result.draws.length - 1) {
-        await wait(TEN_DRAW_REVEAL_HOLD_MS);
-      }
-    }
-
-    const revealLines = result.draws.map((draw, index) => {
-      const poolLabel = POOL_LABEL[draw.pool] ?? draw.pool;
-      return `${index + 1}. ${poolLabel}礼物：${draw.prize.name}`;
-    });
-    const guaranteedHits = result.draws.filter((draw) =>
-      TEN_DRAW_GUARANTEE_PRIZE_NAMES.includes(draw.prize.name as (typeof TEN_DRAW_GUARANTEE_PRIZE_NAMES)[number])
-    );
-    if (guaranteedHits.length > 0) {
-      revealLines.push(`抽到本期礼物：${guaranteedHits.map((draw) => draw.prize.name).join('、')}`);
-    }
-    if (result.draws.some((draw) => draw.prize.name === PRIZE_NAMES.BLOCK_STACK_VOUCHER)) {
-      revealLines.push('积木游戏代金券使用方法：输入 !抽积木 消耗该代金券');
-    }
-
-    const revealEmbed = new EmbedBuilder()
-      .setTitle('十连抽结果')
-      .setDescription(
-        [
-          isGiftDraw ? `恭喜${targetMention}完成十连抽：` : '十连抽结束：',
-          ...revealLines,
-        ].join('\n')
-      )
-      .setColor(LOTTERY_COLORS.ADVANCED);
-
-    try {
-      await sent.edit({ content: '十连抽结束！', embeds: [revealEmbed] });
-    } catch (err) {
-      console.error('[lottery] ten-draw summary edit failed:', err);
-    }
-
-    const targetUser = await resolveLotteryTargetUser(message, { isGiftDraw, userId });
-    if (targetUser) {
-      try {
-        await targetUser.send({
-          content: buildPrizeWonDmMessage(result.draws.map((draw) => draw.prize.name)),
-        });
-      } catch (err) {
-        console.error('[lottery] ten-draw prize DM failed:', {
-          userId,
-          err,
-        });
-      }
-    }
-    if (targetUser && result.draws.some((draw) => draw.prize.name === MYSTERY_CODE_PRIZE_NAME)) {
-      try {
-        await targetUser.send({ content: buildMysteryCodeDmMessage() });
-      } catch (err) {
-        console.error('[lottery] ten-draw mystery-code DM failed:', {
-          userId,
-          err,
-        });
-      }
-    }
-
-    return true;
-  }
-
   const userId = singleMatch![1] ?? payerId;
   const isGiftDraw = userId !== payerId;
   const targetMention = `<@${userId}>`;
