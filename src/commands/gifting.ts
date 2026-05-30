@@ -168,6 +168,14 @@ async function buildGiftNotFoundHint(prisma: PrismaClient, normalizedGiftName: s
   return `（相近礼物名称：${best.gift.GiftName}，价格为${formatGiftPriceForHint(best.gift.price)}锦鲤币 ）`;
 }
 
+async function findGiftByExactName(prisma: PrismaClient, normalizedGiftName: string): Promise<GiftRecord | null> {
+  if (!normalizedGiftName) return null;
+  return prisma.gift.findUnique({
+    where: { GiftName: normalizedGiftName },
+    select: { GiftName: true, price: true, url_link: true, rate: true, active: true, staffOnlyGift: true },
+  });
+}
+
 /** Parse: "!打赏 3/liwu @UserB @UserC" or "!客服打赏 3/liwu @UserB @UserC" */
 function parseGiftingCommand(
   msg: Message,
@@ -1365,10 +1373,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         }
 
         const normalized = giftName.normalize('NFKC').trim();
-        const gift = await prisma.gift.findFirst({
-          where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-          select: { GiftName: true, price: true, url_link: true, rate: true, active: true, staffOnlyGift: true },
-        });
+        const gift = await findGiftByExactName(prisma, normalized);
 
         if (!gift) {
           const hint = await buildGiftNotFoundHint(prisma, normalized);
@@ -1453,10 +1458,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       }
 
       const normalized = giftName.normalize('NFKC').trim();
-      const gift = await prisma.gift.findFirst({
-        where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-        select: { GiftName: true, price: true, url_link: true, rate: true, active: true, staffOnlyGift: true },
-      });
+      const gift = await findGiftByExactName(prisma, normalized);
 
       if (!gift) {
         const hint = await buildGiftNotFoundHint(prisma, normalized);
