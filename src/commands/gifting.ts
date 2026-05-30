@@ -40,7 +40,11 @@ const INSUFFICIENT_BALANCE_ERROR = '余额不足，无法完成打赏。';
 const INSUFFICIENT_RESERVED_ERROR = '可用余额不足（存在进行中的订单已计费预留）。';
 const STAFF_ONLY_GIFT_ERROR = '该礼物仅限客服账号打赏。';
 const STAFF_ONLY_GIFT_DELEGATE_ERROR = '该礼物不支持代打赏。';
-const STAFF_ONLY_GIFT_USER_IDS = new Set<string>(['1421651539247894549', '525770714574225408']);
+const STAFF_ONLY_GIFT_USER_IDS = new Set<string>([
+  '1421651539247894549',
+  '525770714574225408',
+  '1441310169492361268',
+]);
 
 function resolveInsufficientReason(message: unknown): string | null {
   if (typeof message !== 'string') return null;
