@@ -801,11 +801,12 @@ model InteractionLog {
 }
 
 model Gift {
-  GiftName String   @id
-  price    Decimal? @db.Decimal(19, 4)
-  url_link String?
-  active   Boolean  @default(true)
-  rate     Decimal  @default(1) @db.Decimal(10, 2)
+  GiftName      String   @id
+  price         Decimal? @db.Decimal(19, 4)
+  url_link      String?
+  active        Boolean  @default(true)
+  rate          Decimal  @default(1) @db.Decimal(10, 2)
+  staffOnlyGift Boolean  @default(false)
 
   unlocks   PeiwanGiftUnlock[]
   giftImage GiftImage?

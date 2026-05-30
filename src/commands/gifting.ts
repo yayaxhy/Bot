@@ -38,6 +38,9 @@ const ADMIN_USER_IDS = process.env.ADMIN_USER_IDS ?? '';
 const ANON_NOTIFY_CHANNEL_ID = process.env.ANON_NOTIFY_CHANNEL_ID ?? '1440888773172006962';
 const INSUFFICIENT_BALANCE_ERROR = '余额不足，无法完成打赏。';
 const INSUFFICIENT_RESERVED_ERROR = '可用余额不足（存在进行中的订单已计费预留）。';
+const STAFF_ONLY_GIFT_ERROR = '该礼物仅限客服账号打赏。';
+const STAFF_ONLY_GIFT_DELEGATE_ERROR = '该礼物不支持代打赏。';
+const STAFF_ONLY_GIFT_USER_IDS = new Set<string>(['1421651539247894549', '525770714574225408']);
 
 function resolveInsufficientReason(message: unknown): string | null {
   if (typeof message !== 'string') return null;
@@ -263,7 +266,20 @@ type GiftRecord = {
   url_link: string | null;
   rate: Prisma.Decimal | null;
   active: boolean;
+  staffOnlyGift: boolean;
 };
+type GiftAccessSource = 'regular' | 'service' | 'delegate';
+
+function assertGiftGiverAllowed(
+  gift: { staffOnlyGift?: boolean | null },
+  giverId: string,
+  source: GiftAccessSource
+) {
+  if (!gift.staffOnlyGift) return;
+  if (source === 'delegate') throw new Error(STAFF_ONLY_GIFT_DELEGATE_ERROR);
+  if (STAFF_ONLY_GIFT_USER_IDS.has(giverId)) return;
+  throw new Error(STAFF_ONLY_GIFT_ERROR);
+}
 
 export interface GiftTransactionResult {
   txId: string;
@@ -498,6 +514,7 @@ export async function performGift(
     voucherRequestId?: string;
     expenseReason?: string;
     notifyGiverPointsDm?: boolean;
+    source?: GiftAccessSource;
   }
 ): Promise<GiftTransactionResult> {
   const {
@@ -516,6 +533,7 @@ export async function performGift(
     voucherRequestId,
     expenseReason,
     notifyGiverPointsDm = true,
+    source = 'regular',
   } = params;
 
   if (giverId === receiverId) throw new Error('不能给自己打赏。');
@@ -524,10 +542,11 @@ export async function performGift(
   const normalizedGiftName = giftName.normalize('NFKC').trim();
   const gift = giftRecord ?? await prisma.gift.findUnique({
     where: { GiftName: normalizedGiftName },
-    select: { GiftName: true, price: true, url_link: true, rate: true, active: true },
+    select: { GiftName: true, price: true, url_link: true, rate: true, active: true, staffOnlyGift: true },
   });
   if (!gift) throw new Error(`礼物不存在：${giftName}`);
   if (!gift.active) throw new Error('该礼物已经下架');
+  assertGiftGiverAllowed(gift, giverId, source);
 
   await Promise.all([
     ensureMember(prisma, giverId, giverUsername),
@@ -1277,6 +1296,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
           giftName,
           quantity,
           anonymous: true,
+          source: 'regular',
           notifyGiverPointsDm: false,
           giverUsername: msg.author.username,
           receiverUsername: receiverUser?.username,
@@ -1347,7 +1367,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
         const normalized = giftName.normalize('NFKC').trim();
         const gift = await prisma.gift.findFirst({
           where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-          select: { GiftName: true, price: true, url_link: true, rate: true, active: true },
+          select: { GiftName: true, price: true, url_link: true, rate: true, active: true, staffOnlyGift: true },
         });
 
         if (!gift) {
@@ -1373,6 +1393,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
               transactionLabel: '客服代打赏',
               quantity,
               giftRecord: gift,
+              source: 'delegate',
               giverUsername: bossUsername,
               receiverUsername,
             });
@@ -1434,7 +1455,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
       const normalized = giftName.normalize('NFKC').trim();
       const gift = await prisma.gift.findFirst({
         where: { GiftName: { contains: normalized, mode: 'insensitive' } },
-        select: { GiftName: true, price: true, url_link: true, rate: true, active: true },
+        select: { GiftName: true, price: true, url_link: true, rate: true, active: true, staffOnlyGift: true },
       });
 
       if (!gift) {
@@ -1457,6 +1478,7 @@ export function registerGiftingCommand(client: Client, prisma: PrismaClient) {
             anonymous: false,
             quantity,
             giftRecord: gift,
+            source: isService ? 'service' : 'regular',
             giverUsername: msg.author.username,
             receiverUsername: receiverUsername,
             expenseReason: isService ? '客服打赏' : undefined,

@@ -710,7 +710,17 @@ async function handleGift(req: IncomingMessage, res: ServerResponse) {
     console.error('[internal-api] gift failed', err);
     const message = err?.message ?? 'internal_error';
     const statusCode =
-      typeof message === 'string' && message.includes('余额不足')
+      typeof message === 'string' &&
+      (
+        message.includes('余额不足') ||
+        message.includes('仅限客服账号打赏') ||
+        message.includes('不支持代打赏') ||
+        message.includes('礼物不存在') ||
+        message.includes('该礼物已经下架') ||
+        message.includes('数量必须大于 0') ||
+        message.includes('金额必须大于 0') ||
+        message.includes('不能给自己打赏')
+      )
         ? 400
         : 500;
     sendJson(res, statusCode, { ok: false, error: message });
