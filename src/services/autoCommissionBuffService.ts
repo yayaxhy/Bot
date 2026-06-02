@@ -228,8 +228,7 @@ export function getAutoCommissionWindow(now = new Date()) {
   return { windowStart, windowEnd: now };
 }
 
-const getUtcStartOfNextDay = (value: Date) =>
-  new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate() + 1, 0, 0, 0, 0));
+const getPostQualificationStart = (value: Date) => new Date(value.getTime() + 1);
 
 const getTierOneSeedStart = (
   tierExpiries: Map<number, Date>,
@@ -359,7 +358,7 @@ function rebuildAutoCommissionTimeline(
     let cycleLastQualifiedAt = tierOneQualifiedAt;
     let nextTier = 2;
     while (true) {
-      const windowStart = getUtcStartOfNextDay(cycleLastQualifiedAt);
+      const windowStart = getPostQualificationStart(cycleLastQualifiedAt);
       const deadline = getQualifiedUntil(cycleLastQualifiedAt);
       if (windowStart > now) break;
 
@@ -394,7 +393,7 @@ function rebuildAutoCommissionTimeline(
   }
 
   if (activeUntil && lastQualifiedAt) {
-    const progressWindowStart = getUtcStartOfNextDay(lastQualifiedAt);
+    const progressWindowStart = getPostQualificationStart(lastQualifiedAt);
     const progressDeadline = getQualifiedUntil(lastQualifiedAt);
     const progressWindowEnd = now < progressDeadline ? now : progressDeadline;
     const progressAmount =
@@ -430,8 +429,8 @@ export function getAutoCommissionProgressWindow(
   if (!lastQualifiedAt) {
     return rolling;
   }
-  // Segment progression: after a qualification, next tier starts from the next UTC day.
-  const segmentedStart = getUtcStartOfNextDay(lastQualifiedAt);
+  // Segment progression: once a qualification is reached, only later income counts toward retention.
+  const segmentedStart = getPostQualificationStart(lastQualifiedAt);
   return {
     windowStart: segmentedStart > rolling.windowStart ? segmentedStart : rolling.windowStart,
     windowEnd: rolling.windowEnd,
