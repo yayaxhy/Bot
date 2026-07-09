@@ -396,7 +396,18 @@ const refreshSessionInventory = async (session: LotteryFusionSession, keepSelect
 
 export const lotteryFusionCommand = new SlashCommandBuilder()
   .setName(CMD_NAME)
-  .setDescription('将未使用的券/奖品进行重铸，随机获得一个新的抽奖奖品');
+  .setDescription('打开重铸面板，并将未使用的券/奖品进行重铸')
+  .addIntegerOption((option) =>
+    option
+      .setName('数量')
+      .setDescription('先选择重铸规则：3 / 4 / 6 个融合')
+      .setRequired(false)
+      .addChoices(
+        { name: '3 个融合', value: 3 },
+        { name: '4 个融合', value: 4 },
+        { name: '6 个融合', value: 6 },
+      ),
+  );
 
 export async function handleLotteryFusionSlash(i: ChatInputCommandInteraction) {
   if (i.commandName !== CMD_NAME) return;
@@ -415,6 +426,16 @@ export async function handleLotteryFusionSlash(i: ChatInputCommandInteraction) {
     ownerDiscordUserId: i.user.id,
     items,
   });
+
+  const requestedCount = i.options.getInteger('数量');
+  if (requestedCount === 3 || requestedCount === 4 || requestedCount === 6) {
+    if (items.length >= requestedCount) {
+      session.targetCount = requestedCount;
+      session.notice = `已按命令参数切换为 ${RULE_META[requestedCount].title}`;
+    } else {
+      session.notice = `当前可重铸券/奖品不足 ${requestedCount} 个，已为你保留可用规则。`;
+    }
+  }
 
   await i.reply({
     ...buildFusionPanelPayload(session),
