@@ -56,12 +56,12 @@ const RULE_META: Record<FusionCount, { title: string; eligibleLabel: string; det
   3: {
     title: '3 个融合',
     eligibleLabel: '银色 / 金色',
-    detail: '结果只会出银色或金色，最高金色',
+    detail: '只会抽出银色或金色奖品',
   },
   4: {
     title: '4 个融合',
     eligibleLabel: '银色 / 金色 / 高级',
-    detail: '结果只会出银色、金色或高级，最高高级',
+    detail: '只会抽出银色、金色或高级礼物',
   },
   6: {
     title: '6 个融合',
@@ -176,7 +176,7 @@ const buildFusionPanelEmbed = (session: LotteryFusionSession) => {
   const rule = RULE_META[session.targetCount];
   const maxCount = getAvailableMaxFusionCount(session.items.length);
   const availabilityText = maxCount
-    ? `当前共有 ${session.items.length} 个可重铸券/奖品，可进行最高 ${maxCount} 个融合`
+    ? `当前共有 ${session.items.length} 个可重铸券/奖品`
     : '当前可重铸券/奖品不足 3 个';
 
   const embed = new EmbedBuilder()
@@ -185,7 +185,7 @@ const buildFusionPanelEmbed = (session: LotteryFusionSession) => {
     .setDescription(
       [
         `规则：${rule.title}`,
-        `结果范围：${rule.eligibleLabel}`,
+        `抽奖范围：${rule.eligibleLabel}`,
         `说明：${rule.detail}`,
         availabilityText,
         session.notice ? `提示：${session.notice}` : null,
@@ -373,7 +373,7 @@ const resolveSessionFromInteraction = async (
     return null;
   }
   if (session.ownerDiscordUserId !== interaction.user.id) {
-    await interaction.reply({ content: '这不是你的重铸面板。', ephemeral: true });
+    await interaction.deferUpdate();
     return null;
   }
   touchSession(session);
