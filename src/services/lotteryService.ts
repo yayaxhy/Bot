@@ -1,4 +1,13 @@
-import { CouponStatus, CouponType, LotteryPool, LotteryPrizeType, LotteryStatus, Prisma } from '@prisma/client';
+import {
+  CouponStatus,
+  CouponType,
+  LotteryPool,
+  LotteryPrizeType,
+  LotteryStatus,
+  PointShopDeliveryStatus,
+  PointShopDeliveryType,
+  Prisma,
+} from '@prisma/client';
 import prisma from '../db/prisma.js';
 import crypto from 'crypto';
 import { splitIncomeRecharge } from '../lib/balanceMath.js';
@@ -10,8 +19,15 @@ import {
   ensureJinleeIdentityForDiscordTx,
   getJinleeWalletSnapshotTx,
   lockJinleeUserForUpdateTx,
+  requireJinleeIdentityTx,
 } from './jinleeAccountService.js';
 import { scheduleSpentRoleSync } from './spentRoleService.js';
+import {
+  LOTTERY_FUSION_DRAW_NONCE_PREFIX,
+  getFusionEligiblePools,
+  parseLotteryFusionSourceRef,
+  type LotteryFusionSourceKind,
+} from './lotteryFusionRules.js';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -185,6 +201,19 @@ export class LotteryError extends Error {
   }
 }
 
+export class LotteryFusionError extends Error {
+  code:
+    | 'INVALID_SOURCE_COUNT'
+    | 'INVALID_SOURCE_IDS'
+    | 'SOURCE_ITEM_UNAVAILABLE'
+    | 'NO_SOURCE_ITEM';
+
+  constructor(code: LotteryFusionError['code'], message?: string) {
+    super(message ?? code);
+    this.code = code;
+  }
+}
+
 type PrizeLike = {
   id: string;
   name: string;
@@ -351,6 +380,7 @@ async function loadCandidates(
   tx: TxClient,
   options?: {
     pool?: LotteryPool;
+    pools?: LotteryPool[];
     prizeNames?: string[];
   }
 ): Promise<PrizeLike[]> {
@@ -358,6 +388,7 @@ async function loadCandidates(
     where: {
       active: true,
       ...(options?.pool ? { pool: options.pool } : {}),
+      ...(options?.pools?.length ? { pool: { in: options.pools } } : {}),
       ...(options?.prizeNames?.length ? { name: { in: options.prizeNames } } : {}),
       OR: [{ unlimited: true }, { stock: { gt: 0 } }],
     },
@@ -400,10 +431,21 @@ export type LotteryBatchResult = {
   cost: Prisma.Decimal;
 };
 
+export type LotteryFusionResult = LotteryResult & {
+  expiresAt: Date | null;
+  sourceIds: string[];
+};
+
+const buildLotteryFusionNonce = (jinleeId: string, drawIds: string[]) => {
+  const digest = crypto.createHash('sha256').update(`${jinleeId}:${drawIds.join(',')}`).digest('hex');
+  return `${LOTTERY_FUSION_DRAW_NONCE_PREFIX}${digest.slice(0, 32)}`;
+};
+
 async function pickAndConsumePrize(
   tx: TxClient,
   options?: {
     pool?: LotteryPool;
+    pools?: LotteryPool[];
     prizeNames?: string[];
   }
 ): Promise<PrizeLike> {
@@ -412,12 +454,20 @@ async function pickAndConsumePrize(
   while (true) {
     const candidates = (await loadCandidates(tx, options)).filter((candidate) => !exhaustedIds.has(candidate.id));
     if (candidates.length === 0) {
-      throw new LotteryError(options?.pool || options?.prizeNames?.length ? 'NO_FALLBACK_PRIZE' : 'NO_PRIZE_AVAILABLE');
+      throw new LotteryError(
+        options?.pool || options?.pools?.length || options?.prizeNames?.length
+          ? 'NO_FALLBACK_PRIZE'
+          : 'NO_PRIZE_AVAILABLE'
+      );
     }
 
     const picked = pickByWeight(candidates);
     if (!picked) {
-      throw new LotteryError(options?.pool || options?.prizeNames?.length ? 'NO_FALLBACK_PRIZE' : 'NO_PRIZE_AVAILABLE');
+      throw new LotteryError(
+        options?.pool || options?.pools?.length || options?.prizeNames?.length
+          ? 'NO_FALLBACK_PRIZE'
+          : 'NO_PRIZE_AVAILABLE'
+      );
     }
     if (picked.unlimited) return picked;
 
@@ -555,6 +605,105 @@ async function consumeLotteryDrawVoucherTx(
       consumeAt: now,
       requestId,
       consumeAmount: DRAW_COST, // 抽奖代金券固定面额
+      consumeTargetId: ownerDiscordUserId,
+      consumeTargetJinleeId: ownerJinleeId,
+    },
+  });
+  return result.count === 1;
+}
+
+async function consumeFusionCouponSourceTx(
+  tx: TxClient,
+  params: {
+    couponId: string;
+    jinleeId: string;
+    ownerDiscordUserId: string | null;
+    ownerJinleeId: string;
+    now: Date;
+    requestId?: string;
+  }
+) {
+  const { couponId, jinleeId, ownerDiscordUserId, ownerJinleeId, now, requestId } = params;
+  const result = await tx.coupon.updateMany({
+    where: {
+      id: couponId,
+      jinleeId,
+      status: CouponStatus.ACTIVE,
+      consumedAt: null,
+      orderId: null,
+      expiresAt: { gt: now },
+    },
+    data: {
+      status: CouponStatus.USED,
+      consumedAt: now,
+      consumeAmount: 0,
+      consumeTargetId: ownerDiscordUserId,
+      consumeTargetJinleeId: ownerJinleeId,
+      orderId: requestId ?? null,
+    },
+  });
+  return result.count === 1;
+}
+
+async function consumeFusionPointShopSourceTx(
+  tx: TxClient,
+  params: {
+    grantId: string;
+    jinleeId: string;
+    ownerDiscordUserId: string | null;
+    ownerJinleeId: string;
+    now: Date;
+    requestId?: string;
+  }
+) {
+  const { grantId, jinleeId, ownerDiscordUserId, ownerJinleeId, now, requestId } = params;
+  const result = await tx.pointShopGrant.updateMany({
+    where: {
+      id: grantId,
+      jinleeId,
+      deliveryType: PointShopDeliveryType.COUPON,
+      deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+      couponStatus: CouponStatus.ACTIVE,
+      consumedAt: null,
+      consumeOrderId: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    data: {
+      couponStatus: CouponStatus.USED,
+      consumedAt: now,
+      consumeAmount: 0,
+      consumeTargetId: ownerDiscordUserId,
+      consumeTargetJinleeId: ownerJinleeId,
+      consumeOrderId: requestId ?? null,
+    },
+  });
+  return result.count === 1;
+}
+
+async function consumeFusionLotterySourceTx(
+  tx: TxClient,
+  params: {
+    drawId: string;
+    jinleeId: string;
+    ownerDiscordUserId: string | null;
+    ownerJinleeId: string;
+    now: Date;
+    requestId?: string;
+  }
+) {
+  const { drawId, jinleeId, ownerDiscordUserId, ownerJinleeId, now, requestId } = params;
+  const result = await tx.lotteryDraw.updateMany({
+    where: {
+      id: drawId,
+      jinleeId,
+      status: LotteryStatus.UNUSED,
+      consumeAt: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    },
+    data: {
+      status: LotteryStatus.USED,
+      consumeAt: now,
+      requestId,
       consumeTargetId: ownerDiscordUserId,
       consumeTargetJinleeId: ownerJinleeId,
     },
@@ -833,6 +982,152 @@ export async function performLotteryTenDraw(params: {
     scheduleSpentRoleSync(payerDiscordForRoleSync, { announceVipUpgrade: true });
   }
   return result;
+}
+
+export async function performLotteryFusion(params: {
+  userId: string;
+  sourceIds: string[];
+  requestId?: string;
+}): Promise<LotteryFusionResult> {
+  const rawSourceIds = params.sourceIds
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean);
+  const sourceIds = [...new Set(rawSourceIds)].sort();
+
+  if (sourceIds.length === 0) {
+    throw new LotteryFusionError('NO_SOURCE_ITEM');
+  }
+  if (sourceIds.length !== rawSourceIds.length) {
+    throw new LotteryFusionError('INVALID_SOURCE_IDS');
+  }
+  const parsedSources = sourceIds.map(parseLotteryFusionSourceRef);
+  if (parsedSources.some((source) => !source?.id)) {
+    throw new LotteryFusionError('INVALID_SOURCE_IDS');
+  }
+
+  const eligiblePools = getFusionEligiblePools(sourceIds.length);
+  if (!eligiblePools?.length) {
+    throw new LotteryFusionError('INVALID_SOURCE_COUNT');
+  }
+
+  const now = new Date();
+  return prisma.$transaction(async (tx) => {
+    const ownerIdentity = await requireJinleeIdentityTx(tx, params.userId);
+    await lockJinleeUserForUpdateTx(tx, ownerIdentity.jinleeId);
+
+    const nonce = buildLotteryFusionNonce(ownerIdentity.jinleeId, sourceIds);
+    const existing = await tx.lotteryDraw.findUnique({
+      where: { nonce },
+      include: { prize: true },
+    });
+    if (existing) {
+      if (!existing.prize) throw new LotteryError('MISSING_PRIZE');
+      return {
+        drawId: existing.id,
+        prize: existing.prize as PrizeLike,
+        pool: existing.pool,
+        random: existing.random ?? Math.random(),
+        cost: new Prisma.Decimal(existing.cost ?? 0),
+        expiresAt: existing.expiresAt ?? null,
+        sourceIds,
+      };
+    }
+
+    await tx.lotteryDraw.updateMany({
+      where: {
+        jinleeId: ownerIdentity.jinleeId,
+        status: LotteryStatus.UNUSED,
+        expiresAt: { lte: now },
+      },
+      data: { status: LotteryStatus.EXPIRED },
+    });
+    await tx.coupon.updateMany({
+      where: {
+        jinleeId: ownerIdentity.jinleeId,
+        status: CouponStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: { status: CouponStatus.EXPIRED },
+    });
+    await tx.pointShopGrant.updateMany({
+      where: {
+        jinleeId: ownerIdentity.jinleeId,
+        deliveryType: PointShopDeliveryType.COUPON,
+        deliveryStatus: PointShopDeliveryStatus.DELIVERED,
+        couponStatus: CouponStatus.ACTIVE,
+        expiresAt: { lte: now },
+      },
+      data: { couponStatus: CouponStatus.EXPIRED },
+    });
+
+    const requestId = params.requestId ?? `FUSION:${sourceIds.length}`;
+    for (const source of parsedSources) {
+      const parsed = source as { kind: LotteryFusionSourceKind; id: string };
+      const consumed =
+        parsed.kind === 'coupon'
+          ? await consumeFusionCouponSourceTx(tx, {
+              couponId: parsed.id,
+              jinleeId: ownerIdentity.jinleeId,
+              ownerDiscordUserId: ownerIdentity.discordUserId ?? null,
+              ownerJinleeId: ownerIdentity.jinleeId,
+              now,
+              requestId,
+            })
+          : parsed.kind === 'pointshop'
+            ? await consumeFusionPointShopSourceTx(tx, {
+                grantId: parsed.id,
+                jinleeId: ownerIdentity.jinleeId,
+                ownerDiscordUserId: ownerIdentity.discordUserId ?? null,
+                ownerJinleeId: ownerIdentity.jinleeId,
+                now,
+                requestId,
+              })
+            : await consumeFusionLotterySourceTx(tx, {
+                drawId: parsed.id,
+                jinleeId: ownerIdentity.jinleeId,
+                ownerDiscordUserId: ownerIdentity.discordUserId ?? null,
+                ownerJinleeId: ownerIdentity.jinleeId,
+                now,
+                requestId,
+              });
+      if (!consumed) {
+        throw new LotteryFusionError('SOURCE_ITEM_UNAVAILABLE');
+      }
+    }
+
+    const picked = await pickAndConsumePrize(tx, { pools: eligiblePools });
+    await maybeAlertSpecialLowStock(tx, picked);
+
+    const kind = resolvePrizeKind(picked);
+    const expiresAt = voucherExpiresAt(kind, now);
+    const randomVal = Math.random();
+    const draw = await tx.lotteryDraw.create({
+      data: {
+        nonce,
+        requestId,
+        userId: ownerIdentity.discordUserId ?? null,
+        jinleeId: ownerIdentity.jinleeId,
+        pool: picked.pool,
+        prizeId: picked.id,
+        cost: new Prisma.Decimal(0),
+        random: randomVal,
+        expiresAt: expiresAt ?? undefined,
+        code: generateCode(kind),
+      },
+      include: { prize: true },
+    });
+    if (!draw.prize) throw new LotteryError('MISSING_PRIZE');
+
+    return {
+      drawId: draw.id,
+      prize: draw.prize as PrizeLike,
+      pool: draw.pool,
+      random: draw.random ?? randomVal,
+      cost: draw.cost,
+      expiresAt: draw.expiresAt ?? null,
+      sourceIds,
+    };
+  });
 }
 
 export async function consumeVouchers(

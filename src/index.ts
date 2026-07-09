@@ -30,6 +30,12 @@ import { giftSlashCommand, handleGiftSlash } from './commands/giftSlash.js';
 import { getAvatarCommand, handleGetAvatarSlash } from './commands/getAvatarSlash.js';
 import { channelMessageCommand, handleChannelMessageSlash } from './commands/channelMessageSlash.js';
 import { handleLookSelfSlash, lookSelfCommand } from './commands/lookSelfSlash.js';
+import {
+  handleLotteryFusionButton,
+  handleLotteryFusionSelect,
+  handleLotteryFusionSlash,
+  lotteryFusionCommand,
+} from './commands/lotteryFusionSlash.js';
 // import { handleAssistantConfirmationButton } from './assistant/confirmButtons.js';
 // import { getAssistantProviderStatus } from './assistant/providers/index.js';
 import { registerBalanceCommands } from './commands/balanceCommands.js';
@@ -208,6 +214,10 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
     // String select for price (实名/匿名点单)
     if (i.isStringSelectMenu()) {
       const customId = i.customId ?? '';
+      if (customId.startsWith('lotteryfusion:')) {
+        await handleLotteryFusionSelect(i);
+        return;
+      }
       if (customId.startsWith('realname_box') || customId.startsWith('anonymous_box')) {
         await handleOrderPriceSelect(i);
         return;
@@ -275,10 +285,18 @@ client.on(Events.InteractionCreate, async (i: Interaction) => {
                 await handleLookSelfSlash(i);
                 return;
             }
+            if (i.commandName === '重铸') {
+                await handleLotteryFusionSlash(i);
+                return;
+            }
         }
 
     // Buttons
     if (i.isButton()) {
+      if (i.customId?.startsWith('lotteryfusion:')) {
+        await handleLotteryFusionButton(i);
+        return;
+      }
       // Natural-language assistant disabled.
       // if (await handleAssistantConfirmationButton(i)) {
       //   return;
@@ -391,6 +409,7 @@ async function registerStartupSlashCommands() {
   await client.application.commands.create(getAvatarCommand);
   await client.application.commands.create(channelMessageCommand);
   await client.application.commands.create(lookSelfCommand);
+  await client.application.commands.create(lotteryFusionCommand);
   const existingCommands = await client.application.commands.fetch();
   const legacyVoicePreviewCommand = existingCommands.find((command) => command.name === '设置试音');
   if (legacyVoicePreviewCommand) {

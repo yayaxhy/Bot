@@ -6,7 +6,7 @@ import {
   VIP_TIERS,
   type VipTierConfig,
 } from '../config/vipCatalog.js';
-import { reconcileVipBenefitsForMember, sendVipBenefitOverviewDm } from './vipBenefitService.js';
+import { reconcileVipBenefitsForMember } from './vipBenefitService.js';
 
 type Tier = { threshold: number; roles: string[] };
 type SpendRoleTier = VipTierConfig;
@@ -103,17 +103,6 @@ function computeHeartRoleSet(heartValue: number): string[] {
 
 function getHighestSpendTier(totalSpent: number): SpendRoleTier | null {
   return getHighestVipTierByTotalSpent(totalSpent);
-}
-
-function getHighestSpendTierFromRoles(roleIds: Iterable<string>): SpendRoleTier | null {
-  const roleSet = new Set(roleIds);
-  let matched: SpendRoleTier | null = null;
-  for (const tier of VIP_TIERS) {
-    if (roleSet.has(tier.roleId)) {
-      matched = tier;
-    }
-  }
-  return matched;
 }
 
 function formatFancyNumber(value: number): string {
@@ -357,35 +346,32 @@ export async function syncSpentRolesForMember(
   const roleOptOut = memberRecord.vipBenefitProfile?.roleOptOut === true;
   const announcementEnabled = memberRecord.vipBenefitProfile?.announcementEnabled !== false;
   const persistedSettledVipLevel = Math.max(0, memberRecord.vipBenefitProfile?.lastSettledVipLevel ?? 0);
+  const shouldSyncSpendRoles = includeSpendRoles && !roleOptOut;
   const totalSpentNumber = includeSpendRoles
     ? Number(memberRecord.totalSpent?.toString?.() ?? memberRecord.totalSpent ?? 0)
     : 0;
-  const spendRoles = includeSpendRoles && !roleOptOut ? computeRoleSet(totalSpentNumber) : [];
+  const spendRoles = shouldSyncSpendRoles ? computeRoleSet(totalSpentNumber) : [];
   const targetVipTier = includeSpendRoles ? getHighestSpendTier(totalSpentNumber) : null;
+  const isVipLevelUpgrade = !!targetVipTier && targetVipTier.vipLevel > persistedSettledVipLevel;
 
   const desiredHeartRoles = await loadDesiredHeartRoles(discordId);
-  const desiredRoles = Array.from(new Set([...spendRoles, ...desiredHeartRoles]));
+  const desiredRoles = Array.from(
+    new Set(shouldSyncSpendRoles ? [...spendRoles, ...desiredHeartRoles] : desiredHeartRoles)
+  );
   const previousVipLevelForBenefits = includeSpendRoles ? persistedSettledVipLevel : 0;
-  let vipRoleSynced = !roleOptOut;
-  let shouldAnnounceVipUpgrade = false;
-  let didAnnounceVipUpgrade = false;
+  const shouldAnnounceVipUpgrade =
+    announceVipUpgrade && announcementEnabled && !!targetVipTier && isVipLevelUpgrade;
+  let vipRoleSynced = shouldSyncSpendRoles;
 
   try {
     const guild = await client.guilds.fetch(SPENT_ROLE_GUILD_ID);
     const member = await guild.members.fetch(discordId);
     const currentRoleIds = new Set(member.roles.cache.keys());
-    const currentVipTier =
-      includeSpendRoles && !roleOptOut ? getHighestSpendTierFromRoles(currentRoleIds) : null;
-    shouldAnnounceVipUpgrade =
-      announceVipUpgrade &&
-      announcementEnabled &&
-      !!targetVipTier &&
-      (!currentVipTier || targetVipTier.threshold > currentVipTier.threshold);
 
     const heartRolesToRemove = HEART_ROLE_IDS.filter(
       (roleId) => currentRoleIds.has(roleId) && !desiredHeartRoles.includes(roleId)
     );
-    const spendRolesToRemove = includeSpendRoles
+    const spendRolesToRemove = shouldSyncSpendRoles
       ? SPENT_ROLE_IDS.filter((roleId) => currentRoleIds.has(roleId) && !spendRoles.includes(roleId))
       : [];
     const missingRoles = desiredRoles.filter((roleId) => !currentRoleIds.has(roleId));
@@ -404,7 +390,6 @@ export async function syncSpentRolesForMember(
     }
   } catch (err) {
     vipRoleSynced = false;
-    shouldAnnounceVipUpgrade = false;
     console.error('[spent-role] failed to assign roles', { discordId, err });
   }
 
@@ -429,18 +414,8 @@ export async function syncSpentRolesForMember(
       benefitReconcileError = err;
     }
 
-    if (shouldAnnounceVipUpgrade && targetVipTier) {
+    if (!benefitReconcileError && shouldAnnounceVipUpgrade && targetVipTier) {
       await postVipUpgradeAnnouncement(discordId, targetVipTier);
-      didAnnounceVipUpgrade = true;
-    }
-
-    if (
-      !benefitReconcileError &&
-      didAnnounceVipUpgrade &&
-      targetVipTier &&
-      previousVipLevelForBenefits >= targetVipTier.vipLevel
-    ) {
-      await sendVipBenefitOverviewDm(discordId, targetVipTier.vipLevel, { vipRoleSynced });
     }
 
     if (benefitReconcileError) {

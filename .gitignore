@@ -17,6 +17,7 @@ pnpm-debug.log*
 *.log
 tmp.cjs
 .DS_Store
+.playwright-cli/
 
 # Local-only files
 syncp.ps1

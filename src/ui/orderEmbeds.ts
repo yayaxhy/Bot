@@ -83,12 +83,6 @@ function stripRoleMentions(text: string): string {
     .trim();
 }
 
-function formatOrderContentFieldValue(text: string): string {
-  const cleaned = stripRoleMentions(text ?? '');
-  if (!cleaned) return '（无）';
-  return cleaned.length > 1024 ? `${cleaned.slice(0, 1021)}...` : cleaned;
-}
-
 function getAdminMentions(): string {
   const ids = ADMIN_USER_IDS.split(',').map((id) => id.trim()).filter(Boolean);
   if (ids.length === 0) return '<@1421651539247894549>';
@@ -165,7 +159,6 @@ export function ongoing_order_request_embed(
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
     .setDescription(lines.join('\n'))
-    .addFields({ name: '订单内容', value: formatOrderContentFieldValue(originalMsg) })
     .setImage(resolveOrderEmbedImageUrl(imageUrl));
 
   const button = new ButtonBuilder()
@@ -204,7 +197,6 @@ export function anonymous_ongoing_order_request_embed(
     .setTitle('派单进行中')
     .setColor(DEFAULT_EMBED_COLOR)
     .setDescription(lines.join('\n'))
-    .addFields({ name: '订单内容', value: formatOrderContentFieldValue(originalMsg) })
     .setImage(resolveOrderEmbedImageUrl(imageUrl));
 
   const button = new ButtonBuilder()

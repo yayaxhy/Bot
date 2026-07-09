@@ -9,7 +9,10 @@ import prisma from '../../db/prisma.js';
 import { OrderMode, OrderStatus, PeiwanStatus, QuotationCode } from '@prisma/client';
 import { invitation_embed } from '../../ui/orderEmbeds.js';
 import { registerInvitationMessage } from '../../services/orderInteractionManager.js';
-import { recordOrderRequest } from '../../services/orderRequestLogService.js';
+import {
+  recordOrderRequest,
+  resolveOrderRequestContent,
+} from '../../services/orderRequestLogService.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
 import { clickStore } from '../../services/clickStore.js';
 import { findBlacklistConflict } from '../../services/blacklistService.js';
@@ -97,7 +100,10 @@ function getPeiwanIdFromEmbed(i: StringSelectMenuInteraction): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function getOrderContentFromEmbed(i: StringSelectMenuInteraction): string {
+async function getOrderContentFromEmbed(
+  i: StringSelectMenuInteraction,
+  orderId?: string | null,
+): Promise<string> {
   const embed = i.message.embeds?.[0];
   const fields = embed?.fields ?? [];
   const field = fields.find((x) => {
@@ -107,6 +113,9 @@ function getOrderContentFromEmbed(i: StringSelectMenuInteraction): string {
     return name.includes('订单内容');
   });
   let value = field?.value ? String(field.value).trim() : '';
+  if (!value && orderId) {
+    value = await resolveOrderRequestContent(orderId);
+  }
   const description = embed?.description ?? '';
   if (!value && description) {
     const fieldMatch = description.match(/订单内容[:：]\s*([\s\S]+)/);
@@ -172,7 +181,7 @@ export async function handleOrderPriceSelect(i: Interaction) {
   if (peiwanId == null) {
     return i.reply({ content: '未能识别陪玩的编号（陪玩ID）。', ephemeral: true });
   }
-  const orderContentFromEmbed = getOrderContentFromEmbed(i);
+  const orderContentFromEmbed = await getOrderContentFromEmbed(i, orderIdFromCustom);
 
   // 3) 查陪玩，得到 workerId（discordUserId）以及对应档位价格
   const peiwan = await prisma.pEIWAN.findUnique({

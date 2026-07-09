@@ -13,7 +13,10 @@ import { ORDER_REQUEST_ENDED_HINT } from '../../constants/orderRequestCopy.js';
 import { findBlacklistConflict } from '../../services/blacklistService.js';
 import { clickStore } from '../../services/clickStore.js';
 import { updateMemberServerDisplayName } from '../../services/memberDisplayNameService.js';
-import { resolveOrderRequestOwnerId } from '../../services/orderRequestLogService.js';
+import {
+  resolveOrderRequestContent,
+  resolveOrderRequestOwnerId,
+} from '../../services/orderRequestLogService.js';
 import { formatBossReviews } from '../../services/peiwanReviewDisplayService.js';
 import { buildStoredVoicePreviewAttachment } from '../../services/peiwanVoicePreviewService.js';
 import { buildAuditionRequestButtonRow } from '../../services/auditionService.js';
@@ -135,7 +138,10 @@ function isOrderRequestExpired(message: Message): boolean {
   return Date.now() - created > ORDER_REQUEST_CLOSE_MS;
 }
 
-function extractOrderContent(message: Message | null | undefined): string {
+async function extractOrderContent(
+  orderId: string,
+  message: Message | null | undefined,
+): Promise<string> {
   if (!message) return '';
   const embed = message.embeds?.[0];
   const contentField = embed?.fields?.find((field) => (field.name ?? '').trim() === '订单内容');
@@ -144,6 +150,9 @@ function extractOrderContent(message: Message | null | undefined): string {
     if (value) return sanitizeOrderContent(value);
   }
 
+  const loggedContent = await resolveOrderRequestContent(orderId);
+  if (loggedContent) return sanitizeOrderContent(loggedContent);
+
   const rawContent = message.content ?? '';
   if (rawContent) {
     const quoteMatch = rawContent.match(/“([\s\S]+?)”/);
@@ -151,7 +160,6 @@ function extractOrderContent(message: Message | null | undefined): string {
       const text = quoteMatch[1].trim();
       if (text) return sanitizeOrderContent(text);
     }
-    return sanitizeOrderContent(rawContent.trim());
   }
 
   const description = embed?.description ?? '';
@@ -160,21 +168,6 @@ function extractOrderContent(message: Message | null | undefined): string {
     if (quoteMatch) {
       const text = quoteMatch[1].trim();
       if (text) return sanitizeOrderContent(text);
-    }
-    const lines = description
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    const preActivity: string[] = [];
-    for (const line of lines) {
-      if (line.includes('正在进行的活动')) break;
-      preActivity.push(line);
-    }
-    if (preActivity.length) {
-      const lastLine = preActivity[preActivity.length - 1]
-        .replace(/^["“]+|["”]+$/g, '')
-        .trim();
-      if (lastLine) return sanitizeOrderContent(lastLine);
     }
   }
 
@@ -441,7 +434,7 @@ export async function handlePlayButton(i: ButtonInteraction) {
       : null;
     const peiwanType = resolvePeiwanEmbedTitle(peiwan.type, peiwan.gameProfiles);
     const peiwanRoleLabels = mapPeiwanRoleLabels(peiwan.gameProfiles);
-    const orderContent = extractOrderContent(i.message as Message);
+    const orderContent = await extractOrderContent(orderId, i.message as Message);
     const reviewRows = await prisma.peiwanReview.findMany({
       where: {
         peiwanDiscordId: workerId,

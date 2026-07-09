@@ -10,7 +10,14 @@ import prisma from '../db/prisma.js';
 import { applyCouponDiscountForOrder, type DiscountKind } from '../services/discountService.js';
 import { applyLotteryDiscountForOrder } from '../services/lotteryDiscountService.js';
 import { CouponStatus, CouponType, LotteryStatus, PointShopDeliveryStatus, PointShopDeliveryType, Prisma } from '@prisma/client';
-import { PRIZE_NAMES, RENAME_CARD_NAMES } from '../services/lotteryService.js';
+import {
+  LotteryError,
+  LotteryFusionError,
+  POOL_LABEL,
+  PRIZE_NAMES,
+  RENAME_CARD_NAMES,
+  performLotteryFusion,
+} from '../services/lotteryService.js';
 import { applyCommissionBuff, applyFlowBuff, applySpendBuff } from '../services/buffService.js';
 import { revertGiftByIndividualTx } from '../services/revertGiftService.js';
 import { RENAME_CARD_COUPON_TYPES, VOUCHER_COUPON_TYPE_BY_PRIZE } from '../config/voucherCatalog.js';
@@ -22,6 +29,11 @@ import {
 import { syncAllPeiwanRoles, syncPeiwanRolesForDiscordUser } from '../services/peiwanRoleSyncService.js';
 import { sendPeiwanNotification } from '../services/peiwanWatcher.js';
 import { syncSpentRolesForMember } from '../services/spentRoleService.js';
+import {
+  announceLotteryFusionWebSuccess,
+  sendLotteryFusionSuccessDm,
+} from '../services/lotteryFusionNotificationService.js';
+import { isWebLotteryFusionRequestId } from '../services/lotteryFusionBotService.js';
 
 const INTERNAL_TOKEN = process.env.INTERNAL_API_TOKEN ?? '';
 const INTERNAL_PORT = Number(process.env.INTERNAL_API_PORT ?? 3710);
@@ -1136,6 +1148,99 @@ async function handleDiscount(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+async function handleLotteryFusion(req: IncomingMessage, res: ServerResponse) {
+  const payload = await parseJsonBody(req, res);
+  if (!payload) return;
+
+  const userId =
+    typeof payload?.jinleeId === 'string' && payload.jinleeId.trim()
+      ? payload.jinleeId.trim()
+      : typeof payload?.userId === 'string' && payload.userId.trim()
+        ? payload.userId.trim()
+        : '';
+  const sourceIds = Array.isArray(payload?.sourceIds)
+    ? payload.sourceIds.map((value: unknown) => String(value ?? '').trim()).filter(Boolean)
+    : Array.isArray(payload?.lotteryIds)
+      ? payload.lotteryIds.map((value: unknown) => String(value ?? '').trim()).filter(Boolean)
+    : [];
+  const requestId =
+    typeof payload?.requestId === 'string' && payload.requestId.trim() ? payload.requestId.trim() : undefined;
+
+  if (!userId || sourceIds.length === 0) {
+    sendJson(res, 400, { ok: false, error: 'missing_fields' });
+    return;
+  }
+
+  try {
+    const result = await performLotteryFusion({
+      userId,
+      sourceIds,
+      requestId,
+    });
+    sendJson(res, 200, {
+      ok: true,
+      result: {
+        drawId: result.drawId,
+        prizeName: result.prize.name,
+        prizeType: result.prize.type,
+        pool: result.pool,
+        poolLabel: POOL_LABEL[result.pool],
+        imageUrl: result.prize.imageUrl,
+        expiresAt: result.expiresAt?.toISOString() ?? null,
+        sourceIds: result.sourceIds,
+      },
+    });
+
+    const client = (globalThis as any).__CLIENT__ as import('discord.js').Client | undefined;
+    if (client) {
+      void requireJinleeIdentityTx(prisma, userId)
+        .then(async (identity) => {
+          await sendLotteryFusionSuccessDm({
+            client,
+            discordUserId: identity.discordUserId,
+            prizeName: result.prize.name,
+          });
+
+          if (isWebLotteryFusionRequestId(requestId)) {
+            await announceLotteryFusionWebSuccess({
+              client,
+              discordUserId: identity.discordUserId,
+              prizeName: result.prize.name,
+              fallbackUserLabel: `金狸ID ${identity.jinleeId}`,
+            });
+          }
+        })
+        .catch((notifyError) => {
+          console.error('[internal-api] lottery fusion notify failed', notifyError);
+        });
+    }
+  } catch (err) {
+    const identityError = getIdentityErrorResponse(err);
+    if (identityError) {
+      sendJson(res, identityError.statusCode, identityError.body);
+      return;
+    }
+    if (err instanceof LotteryFusionError) {
+      const statusCode =
+        err.code === 'SOURCE_ITEM_UNAVAILABLE'
+          ? 409
+          : err.code === 'NO_SOURCE_ITEM'
+            ? 404
+            : 400;
+      sendJson(res, statusCode, { ok: false, error: err.code });
+      return;
+    }
+    if (err instanceof LotteryError) {
+      if (err.code === 'NO_FALLBACK_PRIZE' || err.code === 'NO_PRIZE_AVAILABLE') {
+        sendJson(res, 409, { ok: false, error: err.code });
+        return;
+      }
+    }
+    console.error('[internal-api] lottery fusion failed', err);
+    sendJson(res, 500, { ok: false, error: 'internal_error' });
+  }
+}
+
 async function handleRenameCard(req: IncomingMessage, res: ServerResponse) {
   const payload = await parseJsonBody(req, res);
   if (!payload) return;
@@ -1580,6 +1685,10 @@ export function startInternalWebhookServer() {
     }
     if (req.method === 'POST' && url.pathname === '/internal/discount') {
       await handleDiscount(req, res);
+      return;
+    }
+    if (req.method === 'POST' && url.pathname === '/internal/lottery/fuse') {
+      await handleLotteryFusion(req, res);
       return;
     }
     if (req.method === 'POST' && url.pathname === '/internal/rename-card') {

@@ -80,3 +80,24 @@ export async function resolveOrderRequestOwnerId(
 
   return fallbackOwnerId?.trim() || null;
 }
+
+export async function resolveOrderRequestContent(
+  orderId: string,
+  fallbackContent?: string | null,
+): Promise<string> {
+  const fallback = fallbackContent?.trim() ?? '';
+  if (!orderId) return fallback;
+
+  try {
+    const request = await prisma.orderRequestLog.findUnique({
+      where: { orderId },
+      select: { content: true },
+    });
+    const content = request?.content?.trim();
+    if (content) return content;
+  } catch (err) {
+    console.error('[order-request] resolve content failed', err);
+  }
+
+  return fallback;
+}
