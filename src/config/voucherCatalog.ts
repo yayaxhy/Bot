@@ -103,4 +103,37 @@ export const PRIZE_BY_VOUCHER_COUPON_TYPE: Partial<Record<CouponType, string>> =
   {} as Partial<Record<CouponType, string>>,
 );
 
+const COUPON_DISPLAY_NAME_OVERRIDES: Partial<Record<CouponType, string>> = {
+  DISCOUNT_70: PRIZE_NAMES.DISCOUNT_70,
+  DISCOUNT_80: PRIZE_NAMES.DISCOUNT_80,
+  DISCOUNT_90: '9折券',
+  DISCOUNT_90_LOTTERY: PRIZE_NAMES.DISCOUNT_90_LOTTERY,
+};
+
+export const VOUCHER_DISPLAY_NAME_BY_COUPON_TYPE: Partial<Record<CouponType, string>> = {
+  ...COUPON_DISPLAY_NAME_OVERRIDES,
+  ...PRIZE_BY_VOUCHER_COUPON_TYPE,
+};
+
+export const resolveVoucherCouponDisplayName = (
+  couponType?: CouponType | string | null,
+  fallbackName?: string | null,
+) => {
+  const normalizedType = typeof couponType === 'string' ? couponType.trim() : '';
+  if (normalizedType) {
+    const displayName = VOUCHER_DISPLAY_NAME_BY_COUPON_TYPE[normalizedType as CouponType];
+    if (displayName) return displayName;
+  }
+
+  const normalizedFallback = fallbackName?.trim();
+  if (normalizedFallback) {
+    const fallbackDisplayName =
+      VOUCHER_DISPLAY_NAME_BY_COUPON_TYPE[normalizedFallback as CouponType];
+    if (fallbackDisplayName) return fallbackDisplayName;
+    return normalizedFallback;
+  }
+
+  return normalizedType || '未命名券';
+};
+
 export const RENAME_CARD_COUPON_TYPES: CouponType[] = RENAME_CARD_VOUCHERS.map((entry) => entry.couponType);

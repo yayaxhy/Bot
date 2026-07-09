@@ -5,7 +5,10 @@ import {
   PointShopDeliveryStatus,
   PointShopDeliveryType,
 } from '@prisma/client';
-import { PRIZE_BY_VOUCHER_COUPON_TYPE } from '../config/voucherCatalog.js';
+import {
+  PRIZE_BY_VOUCHER_COUPON_TYPE,
+  resolveVoucherCouponDisplayName,
+} from '../config/voucherCatalog.js';
 import prisma from '../db/prisma.js';
 import {
   ensureJinleeIdentityForDiscordTx,
@@ -265,12 +268,12 @@ export const getLotteryFusionSelectableInventoryForDiscordUser = async (
   ]);
 
   const couponPrizeNames = coupons
-    .map((coupon) => PRIZE_BY_VOUCHER_COUPON_TYPE[coupon.type] ?? String(coupon.type))
+    .map((coupon) => resolveVoucherCouponDisplayName(coupon.type))
     .filter(Boolean);
   const pointShopPrizeNames = pointShopGrants
     .map((grant) =>
       grant.couponType
-        ? (PRIZE_BY_VOUCHER_COUPON_TYPE[grant.couponType] ?? grant.itemName.trim())
+        ? resolveVoucherCouponDisplayName(grant.couponType, grant.itemName)
         : grant.itemName.trim(),
     )
     .filter(Boolean);
@@ -291,7 +294,7 @@ export const getLotteryFusionSelectableInventoryForDiscordUser = async (
     }));
 
   const couponItems: LotteryFusionSelectableItem[] = coupons.map((coupon) => {
-    const prizeName = PRIZE_BY_VOUCHER_COUPON_TYPE[coupon.type] ?? String(coupon.type);
+    const prizeName = resolveVoucherCouponDisplayName(coupon.type);
     return {
       sourceId: sourceRef('coupon', coupon.id),
       sourceKind: 'coupon',
@@ -304,7 +307,7 @@ export const getLotteryFusionSelectableInventoryForDiscordUser = async (
 
   const pointShopItems: LotteryFusionSelectableItem[] = pointShopGrants.map((grant) => {
     const prizeName = grant.couponType
-      ? (PRIZE_BY_VOUCHER_COUPON_TYPE[grant.couponType] ?? grant.itemName.trim())
+      ? resolveVoucherCouponDisplayName(grant.couponType, grant.itemName)
       : grant.itemName.trim();
     return {
       sourceId: sourceRef('pointshop', grant.id),

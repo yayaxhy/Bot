@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LotteryPool } from '@prisma/client';
+import { resolveVoucherCouponDisplayName } from '../config/voucherCatalog.js';
 import {
   buildBotLotteryFusionRequestId,
   buildLotteryFusionSelectableGroups,
@@ -91,4 +92,10 @@ test('fusion count helpers and web notification builders follow the expected rul
     }),
     '恭喜用户 <@123> 🎉 重铸获得钢琴代金券',
   );
+});
+
+test('resolveVoucherCouponDisplayName maps coupon codes to Chinese labels', () => {
+  assert.equal(resolveVoucherCouponDisplayName('DISCOUNT_90_LOTTERY'), '特殊9折券');
+  assert.equal(resolveVoucherCouponDisplayName('DISCOUNT_90'), '9折券');
+  assert.equal(resolveVoucherCouponDisplayName(undefined, 'DISCOUNT_80'), '8折券');
 });
